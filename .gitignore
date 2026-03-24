@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+target/
+src-tauri/target/
+
+# Binary data
+*.bin
+
+# Third-party binaries (vendored by windivert crate)
+WinDivert.dll
+WinDivert64.sys
+
+# Documentation & game assets
+docs/
+
+# Temporary files
+tmp/
