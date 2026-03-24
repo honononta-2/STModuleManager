@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Tauri (release)
+        run: cargo build --release
+        working-directory: src-tauri
+
+      - name: Prepare release files
+        run: |
+          mkdir release
+          copy src-tauri\target\release\module-manager.exe release\
+          if exist src-tauri\target\release\WinDivert.dll copy src-tauri\target\release\WinDivert.dll release\
+          if exist src-tauri\target\release\WinDivert64.sys copy src-tauri\target\release\WinDivert64.sys release\
+        shell: cmd
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/module-manager.exe
+            release/WinDivert.dll
+            release/WinDivert64.sys
