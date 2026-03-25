@@ -1,4 +1,4 @@
-# Star Resonance Module Tool
+# スタレゾのモジュール管理ソフト(PC版)
 
 [![GitHub Release](https://img.shields.io/github/v/release/honononta/STModuleManager)](https://github.com/honononta/STModuleManager/releases/latest)
 [![GitHub Downloads](https://img.shields.io/github/downloads/honononta/STModuleManager/total)](https://github.com/honononta/STModuleManager/releases)
