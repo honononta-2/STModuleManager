@@ -33,6 +33,13 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Download WinDivert
+        run: |
+          $url = "https://github.com/basil00/Divert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip"
+          Invoke-WebRequest -Uri $url -OutFile WinDivert.zip
+          Expand-Archive -Path WinDivert.zip -DestinationPath WinDivert
+        shell: pwsh
+
       - name: Build Tauri (release)
         run: cargo build --release
         working-directory: src-tauri
@@ -41,8 +48,8 @@ jobs:
         run: |
           mkdir release
           copy src-tauri\target\release\module-manager.exe release\
-          if exist src-tauri\target\release\WinDivert.dll copy src-tauri\target\release\WinDivert.dll release\
-          if exist src-tauri\target\release\WinDivert64.sys copy src-tauri\target\release\WinDivert64.sys release\
+          copy src-tauri\target\release\WinDivert.dll release\
+          copy WinDivert\WinDivert-2.2.2-A\x64\WinDivert64.sys release\
         shell: cmd
 
       - name: Create zip archive
