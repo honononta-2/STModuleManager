@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Module Optimizer</title>
+</head>
+<body>
+<div class="app">
+
+  <header class="header">
+    <h1>Module Optimizer</h1>
+    <div class="header-info">
+      <span id="module-count">0 モジュール</span>
+      <button class="btn" id="screenshot-btn">スクショ取込</button>
+      <button class="btn" id="import-btn">JSON</button>
+      <button class="btn" id="clear-btn">クリア</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- モジュール一覧 -->
+    <section class="section" id="module-list-section" style="display:none">
+      <h2>取り込み済みモジュール</h2>
+      <div id="module-list" class="module-list"></div>
+    </section>
+
+    <!-- 最適化設定 -->
+    <section class="section">
+      <h2>レアリティ</h2>
+      <select id="quality-select" class="select">
+        <option value="3">紫以上</option>
+        <option value="4">金以上</option>
+        <option value="5">橙のみ</option>
+      </select>
+    </section>
+
+    <section class="section">
+      <h2>メインステータス（必須）</h2>
+      <div class="stat-grid" id="req-stats"></div>
+    </section>
+
+    <section class="section">
+      <h2>サブステータス</h2>
+      <div class="stat-grid" id="des-stats"></div>
+    </section>
+
+    <section class="section">
+      <h2>対象外</h2>
+      <div class="stat-grid" id="excl-stats"></div>
+    </section>
+
+    <div class="run-section">
+      <button class="btn btn-primary" id="run-btn" disabled>最適化実行</button>
+      <div id="running-indicator" style="display:none">計算中...</div>
+    </div>
+
+    <!-- 結果 -->
+    <section class="section">
+      <div id="empty-state" class="empty-state">
+        メインステータスを選択して最適化を実行してください
+      </div>
+      <div id="results"></div>
+    </section>
+  </main>
+
+  <div id="ocr-progress" class="ocr-progress" style="display:none"></div>
+  <div id="error-toast" class="error-toast" style="display:none"></div>
+</div>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

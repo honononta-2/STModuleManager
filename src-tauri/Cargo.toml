@@ -23,7 +23,7 @@ etherparse = "0.19.0"
 byteorder = "1.5.0"
 zstd = "0.13.3"
 rayon = "1.10"
-star-optimizer = { path = "../crates/optimizer" }
+star-optimizer = { path = "../crates/optimizer", features = ["parallel"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

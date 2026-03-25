@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/optimizer", "src-tauri"]
+members = ["crates/optimizer", "src-tauri", "web/wasm"]
 resolver = "2"

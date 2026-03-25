@@ -3340,6 +3340,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "star-optimizer-wasm"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "star-optimizer",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "string_cache"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

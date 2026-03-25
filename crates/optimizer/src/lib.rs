@@ -1,3 +1,4 @@
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -11,7 +12,7 @@ pub struct StatEntry {
 }
 
 /// 最適化に必要な最小限のモジュールデータ
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleInput {
     pub uuid: i64,
     pub quality: Option<u64>,
@@ -39,6 +40,12 @@ pub struct OptimizeRequest {
     pub desired_stats: Vec<i64>,
     pub excluded_stats: Vec<i64>,
     pub min_quality: u64,
+    /// Web Worker分割用: このWorkerのID (0-based)
+    #[serde(default)]
+    pub worker_id: Option<usize>,
+    /// Web Worker分割用: 総Worker数
+    #[serde(default)]
+    pub num_workers: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -216,22 +223,24 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         score
     };
 
-    // --- 4重ループ探索（rayon並列） ---
+    // --- 4重ループ探索 ---
     let n = filtered_count;
     let top_k = 10usize;
 
+    // Worker分割: 外側ループの担当範囲を決定
+    let (range_start, range_end) = match (req.worker_id, req.num_workers) {
+        (Some(id), Some(total)) if total > 0 => {
+            let chunk = n / total;
+            let start = id * chunk;
+            let end = if id == total - 1 { n } else { start + chunk };
+            (start, end)
+        }
+        _ => (0, n),
+    };
+
     let global_best = Mutex::new(BoundedHeap::new(top_k));
 
-    let num_threads = std::thread::available_parallelism()
-        .map(|p| (p.get() * 3 / 4).max(1))
-        .unwrap_or(4);
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(num_threads)
-        .build()
-        .unwrap();
-
-    pool.install(|| {
-    (0..n).into_par_iter().for_each(|i| {
+    let search_from_i = |i: usize| {
         let mut local_best = BoundedHeap::new(top_k);
         let si = &stat_arrays[i];
 
@@ -290,8 +299,28 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         for entry in local_best.entries {
             g.push(entry.score, entry.indices);
         }
-    });
-    });
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        let num_threads = std::thread::available_parallelism()
+            .map(|p| (p.get() * 3 / 4).max(1))
+            .unwrap_or(4);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            (range_start..range_end).into_par_iter().for_each(|i| search_from_i(i));
+        });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        for i in range_start..range_end {
+            search_from_i(i);
+        }
+    }
 
     // --- 結果組み立て ---
     let heap = global_best.into_inner().unwrap();
