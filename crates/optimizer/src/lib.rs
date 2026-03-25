@@ -1,7 +1,22 @@
-use crate::modules_db::{ModuleEntry, StatEntry};
 use rayon::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+
+// --- 共有型 ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatEntry {
+    pub part_id: i64,
+    pub value: i64,
+}
+
+/// 最適化に必要な最小限のモジュールデータ
+#[derive(Debug, Clone)]
+pub struct ModuleInput {
+    pub uuid: i64,
+    pub quality: Option<u64>,
+    pub stats: Vec<StatEntry>,
+}
 
 // --- スコアリング定数 ---
 const BP_THRESHOLDS: [(i64, f64); 6] = [
@@ -18,7 +33,7 @@ const PLUS_BONUS_MULTIPLIER: f64 = 2.0;
 
 // --- 最適化リクエスト/レスポンス ---
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct OptimizeRequest {
     pub required_stats: Vec<i64>,
     pub desired_stats: Vec<i64>,
@@ -61,17 +76,16 @@ pub struct StatTotal {
 // --- 内部用フラット構造 ---
 
 struct ModuleFlat {
-    index: usize, // 元のモジュール配列へのインデックス
-    stats: Vec<(i64, i64)>, // (part_id, value) — 全ステータス
+    index: usize,
+    stats: Vec<(i64, i64)>,
     contribution: f64,
 }
 
 // --- 公開API ---
 
-pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeResponse {
+pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeResponse {
     let total_modules = modules.len();
 
-    // ステータスカテゴリのセット
     let required_set: std::collections::HashSet<i64> =
         req.required_stats.iter().copied().collect();
     let desired_set: std::collections::HashSet<i64> =
@@ -84,7 +98,7 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
     };
 
     // --- Stage 1: 関連性フィルタ ---
-    let mut candidates: Vec<(usize, &ModuleEntry)> = modules
+    let mut candidates: Vec<(usize, &ModuleInput)> = modules
         .iter()
         .enumerate()
         .filter(|(_, m)| m.stats.iter().any(|s| is_relevant(s.part_id)))
@@ -127,10 +141,8 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
         })
         .collect();
 
-    // 貢献度降順ソート
     flats.sort_by(|a, b| b.contribution.partial_cmp(&a.contribution).unwrap());
 
-    // Top 300
     const TOP_N: usize = 300;
     if flats.len() > TOP_N {
         flats.truncate(TOP_N);
@@ -147,7 +159,6 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
     }
 
     // --- 探索用データ準備 ---
-    // 候補モジュールの全part_idを収集してインデックス化
     let mut all_part_ids: Vec<i64> = flats
         .iter()
         .flat_map(|f| f.stats.iter().map(|(pid, _)| *pid))
@@ -161,7 +172,6 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
         .collect();
     let stat_count = all_part_ids.len();
 
-    // フラット配列に変換
     let stat_arrays: Vec<Vec<i64>> = flats
         .iter()
         .map(|f| {
@@ -175,7 +185,6 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
         })
         .collect();
 
-    // スコア関数（インライン）
     let score_stats = |totals: &[i64]| -> f64 {
         let mut score = 0.0f64;
         let mut selected_plus = 0i64;
@@ -191,7 +200,6 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
 
             if is_req || is_des {
                 let weight = if is_req { 1.0 } else { DESIRED_WEIGHT };
-                // ブレイクポイントスコア（最高到達段階のみ加算）
                 for &(threshold, points) in &BP_THRESHOLDS {
                     if total >= threshold {
                         score += points * weight;
@@ -214,7 +222,6 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
 
     let global_best = Mutex::new(BoundedHeap::new(top_k));
 
-    // CPUコア数の75%を使用（UIとOS用に余裕を残す）
     let num_threads = std::thread::available_parallelism()
         .map(|p| (p.get() * 3 / 4).max(1))
         .unwrap_or(4);
@@ -228,13 +235,11 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
         let mut local_best = BoundedHeap::new(top_k);
         let si = &stat_arrays[i];
 
-        // スレッドローカルな再利用バッファ（ヒープ割り当てをループ外に追い出す）
         let mut partial2 = vec![0i64; stat_count];
         let mut partial3 = vec![0i64; stat_count];
         let mut totals_buf = vec![0i64; stat_count];
         let mut ub_buf = vec![0i64; stat_count];
 
-        // グローバル閾値のローカルキャッシュ（Mutexロック頻度を削減）
         let mut cached_global_threshold = f64::NEG_INFINITY;
         let mut j_count = 0u32;
 
@@ -244,13 +249,11 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
                 partial2[s] = si[s] + sj[s];
             }
 
-            // 64イテレーションに1回だけグローバル閾値を更新
             j_count += 1;
             if j_count % 64 == 0 {
                 cached_global_threshold = global_best.lock().unwrap().min_score();
             }
 
-            // 枝刈り: 2つ選んだ時点での上限チェック
             let local_threshold = if local_best.is_full() {
                 local_best.min_score().max(cached_global_threshold)
             } else {
@@ -258,7 +261,6 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
             };
 
             if local_threshold > f64::NEG_INFINITY {
-                // 上限スコア: 残り2枠で各ステ最大+10ずつ = +20
                 for s in 0..stat_count {
                     ub_buf[s] = partial2[s] + 20;
                 }
@@ -284,13 +286,12 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
             }
         }
 
-        // ローカル結果をグローバルにマージ
         let mut g = global_best.lock().unwrap();
         for entry in local_best.entries {
             g.push(entry.score, entry.indices);
         }
     });
-    }); // pool.install
+    });
 
     // --- 結果組み立て ---
     let heap = global_best.into_inner().unwrap();
@@ -305,7 +306,6 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
         .iter()
         .enumerate()
         .map(|(rank, (score, indices))| {
-            // ステータス合計計算
             let totals: Vec<i64> = (0..stat_count)
                 .map(|si| {
                     indices
@@ -376,7 +376,7 @@ pub fn optimize(modules: &[ModuleEntry], req: &OptimizeRequest) -> OptimizeRespo
     }
 }
 
-// --- Top-K ヒープ（最小スコアを保持して効率的に上位K件を管理） ---
+// --- Top-K ヒープ ---
 
 struct HeapEntry {
     score: f64,
@@ -415,7 +415,6 @@ impl BoundedHeap {
         if self.entries.len() < self.capacity {
             self.entries.push(HeapEntry { score, indices });
         } else {
-            // 最小スコアのエントリを見つけて置換
             let min_idx = self
                 .entries
                 .iter()

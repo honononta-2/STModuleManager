@@ -1,6 +1,6 @@
 use crate::modules_db::{ModuleEntry, ModulesDbState};
-use crate::optimizer::{self, OptimizeRequest, OptimizeResponse};
 use serde::Serialize;
+use star_optimizer::{ModuleInput, OptimizeRequest, OptimizeResponse};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::State;
@@ -43,7 +43,15 @@ pub async fn optimize_modules(
         let db = db.db.lock().map_err(|e| e.to_string())?;
         db.modules.values().cloned().collect::<Vec<ModuleEntry>>()
     };
-    Ok(tauri::async_runtime::spawn_blocking(move || optimizer::optimize(&modules, &req))
+    let inputs: Vec<ModuleInput> = modules
+        .iter()
+        .map(|m| ModuleInput {
+            uuid: m.uuid,
+            quality: m.quality,
+            stats: m.stats.clone(),
+        })
+        .collect();
+    Ok(tauri::async_runtime::spawn_blocking(move || star_optimizer::optimize(&inputs, &req))
         .await
         .map_err(|e| e.to_string())?)
 }

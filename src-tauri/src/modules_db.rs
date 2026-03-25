@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+pub use star_optimizer::StatEntry;
+
 /// 既存の "YYYY-MM-DD" 形式と新しい "YYYY-MM-DDTHH:MM:SS" 形式の両方に対応
 fn deserialize_datetime_compat<'de, D>(deserializer: D) -> Result<NaiveDateTime, D::Error>
 where
@@ -31,12 +33,6 @@ pub struct ModuleEntry {
     /// 初回検出日時（入手日時）
     #[serde(deserialize_with = "deserialize_datetime_compat")]
     pub acquired_date: NaiveDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StatEntry {
-    pub part_id: i64,
-    pub value: i64,
 }
 
 /// JSONファイルに保存される全体構造

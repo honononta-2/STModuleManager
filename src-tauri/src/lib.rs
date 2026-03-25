@@ -1,6 +1,5 @@
 mod commands;
 mod modules_db;
-mod optimizer;
 mod packets;
 
 use commands::MonitorState;

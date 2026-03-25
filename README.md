@@ -1,4 +1,4 @@
-# スタレゾのモジュール管理ソフト(PC版)
+# スタレゾのモジュール管理ソフト
 
 [![GitHub Release](https://img.shields.io/github/v/release/honononta/STModuleManager)](https://github.com/honononta/STModuleManager/releases/latest)
 [![GitHub Downloads](https://img.shields.io/github/downloads/honononta/STModuleManager/total)](https://github.com/honononta/STModuleManager/releases)
@@ -39,6 +39,8 @@
 3. **スタレゾ内でエリア移動をする** — マップ移動やテレポートなどで場面を切り替えます
 
 これだけでモジュールデータの取得は完了です。ツールが自動的にゲームサーバーとの通信からモジュール情報を読み取り、一覧に表示します。
+
+モジュールデータはエリア移動時の通信から取得しているため、新しいモジュールを入手した後にデータを更新したい場合は、本ツールを起動したまま再度エリア移動を行ってください。
 
 ### モジュール一覧・並び替え
 

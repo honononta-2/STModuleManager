@@ -35,24 +35,16 @@
       <!-- Command bar -->
       <div class="cmdbar">
         <div class="cmd-grp">
-          <span class="cmd-lbl">レアリティ</span>
-          <div class="rpill active" data-r="gold"><span class="dot"></span>金</div>
-          <div class="rpill active" data-r="purple"><span class="dot"></span>紫</div>
-          <div class="rpill active" data-r="blue"><span class="dot"></span>青</div>
+          <span class="cmd-lbl">絞込</span>
+          <button class="opt-multi-btn" id="filter-btn">未選択</button>
+          <button class="filter-mode-btn" id="filter-mode">AND</button>
         </div>
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
-          <span class="cmd-lbl">絞込</span>
-          <div id="fchips" style="display:flex;gap:5px;flex-wrap:wrap"></div>
-          <button class="addbtn" id="add-f">＋ Add</button>
+          <span class="cmd-lbl">並び替え</span>
+          <div id="schips" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
+          <button class="addbtn" id="add-s">＋ Add</button>
         </div>
-      </div>
-
-      <!-- Sort bar -->
-      <div class="sortbar">
-        <span class="cmd-lbl" style="font-size:11px">並び替え</span>
-        <div id="schips" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
-        <button class="addbtn" id="add-s">＋ Add</button>
       </div>
 
       <!-- Grid -->
@@ -135,6 +127,7 @@
 <div class="flyout" id="fly-f"></div>
 <div class="flyout" id="fly-s"></div>
 <div class="flyout" id="fly-multi"></div>
+<div class="flyout" id="fly-filter"></div>
 
 <script type="module" src="/src/main.ts"></script>
 </body>

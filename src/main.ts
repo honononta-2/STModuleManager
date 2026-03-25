@@ -54,6 +54,7 @@ const STAT_ICONS: Record<number, string> = {
 };
 
 const ALL_STAT_NAMES = Object.values(STAT_NAMES);
+const MODULE_TYPES = ["攻撃", "支援", "防御"] as const;
 
 function statName(partId: number): string {
   return STAT_NAMES[partId] ?? `Unknown(${partId})`;
@@ -138,8 +139,10 @@ interface OptimizeResponse {
 
 // --- State ---
 let allModules: ModuleEntry[] = [];
-let activeRarities = new Set<Rarity>(["gold", "purple", "blue"]);
+let filterRarities: Rarity[] = [];
 let filterStats: string[] = [];
+let filterTypes: string[] = [];
+let filterMode: 'and' | 'or' = 'and';
 let sortKeys: { k: string; d: number }[] = [];
 
 // Optimizer state
@@ -151,13 +154,20 @@ let optExcluded: string[] = [];
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 function renderGrid() {
-  let ms = allModules.filter((m) =>
-    activeRarities.has(qualityToRarity(m.quality))
-  );
+  let ms = [...allModules];
 
-  filterStats.forEach((f) => {
-    ms = ms.filter((m) => m.stats.some((s) => statName(s.part_id) === f));
-  });
+  // Apply filters: レアリティ・型は常にOR、ステータスはAND/ORモードに従う
+  if (filterRarities.length > 0) {
+    ms = ms.filter((m) => filterRarities.includes(qualityToRarity(m.quality)));
+  }
+  if (filterTypes.length > 0) {
+    ms = ms.filter((m) => filterTypes.some((t) => configIdToType(m.config_id) === t));
+  }
+  if (filterStats.length > 0) {
+    ms = filterMode === 'and'
+      ? ms.filter((m) => filterStats.every((f) => m.stats.some((s) => statName(s.part_id) === f)))
+      : ms.filter((m) => filterStats.some((f) => m.stats.some((s) => statName(s.part_id) === f)));
+  }
 
   ms.sort((a, b) => {
     for (const s of sortKeys) {
@@ -218,27 +228,99 @@ function renderGrid() {
 
   $("sb-n").textContent = `${ms.length} モジュール`;
   const info: string[] = [];
-  if (activeRarities.size < 3) info.push(`レアリティ ${activeRarities.size}/3`);
-  if (filterStats.length) info.push(`絞込 ${filterStats.length}件`);
+  const filterCount = filterRarities.length + filterTypes.length + filterStats.length;
+  if (filterCount) info.push(`絞込 ${filterCount}件(${filterMode.toUpperCase()})`);
   $("sb-i").textContent = info.join("　");
 }
 
-function renderFChips() {
-  const c = $("fchips");
-  c.innerHTML = "";
-  filterStats.forEach((f, i) => {
-    const el = document.createElement("div");
-    el.className = "fchip";
-    el.innerHTML = `${f}<button class="fchip-x" data-i="${i}">\u00d7</button>`;
-    c.appendChild(el);
+const RARITY_FILTERS: { label: string; value: Rarity }[] = [
+  { label: "金", value: "gold" },
+  { label: "紫", value: "purple" },
+  { label: "青", value: "blue" },
+];
+
+function updateFilterBtnLabel() {
+  const count = filterRarities.length + filterTypes.length + filterStats.length;
+  const btn = $("filter-btn");
+  btn.textContent = count > 0 ? `${count}件選択` : '未選択';
+  btn.classList.toggle('has-items', count > 0);
+}
+
+function addFlySection(
+  fl: HTMLElement,
+  title: string,
+  items: { label: string; checked: boolean }[],
+  onChange: (index: number, checked: boolean) => void,
+) {
+  const header = document.createElement("div");
+  header.className = "fly-section-header";
+  header.textContent = title;
+  fl.appendChild(header);
+
+  items.forEach((item, i) => {
+    const el = document.createElement("label");
+    el.className = "fitem-check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = item.checked;
+    cb.onchange = () => onChange(i, cb.checked);
+    const span = document.createElement("span");
+    span.textContent = item.label;
+    el.appendChild(cb);
+    el.appendChild(span);
+    fl.appendChild(el);
   });
-  c.querySelectorAll<HTMLButtonElement>(".fchip-x").forEach((b) => {
-    b.onclick = () => {
-      filterStats.splice(+b.dataset.i!, 1);
-      renderFChips();
-      renderGrid();
-    };
-  });
+}
+
+function openFilterMultiFly(anchor: HTMLElement) {
+  const fl = $("fly-filter");
+  if (fl.classList.contains("on")) {
+    closeFly();
+    return;
+  }
+  closeFly();
+  fl.innerHTML = "";
+
+  const refresh = () => { updateFilterBtnLabel(); renderGrid(); };
+
+  // Section: レアリティ
+  addFlySection(fl, "レアリティ",
+    RARITY_FILTERS.map((r) => ({ label: r.label, checked: filterRarities.includes(r.value) })),
+    (i, checked) => {
+      const val = RARITY_FILTERS[i].value;
+      if (checked) filterRarities.push(val);
+      else { const idx = filterRarities.indexOf(val); if (idx >= 0) filterRarities.splice(idx, 1); }
+      refresh();
+    },
+  );
+
+  // Section: 型
+  addFlySection(fl, "型",
+    MODULE_TYPES.map((t) => ({ label: t, checked: filterTypes.includes(t) })),
+    (i, checked) => {
+      const val = MODULE_TYPES[i];
+      if (checked) filterTypes.push(val);
+      else { const idx = filterTypes.indexOf(val); if (idx >= 0) filterTypes.splice(idx, 1); }
+      refresh();
+    },
+  );
+
+  // Section: ステータス
+  addFlySection(fl, "ステータス",
+    ALL_STAT_NAMES.map((n) => ({ label: n, checked: filterStats.includes(n) })),
+    (i, checked) => {
+      const val = ALL_STAT_NAMES[i];
+      if (checked) filterStats.push(val);
+      else { const idx = filterStats.indexOf(val); if (idx >= 0) filterStats.splice(idx, 1); }
+      refresh();
+    },
+  );
+
+  const r = anchor.getBoundingClientRect();
+  fl.style.left = r.left + "px";
+  fl.style.top = r.bottom + 4 + "px";
+  fl.classList.add("on");
+  $("bd").classList.add("on");
 }
 
 function renderSChips() {
@@ -736,36 +818,18 @@ async function init() {
     };
   });
 
-  // Rarity pills
-  document.querySelectorAll<HTMLElement>(".rpill").forEach((p) => {
-    p.onclick = () => {
-      const r = p.dataset.r as Rarity;
-      if (activeRarities.has(r)) {
-        if (activeRarities.size > 1) {
-          activeRarities.delete(r);
-          p.classList.remove("active");
-        }
-      } else {
-        activeRarities.add(r);
-        p.classList.add("active");
-      }
-      renderGrid();
-    };
-  });
+  // Filter dropdown
+  $("filter-btn").onclick = (e) => {
+    openFilterMultiFly(e.currentTarget as HTMLElement);
+  };
 
-  // Filter add
-  $("add-f").onclick = (e) => {
-    const ex = new Set(filterStats);
-    openFly(
-      "fly-f",
-      e.currentTarget as HTMLElement,
-      ALL_STAT_NAMES.map((s) => ({ label: s, val: s, disabled: ex.has(s) })),
-      (it) => {
-        filterStats.push(it.val);
-        renderFChips();
-        renderGrid();
-      }
-    );
+  // AND/OR toggle
+  const modeBtn = $("filter-mode");
+  modeBtn.onclick = () => {
+    filterMode = filterMode === 'and' ? 'or' : 'and';
+    modeBtn.textContent = filterMode.toUpperCase();
+    modeBtn.classList.toggle('or', filterMode === 'or');
+    renderGrid();
   };
 
   // Sort add
@@ -882,7 +946,7 @@ async function init() {
     $("sb-dot").style.background = "#0f7b0f";
   });
 
-  renderFChips();
+  updateFilterBtnLabel();
   renderSChips();
   loadModules();
 }

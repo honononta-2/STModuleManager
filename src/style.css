@@ -443,6 +443,38 @@ body {
 }
 .opt-multi-btn.has-items::after { color:var(--acc-tx); }
 
+/* Filter mode toggle (AND/OR) */
+.filter-mode-btn {
+  height:26px; padding:0 10px;
+  border-radius:4px;
+  border:1px solid var(--str-soft);
+  background:var(--cf-default);
+  box-shadow:var(--sh2);
+  color:var(--tx2); font-size:11px; font-weight:600;
+  font-family:var(--font);
+  cursor:pointer;
+  transition: background 0.1s, box-shadow 0.1s, color 0.1s;
+  white-space:nowrap;
+  letter-spacing:0.04em;
+}
+.filter-mode-btn:hover { background:var(--cf-hover); box-shadow:var(--sh4); color:var(--tx1); }
+.filter-mode-btn:active { background:var(--cf-pressed); box-shadow:none; }
+.filter-mode-btn.or {
+  background:var(--rp-bg);
+  border-color:var(--rp-str);
+  color:var(--rp);
+}
+
+/* Flyout section header */
+.fly-section-header {
+  font-size:10px; font-weight:600;
+  color:var(--tx3);
+  text-transform:uppercase; letter-spacing:0.06em;
+  padding:8px 10px 2px;
+  user-select:none;
+}
+.fly-section-header:first-child { padding-top:4px; }
+
 .fitem-check {
   padding:5px 10px; border-radius:4px;
   cursor:pointer; font-size:13px; color:var(--tx1);
