@@ -6,6 +6,7 @@ export interface StatEntry {
 /** 最適化に渡すモジュールデータ（Desktop/Web共通） */
 export interface ModuleInput {
   uuid: number;
+  config_id: number | null;
   quality: number | null;
   stats: StatEntry[];
 }

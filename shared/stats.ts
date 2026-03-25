@@ -58,3 +58,51 @@ export function statName(partId: number): string {
 export function statIdByName(name: string): number | undefined {
   return ALL_STAT_IDS.find((id) => STAT_NAMES[id] === name);
 }
+
+/** モジュール型 */
+export const MODULE_TYPES = ["攻撃", "支援", "防御"] as const;
+export type ModuleType = (typeof MODULE_TYPES)[number];
+
+/** config_id → 型名 */
+const CONFIG_TYPE_PREFIX: Record<number, ModuleType> = {
+  55001: "攻撃",
+  55002: "支援",
+  55003: "防御",
+};
+
+/** config_id 下3桁 → 型コード(英名) / レアリティ */
+const CONFIG_TYPE_MAP: Record<number, string> = { 1: "attack", 2: "device", 3: "protect" };
+const CONFIG_RARITY_MAP: Record<number, number> = { 1: 2, 2: 3, 3: 4, 4: 5 };
+
+export function configIdToType(configId: number | null): ModuleType | null {
+  if (configId == null) return null;
+  const prefix = Math.floor(configId / 100);
+  return CONFIG_TYPE_PREFIX[prefix] ?? null;
+}
+
+export function configIdToIcon(configId: number | null): { icon: string; bgRarity: number } | null {
+  if (configId == null) return null;
+  const lower = configId % 1000;
+  const typeDigit = Math.floor(lower / 100);
+  const rareSub = lower % 100;
+  const typeName = CONFIG_TYPE_MAP[typeDigit];
+  const rarityNum = CONFIG_RARITY_MAP[rareSub];
+  if (!typeName || !rarityNum) return null;
+  const bgRarity = Math.min(rarityNum, 4);
+  return {
+    icon: `item_mod_${typeName}${rarityNum}.png`,
+    bgRarity,
+  };
+}
+
+/** モジュールアイコン: 型(英名) × レアリティ → ファイル名 */
+export const MODULE_ICONS: { type: string; rarity: number; file: string }[] = [];
+for (const [typeDigit, typeName] of Object.entries(CONFIG_TYPE_MAP)) {
+  for (const [rareSub, rarityNum] of Object.entries(CONFIG_RARITY_MAP)) {
+    MODULE_ICONS.push({
+      type: typeName,
+      rarity: rarityNum,
+      file: `item_mod_${typeName}${rarityNum}.png`,
+    });
+  }
+}

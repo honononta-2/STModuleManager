@@ -1,4 +1,4 @@
-import { STAT_NAMES, ALL_STAT_IDS, statName } from "@shared/stats";
+import { STAT_NAMES, ALL_STAT_IDS, statName, configIdToType, configIdToIcon } from "@shared/stats";
 import type {
   Combination,
   ModuleInput,
@@ -218,36 +218,46 @@ function importScreenshot() {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "image/*";
-  input.capture = "environment"; // スマホではカメラ起動
+  input.multiple = true;
   input.addEventListener("change", async () => {
-    const file = input.files?.[0];
-    if (!file) return;
-
-    const img = new Image();
-    img.src = URL.createObjectURL(file);
-    await new Promise((resolve) => (img.onload = resolve));
+    const files = input.files;
+    if (!files || files.length === 0) return;
 
     const progressEl = document.getElementById("ocr-progress");
     if (progressEl) progressEl.style.display = "block";
 
+    let totalDetected = 0;
+
     try {
-      const detected = await processScreenshot(img, (p) => {
-        if (progressEl) progressEl.textContent = p.stage;
-      });
+      for (const file of files) {
+        const img = new Image();
+        img.src = URL.createObjectURL(file);
+        await new Promise((resolve) => (img.onload = resolve));
 
-      URL.revokeObjectURL(img.src);
+        if (progressEl) {
+          progressEl.textContent = `処理中: ${file.name}`;
+        }
 
-      if (detected.length === 0) {
-        showError("モジュールを検出できませんでした");
-        return;
+        try {
+          const detected = await processScreenshot(img, (p) => {
+            if (progressEl) progressEl.textContent = p.stage;
+          });
+          modules.push(...detected);
+          totalDetected += detected.length;
+        } finally {
+          URL.revokeObjectURL(img.src);
+        }
       }
 
-      // 検出したモジュールを追加
-      modules.push(...detected);
       saveModulesToStorage();
       renderModuleCount();
       updateRunButton();
-      showError(`${detected.length} 件のモジュールを検出しました`); // toast流用
+
+      if (totalDetected === 0) {
+        showError("モジュールを検出できませんでした");
+      } else {
+        showError(`${totalDetected} 件のモジュールを検出しました`);
+      }
     } catch (err) {
       showError(
         err instanceof Error ? err.message : "スクショの読み取りに失敗しました",
@@ -273,11 +283,11 @@ function importModules() {
 
       // Desktop版のmodules_db.json形式に対応
       if (data.modules && typeof data.modules === "object") {
-        modules = Object.values(
-          data.modules as Record<string, ModuleInput>,
-        ).map(toModuleInput);
+        modules = Object.values(data.modules as Record<string, unknown>).map(
+          (m) => toModuleInput(m as Record<string, unknown>),
+        );
       } else if (Array.isArray(data)) {
-        modules = data.map(toModuleInput);
+        modules = data.map((m) => toModuleInput(m as Record<string, unknown>));
       } else {
         throw new Error("不明なJSON形式です");
       }
@@ -297,12 +307,22 @@ function importModules() {
 function toModuleInput(m: Record<string, unknown>): ModuleInput {
   return {
     uuid: (m.uuid as number) ?? 0,
+    config_id: (m.config_id as number) ?? null,
     quality: (m.quality as number) ?? null,
     stats: ((m.stats as StatEntry[]) ?? []).map((s) => ({
       part_id: s.part_id,
       value: s.value,
     })),
   };
+}
+
+function moduleIconHtml(configId: number | null): string {
+  const info = configIdToIcon(configId);
+  if (!info) return "";
+  return `<div class="mod-icon-wrap">
+    <img class="mod-icon-bg" src="/icons/rarity${info.bgRarity}.png" alt="">
+    <img class="mod-icon-fg" src="/icons/${info.icon}" alt="">
+  </div>`;
 }
 
 // --- Clear ---
@@ -353,7 +373,7 @@ function renderModuleList() {
       (m, i) => `
     <div class="mod-row">
       <span class="mod-idx">${i + 1}</span>
-      <span class="mod-quality q${m.quality ?? 0}">★${m.quality ?? "?"}</span>
+      ${moduleIconHtml(m.config_id)}
       <span class="mod-stats-list">
         ${m.stats.map((s) => `<span class="mod-stat">${statName(s.part_id)} +${s.value}</span>`).join("")}
       </span>
