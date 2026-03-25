@@ -45,10 +45,11 @@ jobs:
           if exist src-tauri\target\release\WinDivert64.sys copy src-tauri\target\release\WinDivert64.sys release\
         shell: cmd
 
+      - name: Create zip archive
+        run: Compress-Archive -Path release\* -DestinationPath "StarResonanceModuleTool-${{ github.ref_name }}.zip"
+        shell: pwsh
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            release/module-manager.exe
-            release/WinDivert.dll
-            release/WinDivert64.sys
+          files: "StarResonanceModuleTool-${{ github.ref_name }}.zip"
