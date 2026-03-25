@@ -48,7 +48,7 @@ jobs:
         run: |
           mkdir release
           copy src-tauri\target\release\module-manager.exe release\
-          copy src-tauri\target\release\WinDivert.dll release\
+          copy WinDivert\WinDivert-2.2.2-A\x64\WinDivert.dll release\
           copy WinDivert\WinDivert-2.2.2-A\x64\WinDivert64.sys release\
         shell: cmd
 
