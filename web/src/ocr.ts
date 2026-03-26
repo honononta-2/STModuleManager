@@ -1441,8 +1441,8 @@ function shouldFallbackToTemplateMatching(
 async function ocrNumbersForRow(
   sourceCanvas: HTMLCanvasElement,
   row: ModuleRow,
+  worker: Awaited<ReturnType<typeof import("tesseract.js")["createWorker"]>>,
 ): Promise<StatEntry[]> {
-  const { createWorker } = await import("tesseract.js");
 
   const stats: StatEntry[] = [];
   const padding = 3;
@@ -1680,12 +1680,6 @@ async function ocrNumbersForRow(
 
   if (stats.length === 0) return [];
 
-  const worker = await createWorker("eng");
-  await worker.setParameters({
-    tessedit_char_whitelist: "+0123456789",
-    tessedit_pageseg_mode: "7" as any,
-  });
-
   for (const stat of stats) {
     const cropVariants = (stat as any)._ocrCrops as OcrCrop[];
     try {
@@ -1750,7 +1744,6 @@ async function ocrNumbersForRow(
     delete (stat as any)._ocrCrops;
   }
 
-  await worker.terminate();
   return stats.filter((s) => s.value > 0);
 }
 
@@ -2503,41 +2496,52 @@ export async function processScreenshot(
 
   // 数値OCR
   onProgress?.({ stage: "数値読み取り中...", percent: 60 });
+  const { createWorker } = await import("tesseract.js");
+  const worker = await createWorker("eng");
+  await worker.setParameters({
+    tessedit_char_whitelist: "+0123456789",
+    tessedit_pageseg_mode: "7" as any,
+  });
+
   const modules: ModuleInput[] = [];
   let uuidCounter = Date.now();
 
-  for (let i = 0; i < anchoredRows.length; i++) {
-    onProgress?.({
-      stage: `数値読み取り中... (${i + 1}/${anchoredRows.length})`,
-      percent: 60 + (i / anchoredRows.length) * 35,
-    });
-
-    const stats = await ocrNumbersForRow(canvas, anchoredRows[i]) as Array<
-      StatEntry & {
-        _ocrDebug?: {
-          hadPlus: boolean;
-          rawText: string;
-          normalized: string;
-          matchedText: string;
-        };
-      }
-    >;
-    console.log(
-      `[OCR] row ${i + 1}: icons=${anchoredRows[i].stats.length} ocrStats=${stats.length}`,
-      stats.map(
-        (s) =>
-          `${s.part_id}:${s.value}${s._ocrDebug?.hadPlus ? "(+)" : "(-)"}`,
-      ),
-    );
-    if (stats.length > 0) {
-      const modIcon = moduleIcons[i];
-      modules.push({
-        uuid: uuidCounter++,
-        config_id: modIcon?.configId ?? null,
-        quality: modIcon?.rarity ?? null,
-        stats: stats.map((s) => ({ part_id: s.part_id, value: s.value })),
+  try {
+    for (let i = 0; i < anchoredRows.length; i++) {
+      onProgress?.({
+        stage: `数値読み取り中... (${i + 1}/${anchoredRows.length})`,
+        percent: 60 + (i / anchoredRows.length) * 35,
       });
+
+      const stats = await ocrNumbersForRow(canvas, anchoredRows[i], worker) as Array<
+        StatEntry & {
+          _ocrDebug?: {
+            hadPlus: boolean;
+            rawText: string;
+            normalized: string;
+            matchedText: string;
+          };
+        }
+      >;
+      console.log(
+        `[OCR] row ${i + 1}: icons=${anchoredRows[i].stats.length} ocrStats=${stats.length}`,
+        stats.map(
+          (s) =>
+            `${s.part_id}:${s.value}${s._ocrDebug?.hadPlus ? "(+)" : "(-)"}`,
+        ),
+      );
+      if (stats.length > 0) {
+        const modIcon = moduleIcons[i];
+        modules.push({
+          uuid: uuidCounter++,
+          config_id: modIcon?.configId ?? null,
+          quality: modIcon?.rarity ?? null,
+          stats: stats.map((s) => ({ part_id: s.part_id, value: s.value })),
+        });
+      }
     }
+  } finally {
+    await worker.terminate();
   }
 
   onProgress?.({ stage: "完了", percent: 100 });

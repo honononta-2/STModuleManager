@@ -47,7 +47,7 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir release
-          copy target\release\module-manager.exe release\
+          copy target\release\STModuleManager.exe release\
           copy WinDivert\WinDivert-2.2.2-A\x64\WinDivert.dll release\
           copy WinDivert\WinDivert-2.2.2-A\x64\WinDivert64.sys release\
         shell: cmd
