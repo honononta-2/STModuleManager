@@ -25,7 +25,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: .
 
       - name: Install dependencies
         run: npm install
@@ -47,7 +47,7 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir release
-          copy src-tauri\target\release\module-manager.exe release\
+          copy target\release\module-manager.exe release\
           copy WinDivert\WinDivert-2.2.2-A\x64\WinDivert.dll release\
           copy WinDivert\WinDivert-2.2.2-A\x64\WinDivert64.sys release\
         shell: cmd
