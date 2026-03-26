@@ -19,5 +19,8 @@ docs/
 # Temporary files
 tmp/
 
+# Claude Code
+CLAUDE.md
+
 # Release output
 release-v*/

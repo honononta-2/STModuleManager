@@ -13,7 +13,7 @@
 
 ## Web版
 
-**[Web版はこちら](https://st-module-manager.pages.dev/)**（PC・スマホ対応）
+**[Web版はこちら](https://st-module-manager.pages.dev/)**（スマホ対応）
 
 スクリーンショットからモジュールをOCR取込し、最適化を実行できます。パケットキャプチャ不要で、どの端末からでも利用可能です。
 

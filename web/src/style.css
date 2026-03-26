@@ -202,6 +202,16 @@ body {
   gap:10px;
   margin-bottom:10px;
 }
+.card-edit-btn {
+  margin-left:auto;
+  background:none; border:1px solid var(--str-soft);
+  border-radius:6px; padding:4px 6px;
+  cursor:pointer; color:var(--tx3);
+  display:flex; align-items:center; justify-content:center;
+  opacity:0; transition:opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+.card:hover .card-edit-btn { opacity:1; }
+.card-edit-btn:hover { color:var(--tx1); border-color:var(--str-default); }
 
 /* Module icon (rarity bg + type fg) */
 .mod-icon-wrap {
@@ -804,6 +814,15 @@ body {
   display:flex; flex-direction:column; gap:6px;
 }
 
+/* ===== Edit Module Modal ===== */
+.edit-icon-preview {
+  display:flex; align-items:center; justify-content:center;
+  margin-bottom:2px;
+}
+.edit-icon-preview .mod-icon-wrap {
+  width:56px; height:56px;
+}
+
 /* ===== Toast ===== */
 .toast {
   position:fixed;
@@ -890,6 +909,9 @@ body {
   /* Card: smaller padding */
   .card {
     padding: 12px;
+  }
+  .card-edit-btn {
+    opacity: 1;
   }
 
   /* Opt result card: stack layout */

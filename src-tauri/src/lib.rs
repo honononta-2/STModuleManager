@@ -25,6 +25,9 @@ pub fn run() {
             let db_state = modules_db::ModulesDbState::new(db_path);
             app.manage(db_state);
 
+            let patterns_path = app_data_dir.join("opt_patterns.json");
+            app.manage(commands::OptPatternsPath(patterns_path));
+
             // 監視ステート（キャプチャはトグルで手動開始）
             let server_found = Arc::new(AtomicBool::new(false));
             let (module_tx, module_rx) = std::sync::mpsc::channel();
@@ -86,6 +89,8 @@ pub fn run() {
             commands::export_to_file,
             commands::start_capture_cmd,
             commands::stop_capture_cmd,
+            commands::get_opt_patterns,
+            commands::save_opt_patterns,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

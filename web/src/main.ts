@@ -163,6 +163,9 @@ function renderGrid() {
       <div class="card-head">
         ${moduleIconHtml(m.config_id)}
         <span class="rbadge ${r}">${RARITY_LABEL[r]}</span>
+        <button class="card-edit-btn" data-uuid="${m.uuid}" title="編集">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+        </button>
       </div>
       <div class="divider"></div>
       <div class="stats">${m.stats.map((s) => `
@@ -172,6 +175,10 @@ function renderGrid() {
           <span class="sval">+${s.value}</span>
         </div>`).join("")}
       </div>`;
+    c.querySelector<HTMLButtonElement>(".card-edit-btn")!.onclick = (e) => {
+      e.stopPropagation();
+      openEditModal(m.uuid);
+    };
     g.appendChild(c);
   });
 
@@ -851,6 +858,171 @@ function registerOcrModules() {
   closeOcrModal();
 }
 
+// ========== Edit Module Modal ==========
+
+let editingUuid: number | null = null;
+let editStatCount = 1;
+
+function openEditModal(uuid: number) {
+  const m = modules.find((mod) => mod.uuid === uuid);
+  if (!m) return;
+  editingUuid = uuid;
+  editStatCount = m.stats.length || 1;
+  renderEditModalBody();
+  $("edit-modal-bd").classList.add("on");
+}
+
+function closeEditModal() {
+  $("edit-modal-bd").classList.remove("on");
+  editingUuid = null;
+}
+
+function renderEditModalBody() {
+  const m = modules.find((mod) => mod.uuid === editingUuid);
+  if (!m) return;
+  const body = $("edit-modal-body");
+
+  const comp = configIdToComponents(m.config_id);
+  const typeDigit = comp?.typeDigit ?? 1;
+  const raritySub = comp?.raritySub ?? 2;
+
+  const statRows: string[] = [];
+  for (let i = 0; i < editStatCount; i++) {
+    const curStat = m.stats[i];
+    const options = ALL_STAT_IDS.map((id) =>
+      `<option value="${id}"${curStat && id === curStat.part_id ? " selected" : ""}>${statName(id)}</option>`
+    ).join("");
+    const valueOpts = Array.from({ length: 10 }, (_, v) => v + 1)
+      .map((v) => `<option value="${v}"${curStat && v === curStat.value ? " selected" : ""}>　${v}</option>`)
+      .join("");
+    statRows.push(`<div class="stat-input-group" data-si="${i}">
+      <select class="opt-select edit-stat-name">${curStat ? "" : '<option value="">-- 選択 --</option>'}${options}</select>
+      <select class="opt-select edit-stat-value">${valueOpts}</select>
+      ${i > 0 ? `<button class="ocr-stat-remove edit-remove-stat" data-si="${i}">&times;</button>` : ""}
+    </div>`);
+  }
+
+  body.innerHTML = `<div class="manual-form">
+    <div class="edit-icon-preview" id="edit-icon-preview">${moduleIconHtml(m.config_id)}</div>
+    <div class="form-row">
+      <label class="form-field">
+        <span class="cmd-lbl">型</span>
+        <select class="opt-select" id="edit-type">
+          <option value="1"${typeDigit === 1 ? " selected" : ""}>攻撃</option>
+          <option value="2"${typeDigit === 2 ? " selected" : ""}>支援</option>
+          <option value="3"${typeDigit === 3 ? " selected" : ""}>防御</option>
+        </select>
+      </label>
+      <label class="form-field">
+        <span class="cmd-lbl">レア種別</span>
+        <select class="opt-select" id="edit-rarity-sub">
+          <option value="1"${raritySub === 1 ? " selected" : ""}>青</option>
+          <option value="2"${raritySub === 2 ? " selected" : ""}>紫</option>
+          <option value="3"${raritySub === 3 ? " selected" : ""}>金A</option>
+          <option value="4"${raritySub === 4 ? " selected" : ""}>金B</option>
+        </select>
+      </label>
+    </div>
+    <div class="manual-stats-section">
+      <div class="cmd-lbl">ステータス</div>
+      <div id="edit-stat-rows">${statRows.join("")}</div>
+      ${editStatCount < 3 ? `<button class="addbtn" id="edit-add-stat">+ ステータス追加</button>` : ""}
+    </div>
+  </div>`;
+
+  // Icon preview update on type/rarity change
+  const updateIconPreview = () => {
+    const td = Number($<HTMLSelectElement>("edit-type").value);
+    const rs = Number($<HTMLSelectElement>("edit-rarity-sub").value);
+    const preview = document.getElementById("edit-icon-preview");
+    if (preview) preview.innerHTML = moduleIconHtml(buildConfigId(td, rs));
+  };
+  $<HTMLSelectElement>("edit-type").onchange = updateIconPreview;
+  $<HTMLSelectElement>("edit-rarity-sub").onchange = updateIconPreview;
+
+  // Add stat
+  const addBtn = document.getElementById("edit-add-stat");
+  if (addBtn) addBtn.onclick = () => {
+    syncEditStatsToModule();
+    editStatCount++;
+    const m2 = modules.find((mod) => mod.uuid === editingUuid);
+    if (m2 && m2.stats.length < editStatCount) {
+      m2.stats.push({ part_id: ALL_STAT_IDS[0], value: 1 });
+    }
+    renderEditModalBody();
+  };
+
+  // Remove stat
+  body.querySelectorAll<HTMLButtonElement>(".edit-remove-stat").forEach((btn) => {
+    btn.onclick = () => {
+      syncEditStatsToModule();
+      const si = Number(btn.dataset.si);
+      const m2 = modules.find((mod) => mod.uuid === editingUuid);
+      if (m2) m2.stats.splice(si, 1);
+      editStatCount--;
+      renderEditModalBody();
+    };
+  });
+}
+
+function syncEditStatsToModule() {
+  const m = modules.find((mod) => mod.uuid === editingUuid);
+  if (!m) return;
+  const rows = document.querySelectorAll<HTMLElement>("#edit-stat-rows .stat-input-group");
+  const newStats: StatEntry[] = [];
+  rows.forEach((row) => {
+    const nameSelect = row.querySelector<HTMLSelectElement>(".edit-stat-name");
+    const valueSelect = row.querySelector<HTMLSelectElement>(".edit-stat-value");
+    if (!nameSelect || !valueSelect) return;
+    const partId = Number(nameSelect.value);
+    if (!partId) return;
+    newStats.push({ part_id: partId, value: Number(valueSelect.value) });
+  });
+  m.stats = newStats;
+}
+
+function saveEditModule() {
+  const m = modules.find((mod) => mod.uuid === editingUuid);
+  if (!m) return;
+
+  const typeDigit = Number($<HTMLSelectElement>("edit-type").value);
+  const raritySub = Number($<HTMLSelectElement>("edit-rarity-sub").value);
+  m.config_id = buildConfigId(typeDigit, raritySub);
+  m.quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
+
+  const stats: StatEntry[] = [];
+  const usedIds = new Set<number>();
+  const rows = document.querySelectorAll<HTMLElement>("#edit-stat-rows .stat-input-group");
+  for (const row of rows) {
+    const nameSelect = row.querySelector<HTMLSelectElement>(".edit-stat-name");
+    const valueSelect = row.querySelector<HTMLSelectElement>(".edit-stat-value");
+    if (!nameSelect || !valueSelect) continue;
+    const partId = Number(nameSelect.value);
+    if (!partId) continue;
+    if (usedIds.has(partId)) return;
+    usedIds.add(partId);
+    stats.push({ part_id: partId, value: Number(valueSelect.value) });
+  }
+
+  if (stats.length === 0) return;
+
+  m.stats = stats;
+  saveModulesToStorage();
+  renderGrid();
+  updateOptRunBtn();
+  closeEditModal();
+}
+
+function deleteEditModule() {
+  const idx = modules.findIndex((mod) => mod.uuid === editingUuid);
+  if (idx < 0) return;
+  modules.splice(idx, 1);
+  saveModulesToStorage();
+  renderGrid();
+  updateOptRunBtn();
+  closeEditModal();
+}
+
 // ========== Manual Input Modal ==========
 
 let manualStatCount = 1;
@@ -1372,6 +1544,13 @@ document.addEventListener("DOMContentLoaded", () => {
   $("manual-cancel").onclick = closeManualModal;
   $("manual-add").onclick = addManualModule;
   $("manual-modal-bd").onclick = (e) => { if (e.target === $("manual-modal-bd")) closeManualModal(); };
+
+  // Edit module modal
+  $("edit-modal-close").onclick = closeEditModal;
+  $("edit-cancel").onclick = closeEditModal;
+  $("edit-save").onclick = saveEditModule;
+  $("edit-delete").onclick = deleteEditModule;
+  $("edit-modal-bd").onclick = (e) => { if (e.target === $("edit-modal-bd")) closeEditModal(); };
 
   // Header buttons
   $("screenshot-btn").onclick = () => importScreenshot();

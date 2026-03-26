@@ -387,7 +387,8 @@ function closeFly() {
 // --- Optimizer state persistence ---
 
 const OPT_STATE_KEY = "opt-last-state";
-const OPT_PATTERNS_KEY = "opt-patterns";
+// パターンのキャッシュ（invoke の非同期を吸収するため）
+let cachedPatterns: OptPattern[] = [];
 
 interface OptPattern {
   name: string;
@@ -420,13 +421,24 @@ function restoreOptState() {
 }
 
 function getPatterns(): OptPattern[] {
-  const raw = localStorage.getItem(OPT_PATTERNS_KEY);
-  if (!raw) return [];
-  try { return JSON.parse(raw); } catch { return []; }
+  return cachedPatterns;
 }
 
-function savePatterns(patterns: OptPattern[]) {
-  localStorage.setItem(OPT_PATTERNS_KEY, JSON.stringify(patterns));
+async function loadPatternsFromBackend() {
+  try {
+    cachedPatterns = await invoke<OptPattern[]>("get_opt_patterns");
+  } catch {
+    cachedPatterns = [];
+  }
+}
+
+async function savePatterns(patterns: OptPattern[]) {
+  cachedPatterns = patterns;
+  try {
+    await invoke("save_opt_patterns", { patterns });
+  } catch (e) {
+    console.error("パターン保存エラー:", e);
+  }
 }
 
 function renderPatternSelect() {
@@ -880,6 +892,7 @@ async function init() {
   $("opt-run").onclick = () => runOptimize();
 
   // --- パターン管理 ---
+  await loadPatternsFromBackend();
   renderPatternSelect();
 
   $("pattern-load").onclick = () => {
@@ -887,7 +900,7 @@ async function init() {
     if (!isNaN(idx) && idx >= 0) loadPattern(idx);
   };
 
-  $("pattern-save").onclick = () => {
+  $("pattern-save").onclick = async () => {
     const name = prompt("パターン名を入力してください");
     if (!name || !name.trim()) return;
     const quality = Number(($<HTMLSelectElement>("opt-quality")).value);
@@ -905,12 +918,12 @@ async function init() {
     } else {
       patterns.push(entry);
     }
-    savePatterns(patterns);
+    await savePatterns(patterns);
     renderPatternSelect();
     ($<HTMLSelectElement>("pattern-select")).value = String(existing >= 0 ? existing : patterns.length - 1);
   };
 
-  $("pattern-delete").onclick = () => {
+  $("pattern-delete").onclick = async () => {
     const sel = $<HTMLSelectElement>("pattern-select");
     const idx = Number(sel.value);
     if (isNaN(idx) || idx < 0) return;
@@ -919,7 +932,7 @@ async function init() {
     if (!p) return;
     if (!confirm(`パターン「${p.name}」を削除しますか？`)) return;
     patterns.splice(idx, 1);
-    savePatterns(patterns);
+    await savePatterns(patterns);
     renderPatternSelect();
   };
 

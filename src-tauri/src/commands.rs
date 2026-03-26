@@ -1,13 +1,16 @@
 use crate::modules_db::{ModuleEntry, ModulesDbState};
 use crate::packets::capture::{run_capture, ModulePayload};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use star_optimizer::{ModuleInput, OptimizeRequest, OptimizeResponse};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
+
+pub struct OptPatternsPath(pub PathBuf);
 
 /// 監視状態を管理するステート
 pub struct MonitorState {
@@ -99,6 +102,37 @@ pub async fn optimize_modules(
     Ok(tauri::async_runtime::spawn_blocking(move || star_optimizer::optimize(&inputs, &req))
         .await
         .map_err(|e| e.to_string())?)
+}
+
+/// 最適化パターン1件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptPattern {
+    pub name: String,
+    pub required: Vec<String>,
+    pub desired: Vec<String>,
+    pub excluded: Vec<String>,
+    pub quality: u32,
+}
+
+/// 保存済みの最適化パターン一覧を返す
+#[tauri::command]
+pub fn get_opt_patterns(path: State<OptPatternsPath>) -> Result<Vec<OptPattern>, String> {
+    if !path.0.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&path.0).map_err(|e| e.to_string())?;
+    serde_json::from_str(&content).map_err(|e| e.to_string())
+}
+
+/// 最適化パターン一覧を保存する
+#[tauri::command]
+pub fn save_opt_patterns(
+    path: State<OptPatternsPath>,
+    patterns: Vec<OptPattern>,
+) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(&patterns).map_err(|e| e.to_string())?;
+    std::fs::write(&path.0, json).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// ファイルにエクスポート（保存ダイアログ→書き込み）
