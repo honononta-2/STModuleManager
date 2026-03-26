@@ -903,30 +903,34 @@ function renderEditModalBody() {
   }
 
   body.innerHTML = `<div class="manual-form">
-    <div class="edit-icon-preview" id="edit-icon-preview">${moduleIconHtml(m.config_id)}</div>
-    <div class="form-row">
-      <label class="form-field">
-        <span class="cmd-lbl">型</span>
-        <select class="opt-select" id="edit-type">
-          <option value="1"${typeDigit === 1 ? " selected" : ""}>攻撃</option>
-          <option value="2"${typeDigit === 2 ? " selected" : ""}>支援</option>
-          <option value="3"${typeDigit === 3 ? " selected" : ""}>防御</option>
-        </select>
-      </label>
-      <label class="form-field">
-        <span class="cmd-lbl">レア種別</span>
-        <select class="opt-select" id="edit-rarity-sub">
-          <option value="1"${raritySub === 1 ? " selected" : ""}>青</option>
-          <option value="2"${raritySub === 2 ? " selected" : ""}>紫</option>
-          <option value="3"${raritySub === 3 ? " selected" : ""}>金A</option>
-          <option value="4"${raritySub === 4 ? " selected" : ""}>金B</option>
-        </select>
-      </label>
-    </div>
-    <div class="manual-stats-section">
-      <div class="cmd-lbl">ステータス</div>
-      <div id="edit-stat-rows">${statRows.join("")}</div>
-      ${editStatCount < 3 ? `<button class="addbtn" id="edit-add-stat">+ ステータス追加</button>` : ""}
+    <div class="manual-row">
+      <div class="ocr-row-icon" id="edit-icon-preview">${moduleIconHtml(m.config_id)}</div>
+      <div class="ocr-row-body">
+        <div class="ocr-row-fields">
+          <label class="form-field">
+            <span class="cmd-lbl">型</span>
+            <select class="opt-select" id="edit-type">
+              <option value="1"${typeDigit === 1 ? " selected" : ""}>攻撃</option>
+              <option value="2"${typeDigit === 2 ? " selected" : ""}>支援</option>
+              <option value="3"${typeDigit === 3 ? " selected" : ""}>防御</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span class="cmd-lbl">レア種別</span>
+            <select class="opt-select" id="edit-rarity-sub">
+              <option value="1"${raritySub === 1 ? " selected" : ""}>青</option>
+              <option value="2"${raritySub === 2 ? " selected" : ""}>紫</option>
+              <option value="3"${raritySub === 3 ? " selected" : ""}>金A</option>
+              <option value="4"${raritySub === 4 ? " selected" : ""}>金B</option>
+            </select>
+          </label>
+        </div>
+        <div class="manual-stats-section">
+          <div class="cmd-lbl">ステータス</div>
+          <div id="edit-stat-rows">${statRows.join("")}</div>
+          ${editStatCount < 3 ? `<button class="addbtn" id="edit-add-stat">+ ステータス追加</button>` : ""}
+        </div>
+      </div>
     </div>
   </div>`;
 
@@ -1055,32 +1059,48 @@ function renderManualModalBody() {
     </div>`);
   }
 
+  const defaultConfigId = buildConfigId(1, 1);
   body.innerHTML = `<div class="manual-form">
-    <div class="form-row">
-      <label class="form-field">
-        <span class="cmd-lbl">型</span>
-        <select class="opt-select" id="manual-type">
-          <option value="1">攻撃</option>
-          <option value="2">支援</option>
-          <option value="3">防御</option>
-        </select>
-      </label>
-      <label class="form-field">
-        <span class="cmd-lbl">レア種別</span>
-        <select class="opt-select" id="manual-rarity-sub">
-          <option value="1">青</option>
-          <option value="2">紫</option>
-          <option value="3">金A</option>
-          <option value="4">金B</option>
-        </select>
-      </label>
-    </div>
-    <div class="manual-stats-section">
-      <div class="cmd-lbl">ステータス</div>
-      <div id="manual-stat-rows">${statRows.join("")}</div>
-      ${manualStatCount < 3 ? `<button class="addbtn" id="manual-add-stat">+ ステータス追加</button>` : ""}
+    <div class="manual-row">
+      <div class="ocr-row-icon" id="manual-icon-preview">${moduleIconHtml(defaultConfigId)}</div>
+      <div class="ocr-row-body">
+        <div class="ocr-row-fields">
+          <label class="form-field">
+            <span class="cmd-lbl">型</span>
+            <select class="opt-select" id="manual-type">
+              <option value="1">攻撃</option>
+              <option value="2">支援</option>
+              <option value="3">防御</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span class="cmd-lbl">レア種別</span>
+            <select class="opt-select" id="manual-rarity-sub">
+              <option value="1">青</option>
+              <option value="2">紫</option>
+              <option value="3">金A</option>
+              <option value="4">金B</option>
+            </select>
+          </label>
+        </div>
+        <div class="manual-stats-section">
+          <div class="cmd-lbl">ステータス</div>
+          <div id="manual-stat-rows">${statRows.join("")}</div>
+          ${manualStatCount < 3 ? `<button class="addbtn" id="manual-add-stat">+ ステータス追加</button>` : ""}
+        </div>
+      </div>
     </div>
   </div>`;
+
+  // Icon preview update on type/rarity change
+  const updateManualIconPreview = () => {
+    const td = Number($<HTMLSelectElement>("manual-type").value);
+    const rs = Number($<HTMLSelectElement>("manual-rarity-sub").value);
+    const preview = document.getElementById("manual-icon-preview");
+    if (preview) preview.innerHTML = moduleIconHtml(buildConfigId(td, rs));
+  };
+  $<HTMLSelectElement>("manual-type").onchange = updateManualIconPreview;
+  $<HTMLSelectElement>("manual-rarity-sub").onchange = updateManualIconPreview;
 
   // Bind add stat
   const addBtn = document.getElementById("manual-add-stat");
