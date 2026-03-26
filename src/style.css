@@ -639,10 +639,10 @@ body {
   min-width:160px;
 }
 .pattern-del-btn {
-  color:var(--tx3);
+  color:#c42b1c;
 }
 .pattern-del-btn:hover {
-  color:#c42b1c;
+  background:rgba(196,43,28,0.08);
 }
 
 .opt-empty {
