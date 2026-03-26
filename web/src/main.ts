@@ -330,6 +330,7 @@ function closeFly() {
 
 const OPT_STATE_KEY = "opt-last-state";
 const OPT_PATTERNS_KEY = "opt-patterns";
+const OPT_RESULTS_KEY = "opt-last-results";
 
 interface OptPattern {
   name: string;
@@ -534,6 +535,7 @@ function renderOptResults(res: OptimizeResponse) {
     results.style.display = "none";
     empty.style.display = "flex";
     empty.innerHTML = '<div style="font-size:28px;opacity:0.22">○</div><div>条件に合う組み合わせが見つかりませんでした</div>';
+    try { localStorage.setItem(OPT_RESULTS_KEY, JSON.stringify(res)); } catch { /* quota */ }
     return;
   }
 
@@ -566,6 +568,20 @@ function renderOptResults(res: OptimizeResponse) {
     card.onclick = () => openModal(comb);
     results.appendChild(card);
   });
+
+  // Save results to localStorage
+  try { localStorage.setItem(OPT_RESULTS_KEY, JSON.stringify(res)); } catch { /* quota */ }
+}
+
+function restoreOptResults() {
+  const raw = localStorage.getItem(OPT_RESULTS_KEY);
+  if (!raw) return;
+  try {
+    const res: OptimizeResponse = JSON.parse(raw);
+    if (res.combinations && res.combinations.length > 0) {
+      renderOptResults(res);
+    }
+  } catch { /* ignore */ }
 }
 
 // ========== Result Detail Modal ==========
@@ -1578,6 +1594,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Restore optimizer state
   restoreOptState();
+  restoreOptResults();
   updateOptBtnLabel("req");
   updateOptBtnLabel("des");
   updateOptBtnLabel("excl");
