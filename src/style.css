@@ -410,6 +410,33 @@ body {
 .sb { font-size:11px; color:var(--tx2); display:flex; align-items:center; gap:5px; }
 .sb-dot { width:5px; height:5px; border-radius:50%; background:var(--acc); }
 
+/* Capture toggle in status bar */
+.cap-wrap {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 0; border: none; background: none;
+  cursor: pointer; user-select: none; font-family: inherit;
+}
+.cap-label { font-size: 11px; color: var(--tx2); }
+.cap-track {
+  display: inline-block;
+  width: 28px; height: 14px;
+  border-radius: 7px;
+  background: var(--str-default);
+  border: 1px solid var(--str-soft);
+  position: relative;
+}
+.cap-thumb {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0.5px 1px rgba(0,0,0,0.2);
+  position: absolute;
+  top: 1px; left: 1px;
+  transition: left 0.15s;
+}
+.cap-wrap.active .cap-track { background: var(--acc); border-color: var(--acc-d1); }
+.cap-wrap.active .cap-thumb { left: 15px; }
+
 /* ===== Optimize panel ===== */
 
 .opt-chips { display:flex; gap:5px; flex-wrap:wrap; }

@@ -1,19 +1,25 @@
 use crate::modules_db::{ModuleEntry, ModulesDbState};
+use crate::packets::capture::{run_capture, ModulePayload};
 use serde::Serialize;
 use star_optimizer::{ModuleInput, OptimizeRequest, OptimizeResponse};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
+use std::sync::Mutex;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
 /// 監視状態を管理するステート
 pub struct MonitorState {
     pub server_found: Arc<AtomicBool>,
+    pub capture_stop: Mutex<Option<Arc<AtomicBool>>>,
+    pub module_tx: Mutex<Sender<ModulePayload>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MonitorStatus {
     pub server_found: bool,
+    pub capturing: bool,
 }
 
 /// 保存済みモジュール一覧を返す
@@ -28,9 +34,48 @@ pub fn get_modules(db: State<ModulesDbState>) -> Result<Vec<ModuleEntry>, String
 /// 監視状態を返す
 #[tauri::command]
 pub fn get_monitor_status(monitor: State<MonitorState>) -> MonitorStatus {
+    let capturing = monitor
+        .capture_stop
+        .lock()
+        .map(|g| g.is_some())
+        .unwrap_or(false);
     MonitorStatus {
         server_found: monitor.server_found.load(Ordering::Relaxed),
+        capturing,
     }
+}
+
+/// キャプチャを開始する
+#[tauri::command]
+pub fn start_capture_cmd(monitor: State<MonitorState>) -> Result<(), String> {
+    let mut stop_guard = monitor.capture_stop.lock().map_err(|e| e.to_string())?;
+    if stop_guard.is_some() {
+        return Ok(()); // already running
+    }
+    let flag = Arc::new(AtomicBool::new(false));
+    let sf = monitor.server_found.clone();
+    let tx = monitor
+        .module_tx
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    let f = flag.clone();
+    std::thread::spawn(move || {
+        run_capture(f, sf, tx);
+    });
+    *stop_guard = Some(flag);
+    Ok(())
+}
+
+/// キャプチャを停止する
+#[tauri::command]
+pub fn stop_capture_cmd(monitor: State<MonitorState>) -> Result<(), String> {
+    let mut stop_guard = monitor.capture_stop.lock().map_err(|e| e.to_string())?;
+    if let Some(flag) = stop_guard.take() {
+        flag.store(true, Ordering::Relaxed);
+        monitor.server_found.store(false, Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 /// モジュール最適化を実行し上位10件を返す

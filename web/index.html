@@ -2,71 +2,189 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Module Optimizer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>STModuleManager</title>
+  <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
 <div class="app">
 
-  <header class="header">
-    <h1>Module Optimizer</h1>
-    <div class="header-info">
-      <span id="module-count">0 モジュール</span>
-      <button class="btn" id="screenshot-btn">スクショ取込</button>
-      <button class="btn" id="import-btn">JSON</button>
-      <button class="btn" id="clear-btn">クリア</button>
-    </div>
-  </header>
+  <!-- Web header -->
+  <div class="web-header">
+    <div class="tab active" data-tab="list">モジュール一覧</div>
+    <div class="tab" data-tab="opt">最適化</div>
+  </div>
 
-  <main class="main">
-    <!-- モジュール一覧 -->
-    <section class="section" id="module-list-section" style="display:none">
-      <h2>取り込み済みモジュール</h2>
-      <div id="module-list" class="module-list"></div>
-    </section>
+  <div class="content">
 
-    <!-- 最適化設定 -->
-    <section class="section">
-      <h2>レアリティ</h2>
-      <select id="quality-select" class="select">
-        <option value="3">紫以上</option>
-        <option value="4">金以上</option>
-        <option value="5">橙のみ</option>
-      </select>
-    </section>
-
-    <section class="section">
-      <h2>メインステータス（必須）</h2>
-      <div class="stat-grid" id="req-stats"></div>
-    </section>
-
-    <section class="section">
-      <h2>サブステータス</h2>
-      <div class="stat-grid" id="des-stats"></div>
-    </section>
-
-    <section class="section">
-      <h2>対象外</h2>
-      <div class="stat-grid" id="excl-stats"></div>
-    </section>
-
-    <div class="run-section">
-      <button class="btn btn-primary" id="run-btn" disabled>最適化実行</button>
-      <div id="running-indicator" style="display:none">計算中...</div>
-    </div>
-
-    <!-- 結果 -->
-    <section class="section">
-      <div id="empty-state" class="empty-state">
-        メインステータスを選択して最適化を実行してください
+    <!-- List panel -->
+    <div class="panel active" id="panel-list">
+      <div class="action-bar">
+        <button class="addbtn" id="screenshot-btn">スクショ取込</button>
+        <button class="addbtn" id="manual-btn">手動入力</button>
+        <button class="addbtn" id="clear-btn">クリア</button>
       </div>
-      <div id="results"></div>
-    </section>
-  </main>
+      <div class="cmdbar">
+        <div class="cmd-grp">
+          <span class="cmd-lbl">絞込</span>
+          <button class="opt-multi-btn" id="filter-btn">未選択</button>
+          <button class="filter-mode-btn" id="filter-mode">AND</button>
+        </div>
+        <div class="cmd-sep"></div>
+        <div class="cmd-grp">
+          <span class="cmd-lbl">並び替え</span>
+          <div id="schips" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
+          <button class="addbtn" id="add-s">+ Add</button>
+        </div>
+      </div>
+      <div class="scroll">
+        <div class="grid" id="grid"></div>
+      </div>
+    </div>
 
-  <div id="ocr-progress" class="ocr-progress" style="display:none"></div>
-  <div id="error-toast" class="error-toast" style="display:none"></div>
+    <!-- Optimize panel -->
+    <div class="panel" id="panel-opt">
+      <div class="cmdbar opt-cmdbar">
+        <div class="cmd-grp">
+          <span class="cmd-lbl">レアリティ</span>
+          <select id="opt-quality" class="opt-select">
+            <option value="3">紫以上</option>
+            <option value="4">金以上</option>
+            <option value="5">橙のみ</option>
+          </select>
+        </div>
+        <div class="cmd-sep"></div>
+        <div class="cmd-grp">
+          <span class="cmd-lbl">メインステータス</span>
+          <button class="opt-multi-btn" id="opt-btn-req">未選択</button>
+        </div>
+        <div class="cmd-sep"></div>
+        <div class="cmd-grp">
+          <span class="cmd-lbl">サブステータス</span>
+          <button class="opt-multi-btn" id="opt-btn-des">未選択</button>
+        </div>
+        <div class="cmd-sep"></div>
+        <div class="cmd-grp">
+          <span class="cmd-lbl">対象外</span>
+          <button class="opt-multi-btn" id="opt-btn-excl">未選択</button>
+        </div>
+      </div>
+
+      <div class="opt-pattern-bar">
+        <span class="cmd-lbl">パターン</span>
+        <select id="pattern-select" class="opt-select pattern-select">
+          <option value="">-- 選択 --</option>
+        </select>
+        <button class="addbtn" id="pattern-load">読込</button>
+        <button class="addbtn" id="pattern-save">保存</button>
+        <button class="addbtn pattern-del-btn" id="pattern-delete">削除</button>
+        <div style="flex:1"></div>
+        <button class="opt-run-btn" id="opt-run" disabled>最適化実行</button>
+      </div>
+
+      <div class="scroll" id="opt-scroll">
+        <div class="opt-empty" id="opt-empty">
+          <div style="font-size:28px;opacity:0.22">◈</div>
+          <div>メインステータスを選択して最適化を実行してください</div>
+        </div>
+        <div class="opt-results" id="opt-results" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- Result detail modal -->
+    <div class="modal-bd" id="modal-bd">
+      <div class="modal" id="modal">
+        <div class="modal-head">
+          <span class="modal-title" id="modal-title">組み合わせ詳細</span>
+          <button class="modal-close" id="modal-close">&times;</button>
+        </div>
+        <div class="modal-body" id="modal-body"></div>
+      </div>
+    </div>
+
+    <!-- OCR confirmation modal -->
+    <div class="modal-bd" id="ocr-modal-bd">
+      <div class="modal ocr-modal">
+        <div class="modal-head">
+          <span class="modal-title">OCR結果確認</span>
+          <button class="modal-close" id="ocr-modal-close">&times;</button>
+        </div>
+        <div class="modal-body" id="ocr-modal-body"></div>
+        <div class="modal-footer">
+          <button class="addbtn" id="ocr-cancel">キャンセル</button>
+          <span style="flex:1"></span>
+          <button class="opt-run-btn" id="ocr-register">登録</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pattern delete confirm modal -->
+    <div class="modal-bd" id="patdel-modal-bd">
+      <div class="modal" style="width:400px">
+        <div class="modal-head">
+          <span class="modal-title">パターン削除</span>
+          <button class="modal-close" id="patdel-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p id="patdel-msg"></p>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="patdel-cancel">キャンセル</button>
+          <button class="pattern-del-btn addbtn" id="patdel-ok">削除</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pattern save modal -->
+    <div class="modal-bd" id="patsave-modal-bd">
+      <div class="modal" style="width:400px">
+        <div class="modal-head">
+          <span class="modal-title">パターン保存</span>
+          <button class="modal-close" id="patsave-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <label style="display:block;font-size:13px;color:var(--tx2);margin-bottom:6px">パターン名</label>
+          <input type="text" id="patsave-name" class="patsave-input" placeholder="パターン名を入力してください" autocomplete="off">
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="patsave-cancel">キャンセル</button>
+          <button class="opt-run-btn" id="patsave-ok">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manual input modal -->
+    <div class="modal-bd" id="manual-modal-bd">
+      <div class="modal">
+        <div class="modal-head">
+          <span class="modal-title">モジュール手動入力</span>
+          <button class="modal-close" id="manual-modal-close">&times;</button>
+        </div>
+        <div class="modal-body" id="manual-modal-body"></div>
+        <div class="modal-footer">
+          <button class="addbtn" id="manual-cancel">キャンセル</button>
+          <button class="opt-run-btn" id="manual-add">追加</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div class="statusbar">
+    <div class="sb"><span class="sb-dot" id="sb-dot"></span><span id="sb-n">0 モジュール</span></div>
+    <div class="sb" id="sb-i"></div>
+    <div class="sb" id="sb-progress" style="margin-left:auto;display:none"></div>
+  </div>
 </div>
+
+<!-- Flyout containers -->
+<div class="bd" id="bd"></div>
+<div class="flyout" id="fly-filter"></div>
+<div class="flyout" id="fly-s"></div>
+<div class="flyout" id="fly-multi"></div>
+
+<!-- Toast -->
+<div id="toast" class="toast" style="display:none"></div>
 
 <script type="module" src="/src/main.ts"></script>
 </body>

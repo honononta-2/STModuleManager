@@ -3,7 +3,6 @@ mod modules_db;
 mod packets;
 
 use commands::MonitorState;
-use packets::capture::run_capture;
 use packets::protobuf::{decode_protobuf_raw, extract_modules};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -26,21 +25,13 @@ pub fn run() {
             let db_state = modules_db::ModulesDbState::new(db_path);
             app.manage(db_state);
 
-            // 監視ステート
+            // 監視ステート（キャプチャはトグルで手動開始）
             let server_found = Arc::new(AtomicBool::new(false));
+            let (module_tx, module_rx) = std::sync::mpsc::channel();
             app.manage(MonitorState {
                 server_found: server_found.clone(),
-            });
-
-            // バックグラウンド監視を開始
-            let stop_flag = Arc::new(AtomicBool::new(false));
-            let (module_tx, module_rx) = std::sync::mpsc::channel();
-
-            // キャプチャスレッド
-            let stop = stop_flag.clone();
-            let sf = server_found.clone();
-            std::thread::spawn(move || {
-                run_capture(stop, sf, module_tx);
+                capture_stop: std::sync::Mutex::new(None),
+                module_tx: std::sync::Mutex::new(module_tx),
             });
 
             // モジュール処理スレッド: チャネルから受信→DB保存→フロントに通知
@@ -93,6 +84,8 @@ pub fn run() {
             commands::get_monitor_status,
             commands::optimize_modules,
             commands::export_to_file,
+            commands::start_capture_cmd,
+            commands::stop_capture_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

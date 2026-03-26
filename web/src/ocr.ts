@@ -69,6 +69,15 @@ interface ModuleIconTemplateInfo {
 }
 
 let moduleIconTemplates: ModuleIconTemplateInfo[] = [];
+
+interface UserModuleOcrTemplateInfo {
+  type: string;
+  rarity: number;
+  colorMat: any;
+  avgHash: number[];
+}
+
+let userModuleOcrTemplates: UserModuleOcrTemplateInfo[] = [];
 let templatesLoaded = false;
 
 const CLASSIFY_BACKGROUNDS = [
@@ -89,13 +98,15 @@ async function loadImage(src: string): Promise<HTMLImageElement> {
 
 function renderTemplateCanvas(
   img: HTMLImageElement,
-  backgroundFill: string | null,
+  backgroundFill: string | HTMLImageElement | null,
 ): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = img.width;
   canvas.height = img.height;
   const ctx = canvas.getContext("2d")!;
-  if (backgroundFill) {
+  if (backgroundFill instanceof HTMLImageElement) {
+    ctx.drawImage(backgroundFill, 0, 0, img.width, img.height);
+  } else if (backgroundFill) {
     ctx.fillStyle = backgroundFill;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   } else {
@@ -119,6 +130,10 @@ function buildTemplateMats(
 
   mat.delete();
   return { grayMat: gray, edgeMat: edge };
+}
+
+function buildColorMat(canvas: HTMLCanvasElement, cv: any): any {
+  return cv.imread(canvas);
 }
 
 async function loadTemplates(): Promise<void> {
@@ -149,26 +164,46 @@ async function loadTemplates(): Promise<void> {
     });
   }
 
+  const rarityBgImages: Record<number, HTMLImageElement> = {};
+  for (const r of [2, 3, 4]) {
+    rarityBgImages[r] = await loadImage(`/icons/rarity${r}.png`);
+  }
+
   for (const modIcon of MODULE_ICONS) {
     const img = await loadImage(`/icons/${modIcon.file}`);
-    const baseCanvas = renderTemplateCanvas(img, "#000000");
+    const bgRarity = Math.min(modIcon.rarity, 4);
+    const bgImg = rarityBgImages[bgRarity];
+
+    const baseCanvas = renderTemplateCanvas(img, bgImg);
     const baseMats = buildTemplateMats(baseCanvas, cv);
-    const classifyVariants = CLASSIFY_BACKGROUNDS.map((background) => {
-      const variantCanvas = renderTemplateCanvas(img, background.fill);
-      const mats = buildTemplateMats(variantCanvas, cv);
-      return {
-        name: background.name,
-        grayMat: mats.grayMat,
-        edgeMat: mats.edgeMat,
-      };
-    });
+
     moduleIconTemplates.push({
       type: modIcon.type,
       rarity: modIcon.rarity,
       grayMat: baseMats.grayMat,
       edgeMat: baseMats.edgeMat,
-      classifyVariants,
+      classifyVariants: [{
+        name: `rarity${bgRarity}`,
+        grayMat: baseMats.grayMat,
+        edgeMat: baseMats.edgeMat,
+      }],
     });
+  }
+
+  for (const modIcon of MODULE_ICONS) {
+    try {
+      const img = await loadImage(`/icons/OCR_${modIcon.type}${modIcon.rarity}.png`);
+      const colorCanvas = renderTemplateCanvas(img, null);
+      const colorMat = buildColorMat(colorCanvas, cv);
+      userModuleOcrTemplates.push({
+        type: modIcon.type,
+        rarity: modIcon.rarity,
+        colorMat,
+        avgHash: computeAverageHash(colorMat, cv),
+      });
+    } catch {
+      // User-provided OCR templates are optional.
+    }
   }
 
   templatesLoaded = true;
@@ -342,6 +377,61 @@ function detectScale(grayImage: any, cv: any): number {
   return bestScale;
 }
 
+function detectModuleScale(grayImage: any, cv: any, statScale: number): number {
+  const refs: ModuleIconTemplateInfo[] = [];
+  const seenTypes = new Set<string>();
+  for (const tmpl of moduleIconTemplates) {
+    if (seenTypes.has(tmpl.type)) continue;
+    refs.push(tmpl);
+    seenTypes.add(tmpl.type);
+    if (refs.length >= 3) break;
+  }
+  if (refs.length === 0) return 0.2;
+
+  // statScale からモジュールスケールの妥当な範囲を制約
+  // モジュールアイコンはステータスアイコンの約2倍幅
+  // (statIcon=80px base, moduleIcon=256px base → ratio ≈ 80*statScale*2 / 256)
+  const minScale = Number.isFinite(statScale) && statScale > 0
+    ? Math.max(0.22, statScale * 0.55)
+    : 0.22;
+  const maxScale = Number.isFinite(statScale) && statScale > 0
+    ? Math.min(0.45, statScale * 0.75)
+    : 0.42;
+
+  let bestScale = (minScale + maxScale) / 2;
+  let bestScore = -1;
+
+  for (let scale = minScale; scale <= maxScale; scale += 0.02) {
+    let maxScore = 0;
+    for (const ref of refs) {
+      const w = Math.round(ref.grayMat.cols * scale);
+      const h = Math.round(ref.grayMat.rows * scale);
+      if (w < 10 || h < 10 || w >= grayImage.cols || h >= grayImage.rows)
+        continue;
+
+      const resized = new cv.Mat();
+      cv.resize(ref.grayMat, resized, new cv.Size(w, h));
+      const result = new cv.Mat();
+      cv.matchTemplate(grayImage, resized, result, cv.TM_CCOEFF_NORMED);
+      const { maxVal } = cv.minMaxLoc(result);
+      if (maxVal > maxScore) maxScore = maxVal;
+      resized.delete();
+      result.delete();
+    }
+
+    if (maxScore > bestScore) {
+      bestScore = maxScore;
+      bestScale = scale;
+    }
+  }
+
+  console.log(
+    `[OCR] detectModuleScale: scale=${bestScale.toFixed(3)} score=${bestScore.toFixed(3)}` +
+      ` range=[${minScale.toFixed(3)}, ${maxScale.toFixed(3)}] (statScale=${statScale.toFixed(3)})`,
+  );
+  return bestScale;
+}
+
 // --- テンプレートマッチング（フォールバック用） ---
 
 interface Detection {
@@ -351,6 +441,7 @@ interface Detection {
   w: number;
   h: number;
   score: number;
+  margin?: number;
 }
 
 function matchAllStatIcons(
@@ -417,7 +508,15 @@ function nonMaxSuppression(detections: Detection[]): Detection[] {
 
 interface ModuleRow {
   y: number;
-  stats: { partId: number; x: number; y: number; w: number; h: number }[];
+  stats: {
+    partId: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    score?: number;
+    margin?: number;
+  }[];
 }
 
 function groupIntoRows(
@@ -438,6 +537,8 @@ function groupIntoRows(
           y: det.y,
           w: det.w,
           h: det.h,
+          score: det.score,
+          margin: det.margin,
         });
         row.y =
           row.stats.reduce((sum, s) => sum + s.y, 0) / row.stats.length;
@@ -449,7 +550,15 @@ function groupIntoRows(
       rows.push({
         y: det.y,
         stats: [
-          { partId: det.partId, x: det.x, y: det.y, w: det.w, h: det.h },
+          {
+            partId: det.partId,
+            x: det.x,
+            y: det.y,
+            w: det.w,
+            h: det.h,
+            score: det.score,
+            margin: det.margin,
+          },
         ],
       });
     }
@@ -482,17 +591,6 @@ function fillGridGaps(
       columns.push(x);
   }
   columns.sort((a, b) => a - b);
-
-  if (columns.length === 2) {
-    const spacing = columns[1] - columns[0];
-    const leftCandidate = Math.round(columns[0] - spacing);
-    const rightCandidate = Math.round(columns[1] + spacing);
-    if (leftCandidate >= 0) {
-      columns.unshift(leftCandidate);
-    } else if (rightCandidate + iconSize <= edgeImage.cols) {
-      columns.push(rightCandidate);
-    }
-  }
 
   // 行クラスタリング
   const yValues = detections.map((d) => d.y).sort((a, b) => a - b);
@@ -671,7 +769,10 @@ function scoreColumnWindow(
   preferRight: boolean,
 ): number {
   const support = window.reduce((sum, c) => sum + c.count, 0);
-  if (window.length <= 1) return support * 100;
+  if (window.length <= 1) {
+    const rightBias = preferRight && window.length === 1 ? window[0].center * 0.6 : 0;
+    return support * 100 + rightBias;
+  }
 
   const gaps: number[] = [];
   for (let i = 1; i < window.length; i++) {
@@ -694,38 +795,84 @@ function scoreColumnWindow(
   );
 }
 
+function inferStatColumnCount(
+  clusters: ClusterCandidate[],
+  maxColsPerRow: number,
+): number {
+  if (clusters.length === 0) return 0;
+  if (clusters.length === 1) return 1;
+  if (clusters.length > maxColsPerRow) return maxColsPerRow;
+
+  const centers = clusters.map((c) => c.center).sort((a, b) => a - b);
+  const leftmost = centers[0];
+  const rightmost = centers[centers.length - 1];
+
+  if (centers.length === 2) {
+    return leftmost < rightmost * 0.75 ? 1 : 2;
+  }
+
+  const gaps: number[] = [];
+  for (let i = 1; i < centers.length; i++) {
+    gaps.push(centers[i] - centers[i - 1]);
+  }
+
+  const remainingGaps = gaps.slice(1);
+  const remainingMedianGap =
+    remainingGaps.length > 0 ? median(remainingGaps) : gaps[0];
+  const leftGap = gaps[0];
+  const looksLikeModuleColumn =
+    leftmost < rightmost * 0.45 ||
+    (remainingMedianGap > 0 && leftGap > remainingMedianGap * 1.35);
+
+  return looksLikeModuleColumn ? centers.length - 1 : centers.length;
+}
+
 // --- 行間隔フィルタ ---
 
 function filterRowsBySpacing(rowYs: number[]): number[] {
-  if (rowYs.length <= 4) return rowYs;
+  if (rowYs.length <= 3) return rowYs;
 
   let filtered = [...rowYs].sort((a, b) => a - b);
   let changed = true;
 
-  // 並びの本体は等間隔に近い前提で、端の外れ行だけを落とす
-  while (changed && filtered.length >= 6) {
+  // IQR（四分位範囲）ベースの外れ値検出で端のゴースト行を除外
+  while (changed && filtered.length >= 4) {
     changed = false;
 
     const spacings: number[] = [];
     for (let i = 1; i < filtered.length; i++) {
       spacings.push(filtered[i] - filtered[i - 1]);
     }
+    if (spacings.length < 3) break;
 
+    const sorted = [...spacings].sort((a, b) => a - b);
+    const q1 = sorted[Math.floor(sorted.length * 0.25)];
+    const q3 = sorted[Math.floor(sorted.length * 0.75)];
+    const iqr = q3 - q1;
+
+    // IQRが極端に小さい場合（ほぼ等間隔）は中央値の8%をフォールバック
     const medianSpacing = median(spacings);
     if (medianSpacing <= 0) break;
+    const spread = Math.max(iqr, medianSpacing * 0.08);
 
-    const minAllowed = medianSpacing * 0.72;
-    const maxAllowed = medianSpacing * 1.28;
+    const minAllowed = q1 - 1.5 * spread;
+    const maxAllowed = q3 + 1.5 * spread;
     const firstSpacing = spacings[0];
     const lastSpacing = spacings[spacings.length - 1];
 
     if (firstSpacing < minAllowed || firstSpacing > maxAllowed) {
+      console.log(
+        `[OCR] filterRowsBySpacing: dropping first row (spacing=${firstSpacing} allowed=[${minAllowed.toFixed(0)},${maxAllowed.toFixed(0)}])`,
+      );
       filtered = filtered.slice(1);
       changed = true;
       continue;
     }
 
     if (lastSpacing < minAllowed || lastSpacing > maxAllowed) {
+      console.log(
+        `[OCR] filterRowsBySpacing: dropping last row (spacing=${lastSpacing} allowed=[${minAllowed.toFixed(0)},${maxAllowed.toFixed(0)}])`,
+      );
       filtered = filtered.slice(0, -1);
       changed = true;
     }
@@ -761,16 +908,20 @@ function selectGlobalStatColumns(
 
   const minSupport = lowRes ? 1 : 2;
   const supported = xClusters.filter((c) => c.count >= minSupport);
-  const usable = supported.length >= maxColsPerRow ? supported : xClusters;
+  const usable = supported.length > 0 ? supported : xClusters;
+  const inferredCols = Math.min(
+    maxColsPerRow,
+    Math.max(1, inferStatColumnCount(usable, maxColsPerRow)),
+  );
 
-  if (usable.length <= maxColsPerRow) {
-    return usable.slice(0, maxColsPerRow).map((c) => c.center);
+  if (usable.length <= inferredCols) {
+    return usable.slice(0, inferredCols).map((c) => c.center);
   }
 
-  let bestWindow: ClusterCandidate[] = usable.slice(0, maxColsPerRow);
+  let bestWindow: ClusterCandidate[] = usable.slice(0, inferredCols);
   let bestScore = -Infinity;
-  for (let i = 0; i <= usable.length - maxColsPerRow; i++) {
-    const window = usable.slice(i, i + maxColsPerRow);
+  for (let i = 0; i <= usable.length - inferredCols; i++) {
+    const window = usable.slice(i, i + inferredCols);
     const score = scoreColumnWindow(window, medianR, !lowRes);
     if (score > bestScore) {
       bestScore = score;
@@ -963,6 +1114,75 @@ interface ClassificationResult {
   lowConfidenceCount: number;
   avgMargin: number;
   lowRes: boolean;
+}
+
+function pruneWeakLeadingColumn(detections: Detection[]): Detection[] {
+  if (detections.length < 2) return detections;
+
+  const iconSize = median(detections.map((d) => d.w));
+  const threshold = Math.max(12, iconSize * 0.6);
+  const sorted = [...detections].sort(
+    (a, b) => a.x + a.w / 2 - (b.x + b.w / 2),
+  );
+
+  const columns: Detection[][] = [];
+  for (const det of sorted) {
+    const centerX = det.x + det.w / 2;
+    const existing = columns.find((column) => {
+      const avgCenter =
+        column.reduce((sum, item) => sum + item.x + item.w / 2, 0) /
+        column.length;
+      return Math.abs(avgCenter - centerX) < threshold;
+    });
+
+    if (existing) {
+      existing.push(det);
+    } else {
+      columns.push([det]);
+    }
+  }
+
+  if (columns.length < 2) return detections;
+
+  columns.sort((a, b) => {
+    const ax = a.reduce((sum, det) => sum + det.x + det.w / 2, 0) / a.length;
+    const bx = b.reduce((sum, det) => sum + det.x + det.w / 2, 0) / b.length;
+    return ax - bx;
+  });
+
+  const summarize = (column: Detection[]) => {
+    const avgScore =
+      column.reduce((sum, det) => sum + det.score, 0) / column.length;
+    const avgMargin =
+      column.reduce((sum, det) => sum + (det.margin ?? 0), 0) / column.length;
+    const centerX =
+      column.reduce((sum, det) => sum + det.x + det.w / 2, 0) / column.length;
+    return { column, avgScore, avgMargin, centerX };
+  };
+
+  const left = summarize(columns[0]);
+  const others = columns.slice(1).map(summarize);
+  const otherAvgScore =
+    others.reduce((sum, item) => sum + item.avgScore, 0) / others.length;
+  const otherAvgMargin =
+    others.reduce((sum, item) => sum + item.avgMargin, 0) / others.length;
+
+  const shouldDropLeft =
+    left.avgScore < 0.55 &&
+    left.avgMargin < 0.03 &&
+    otherAvgScore - left.avgScore > 0.12 &&
+    otherAvgMargin - left.avgMargin > 0.03;
+
+  if (!shouldDropLeft) return detections;
+
+  console.log(
+    `[OCR] dropping weak leading column: x=${Math.round(left.centerX)} ` +
+      `avgScore=${left.avgScore.toFixed(3)} avgMargin=${left.avgMargin.toFixed(3)} ` +
+      `otherAvgScore=${otherAvgScore.toFixed(3)} otherAvgMargin=${otherAvgMargin.toFixed(3)}`,
+  );
+
+  const dropped = new Set(left.column);
+  return detections.filter((det) => !dropped.has(det));
 }
 
 function classifyAllSlots(
@@ -1158,6 +1378,7 @@ function classifyAllSlots(
         w: side,
         h: side,
         score: bestScore,
+        margin,
       });
     }
   }
@@ -1173,7 +1394,7 @@ function classifyAllSlots(
   }
 
   return {
-    detections,
+    detections: pruneWeakLeadingColumn(detections),
     attemptedSlots,
     lowConfidenceCount,
     avgMargin: attemptedSlots > 0 ? marginSum / attemptedSlots : 0,
@@ -1547,9 +1768,21 @@ interface ModuleIconMatch {
   rarity: number;
   configId: number;
   score: number;
+  margin: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  baseRgbType?: string;
+  baseRgbScore?: number;
+  ahashDistance?: number;
+  ahashReranked?: boolean;
 }
 
 const TYPE_DIGIT_MAP: Record<string, number> = { attack: 1, device: 2, protect: 3 };
+const MODULE_USER_TEMPLATE_MIN_SCORE = 0.275;
+const MODULE_USER_TEMPLATE_AHASH_SCORE_MAX = 0.33;
+const MODULE_USER_TEMPLATE_AHASH_MAX_DISTANCE = 0.205;
 
 function buildConfigId(typeName: string, rarity: number): number {
   const typeDigit = TYPE_DIGIT_MAP[typeName] ?? 0;
@@ -1557,22 +1790,86 @@ function buildConfigId(typeName: string, rarity: number): number {
   return (55000 + typeDigit) * 100 + rareSub;
 }
 
-function classifyModuleIconForRow(
+function computeAverageHash(srcMat: any, cv: any): number[] {
+  const gray = new cv.Mat();
+  const channels = typeof srcMat.channels === "function" ? srcMat.channels() : 4;
+  if (channels === 1) {
+    srcMat.copyTo(gray);
+  } else if (channels === 3) {
+    cv.cvtColor(srcMat, gray, cv.COLOR_RGB2GRAY);
+  } else {
+    cv.cvtColor(srcMat, gray, cv.COLOR_RGBA2GRAY);
+  }
+
+  const resized = new cv.Mat();
+  cv.resize(gray, resized, new cv.Size(8, 8), 0, 0, cv.INTER_AREA);
+
+  let sum = 0;
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      sum += resized.ucharAt(y, x);
+    }
+  }
+  const avg = sum / 64;
+  const hash = new Array<number>(64);
+  let idx = 0;
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      hash[idx++] = resized.ucharAt(y, x) > avg ? 1 : 0;
+    }
+  }
+
+  gray.delete();
+  resized.delete();
+  return hash;
+}
+
+function normalizedHammingDistance(hashA: number[], hashB: number[]): number {
+  if (hashA.length !== hashB.length || hashA.length === 0) return Number.POSITIVE_INFINITY;
+  let diff = 0;
+  for (let i = 0; i < hashA.length; i++) {
+    if (hashA[i] !== hashB[i]) diff++;
+  }
+  return diff / hashA.length;
+}
+
+function estimateModuleScaleFromRow(row: ModuleRow): number {
+  const statWidths = row.stats.map((s) => s.w).filter((w) => w > 0);
+  if (statWidths.length === 0) return 0.32;
+
+  const medianStatWidth = median(statWidths);
+  const estimatedModuleWidth = medianStatWidth * 2.05;
+  return Math.max(0.22, Math.min(0.42, estimatedModuleWidth / 256));
+}
+
+function classifyModuleIconByExistingTemplates(
   grayEq: any,
   edgeMat: any,
   row: ModuleRow,
   statScale: number,
+  moduleScale: number,
   cv: any,
 ): ModuleIconMatch | null {
   if (moduleIconTemplates.length === 0 || row.stats.length === 0) return null;
 
   // ステータスアイコンの左端を基準に検索領域を決定
   const leftStat = row.stats.reduce((min, s) => (s.x < min.x ? s : min), row.stats[0]);
-  const statIconSize = leftStat.w;
 
-  // モジュールアイコンの想定サイズ（ステータスアイコンの1.2〜2.0倍）
-  const modSizeEstimate = Math.round(statIconSize * 1.6);
-  const searchMargin = Math.round(statIconSize * 0.5);
+  const derivedModuleScale = estimateModuleScaleFromRow(row);
+  const useDetectedScale =
+    Number.isFinite(moduleScale) &&
+    Math.abs(moduleScale - derivedModuleScale) <= 0.08;
+  const baseModuleScale = useDetectedScale ? moduleScale : derivedModuleScale;
+
+  // モジュールアイコンの想定サイズ
+  const modSizeEstimate = Math.round(256 * baseModuleScale);
+  const searchMargin = Math.round(modSizeEstimate * 0.3);
+
+  console.log(
+    `[OCR] module scale hint: detected=${moduleScale.toFixed(3)} ` +
+      `derived=${derivedModuleScale.toFixed(3)} chosen=${baseModuleScale.toFixed(3)} ` +
+      `statScale=${statScale.toFixed(3)}`,
+  );
 
   // 検索領域: ステータスアイコンの左側
   const roiX = Math.max(0, leftStat.x - modSizeEstimate * 2 - searchMargin);
@@ -1587,15 +1884,25 @@ function classifyModuleIconForRow(
   const roiEdge = edgeMat.roi(roiRect);
 
   let bestMatch: ModuleIconMatch | null = null;
+  let secondBestScore = -1;
 
-  // モジュールアイコン(256px)をスクリーンショットのサイズに合わせてスケール
-  // stat icon: 80px * statScale → screenshot size
-  // module icon: 256px * modScale → screenshot size (≈ statIconSize * 1.2~2.0)
-  const baseModScale = (statIconSize * 1.6) / 256;
-  const scaleRange = [0.7, 0.85, 1.0, 1.15, 1.3];
+  const scaleCandidates = new Set<number>([
+    baseModuleScale * 0.9,
+    baseModuleScale * 0.97,
+    baseModuleScale,
+    baseModuleScale * 1.03,
+    baseModuleScale * 1.1,
+  ]);
+  if (useDetectedScale) {
+    scaleCandidates.add(moduleScale * 0.95);
+    scaleCandidates.add(moduleScale * 1.05);
+  }
+  const scaleRange = [...scaleCandidates]
+    .filter((scaleVal) => scaleVal >= 0.18 && scaleVal <= 0.45)
+    .sort((a, b) => a - b);
 
   for (const scaleMul of scaleRange) {
-    const modScale = baseModScale * scaleMul;
+    const modScale = scaleMul;
 
     for (const tmpl of moduleIconTemplates) {
       const tw = Math.round(tmpl.edgeMat.cols * modScale);
@@ -1607,7 +1914,8 @@ function classifyModuleIconForRow(
       cv.resize(tmpl.edgeMat, resizedEdge, new cv.Size(tw, th));
       const edgeResult = new cv.Mat();
       cv.matchTemplate(roiEdge, resizedEdge, edgeResult, cv.TM_CCOEFF_NORMED);
-      const edgeScore = cv.minMaxLoc(edgeResult).maxVal;
+      const edgeLoc = cv.minMaxLoc(edgeResult);
+      const edgeScore = edgeLoc.maxVal;
       resizedEdge.delete();
       edgeResult.delete();
 
@@ -1627,12 +1935,20 @@ function classifyModuleIconForRow(
       const combined = edgeScore * 0.5 + bestGrayScore * 0.5;
 
       if (!bestMatch || combined > bestMatch.score) {
+        if (bestMatch) secondBestScore = Math.max(secondBestScore, bestMatch.score);
         bestMatch = {
           type: tmpl.type,
           rarity: tmpl.rarity,
           configId: buildConfigId(tmpl.type, tmpl.rarity),
           score: combined,
+          margin: 0,
+          x: roiX + edgeLoc.maxLoc.x,
+          y: roiY + edgeLoc.maxLoc.y,
+          w: tw,
+          h: th,
         };
+      } else if (combined > secondBestScore) {
+        secondBestScore = combined;
       }
     }
   }
@@ -1640,20 +1956,272 @@ function classifyModuleIconForRow(
   roiGray.delete();
   roiEdge.delete();
 
+  if (bestMatch) {
+    bestMatch.margin =
+      secondBestScore >= 0 ? bestMatch.score - secondBestScore : Number.POSITIVE_INFINITY;
+  }
+
   // 信頼度が低すぎる場合はnull
   if (bestMatch && bestMatch.score < 0.2) {
-    console.log(`[OCR] module icon: score too low (${bestMatch.score.toFixed(3)}), skipping`);
+    console.log(
+      `[OCR] module icon: weak score=${bestMatch.score.toFixed(3)} ` +
+        `margin=${bestMatch.margin.toFixed(3)}, skipping`,
+    );
     return null;
   }
 
   if (bestMatch) {
     console.log(
       `[OCR] module icon: type=${bestMatch.type} rarity=${bestMatch.rarity} ` +
-        `score=${bestMatch.score.toFixed(3)} configId=${bestMatch.configId}`,
+        `score=${bestMatch.score.toFixed(3)} margin=${bestMatch.margin.toFixed(3)} ` +
+        `configId=${bestMatch.configId} ` +
+        `rect=(${bestMatch.x},${bestMatch.y},${bestMatch.w},${bestMatch.h})`,
     );
   }
 
   return bestMatch;
+}
+
+function classifyModuleIconByUserTemplates(
+  colorMat: any,
+  row: ModuleRow,
+  moduleScale: number,
+  cv: any,
+): ModuleIconMatch | null {
+  if (userModuleOcrTemplates.length === 0 || row.stats.length === 0) return null;
+
+  interface UserModuleCandidate {
+    template: UserModuleOcrTemplateInfo;
+    score: number;
+    localX: number;
+    localY: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }
+
+  const leftStat = row.stats.reduce((min, s) => (s.x < min.x ? s : min), row.stats[0]);
+  const derivedModuleScale = estimateModuleScaleFromRow(row);
+  const useDetectedScale =
+    Number.isFinite(moduleScale) &&
+    Math.abs(moduleScale - derivedModuleScale) <= 0.08;
+  const baseModuleScale = useDetectedScale ? moduleScale : derivedModuleScale;
+
+  const tileSize = Math.max(80, Math.min(108, Math.round(256 * baseModuleScale * 1.02)));
+  const tileX = Math.max(0, Math.round(leftStat.x - tileSize * 1.33));
+  const tileY = Math.max(0, Math.round(leftStat.y - tileSize * 0.2));
+  const tileW = Math.min(tileSize, colorMat.cols - tileX);
+  const tileH = Math.min(tileSize, colorMat.rows - tileY);
+  if (tileW < 50 || tileH < 50) return null;
+
+  const roiRect = new cv.Rect(tileX, tileY, tileW, tileH);
+  const roiColor = colorMat.roi(roiRect);
+  const expCx = tileW / 2;
+  const expCy = tileH / 2 + tileSize * 0.04;
+  const sizeRatios = [0.53, 0.61, 0.69, 0.78, 0.86];
+
+  const topCandidates: UserModuleCandidate[] = [];
+
+  for (const tmpl of userModuleOcrTemplates) {
+    for (const ratio of sizeRatios) {
+      const tw = Math.round(tileSize * ratio);
+      const th = tw;
+      if (tw < 24 || th < 24 || tw >= tileW || th >= tileH) continue;
+
+      const resized = new cv.Mat();
+      cv.resize(tmpl.colorMat, resized, new cv.Size(tw, th));
+      const result = new cv.Mat();
+      cv.matchTemplate(roiColor, resized, result, cv.TM_CCOEFF_NORMED);
+      const { maxVal, maxLoc } = cv.minMaxLoc(result);
+      resized.delete();
+      result.delete();
+
+      const cx = maxLoc.x + tw / 2;
+      const cy = maxLoc.y + th / 2;
+      const penalty = 0.01 * (Math.abs(cx - expCx) + Math.abs(cy - expCy));
+      const score = maxVal - penalty;
+
+      topCandidates.push({
+        template: tmpl,
+        score,
+        localX: maxLoc.x,
+        localY: maxLoc.y,
+        x: tileX + maxLoc.x,
+        y: tileY + maxLoc.y,
+        w: tw,
+        h: th,
+      });
+      topCandidates.sort((a, b) => b.score - a.score);
+      if (topCandidates.length > 3) {
+        topCandidates.length = 3;
+      }
+    }
+  }
+
+  const bestCandidate = topCandidates[0];
+  roiColor.delete();
+
+  if (!bestCandidate) return null;
+
+  let selectedCandidate = bestCandidate;
+  let ahashDistance: number | undefined;
+  let ahashReranked = false;
+
+  if (
+    bestCandidate.template.type !== "device" &&
+    bestCandidate.score <= MODULE_USER_TEMPLATE_AHASH_SCORE_MAX &&
+    topCandidates.length > 0
+  ) {
+    let bestHashCandidate = bestCandidate;
+    let bestHashDistance = Number.POSITIVE_INFINITY;
+
+    for (const candidate of topCandidates) {
+      const patch = colorMat.roi(new cv.Rect(candidate.x, candidate.y, candidate.w, candidate.h));
+      const patchHash = computeAverageHash(patch, cv);
+      patch.delete();
+
+      const distance = normalizedHammingDistance(patchHash, candidate.template.avgHash);
+      if (distance < bestHashDistance) {
+        bestHashDistance = distance;
+        bestHashCandidate = candidate;
+      }
+    }
+
+    ahashDistance = bestHashDistance;
+    if (bestHashDistance <= MODULE_USER_TEMPLATE_AHASH_MAX_DISTANCE) {
+      selectedCandidate = bestHashCandidate;
+      ahashReranked = bestHashCandidate !== bestCandidate;
+    }
+  }
+
+  const secondBestScore = topCandidates[1]?.score ?? -1;
+  const match: ModuleIconMatch = {
+    type: selectedCandidate.template.type,
+    rarity: selectedCandidate.template.rarity,
+    configId: buildConfigId(selectedCandidate.template.type, selectedCandidate.template.rarity),
+    score: selectedCandidate.score,
+    margin: secondBestScore >= 0 ? bestCandidate.score - secondBestScore : Number.POSITIVE_INFINITY,
+    x: selectedCandidate.x,
+    y: selectedCandidate.y,
+    w: selectedCandidate.w,
+    h: selectedCandidate.h,
+    baseRgbType: bestCandidate.template.type,
+    baseRgbScore: bestCandidate.score,
+    ahashDistance,
+    ahashReranked,
+  };
+
+  console.log(
+    `[OCR] module icon user-template: type=${match.type} rarity=${match.rarity} ` +
+      `score=${match.score.toFixed(3)} margin=${match.margin.toFixed(3)} ` +
+      `baseType=${match.baseRgbType} baseScore=${(match.baseRgbScore ?? match.score).toFixed(3)} ` +
+      `ahash=${match.ahashDistance?.toFixed(3) ?? "n/a"} reranked=${match.ahashReranked ? "yes" : "no"} ` +
+      `configId=${match.configId} rect=(${match.x},${match.y},${match.w},${match.h})`,
+  );
+
+  return match;
+}
+
+function classifyModuleIconForRow(
+  colorMat: any,
+  grayEq: any,
+  edgeMat: any,
+  row: ModuleRow,
+  statScale: number,
+  moduleScale: number,
+  cv: any,
+): ModuleIconMatch | null {
+  const existingMatch = classifyModuleIconByExistingTemplates(
+    grayEq,
+    edgeMat,
+    row,
+    statScale,
+    moduleScale,
+    cv,
+  );
+  const userMatch = classifyModuleIconByUserTemplates(colorMat, row, moduleScale, cv);
+
+  const userHashTrusted =
+    !!userMatch &&
+    userMatch.baseRgbType !== "device" &&
+    (userMatch.baseRgbScore ?? userMatch.score) <= MODULE_USER_TEMPLATE_AHASH_SCORE_MAX &&
+    (userMatch.ahashDistance ?? Number.POSITIVE_INFINITY) <= MODULE_USER_TEMPLATE_AHASH_MAX_DISTANCE;
+  const useUserMatch =
+    !!userMatch &&
+    (userMatch.score >= MODULE_USER_TEMPLATE_MIN_SCORE || userHashTrusted);
+
+  // 既存TMのスコアがユーザーTMより十分高い場合は既存TMを優先
+  const existingClearlyBetter =
+    !!existingMatch &&
+    !!userMatch &&
+    existingMatch.score > userMatch.score + 0.08;
+
+  const chosen = (useUserMatch && !existingClearlyBetter) ? userMatch : existingMatch;
+
+  if (chosen) {
+    console.log(
+      `[OCR] module icon chosen: source=${useUserMatch ? "user" : "existing"} ` +
+        `type=${chosen.type} rarity=${chosen.rarity} score=${chosen.score.toFixed(3)} ` +
+        `margin=${chosen.margin.toFixed(3)} ahash=${chosen.ahashDistance?.toFixed(3) ?? "n/a"} ` +
+        `configId=${chosen.configId} ` +
+        `rect=(${chosen.x},${chosen.y},${chosen.w},${chosen.h})`,
+    );
+  }
+
+  return chosen;
+}
+
+function pruneStatsUsingModuleAnchor(
+  row: ModuleRow,
+  moduleIcon: ModuleIconMatch | null,
+): ModuleRow {
+  if (!moduleIcon || row.stats.length === 0) return row;
+
+  const sorted = [...row.stats].sort((a, b) => a.x - b.x);
+  const statWidths = sorted.map((s) => s.w).filter((w) => w > 0);
+  if (statWidths.length === 0) return row;
+
+  const medianStatWidth = median(statWidths);
+  const moduleRight = moduleIcon.x + moduleIcon.w;
+  const gap = Math.max(4, Math.round(medianStatWidth * 0.12));
+  const keptStartIndex = sorted.findIndex(
+    (stat) => stat.x + stat.w / 2 >= moduleRight + gap,
+  );
+
+  if (keptStartIndex <= 0) return row;
+
+  const removed = sorted.slice(0, keptStartIndex);
+  const kept = sorted.slice(keptStartIndex);
+  if (kept.length === 0) return row;
+
+  const removedAvgScore =
+    removed.reduce((sum, stat) => sum + (stat.score ?? 0), 0) / removed.length;
+  const keptAvgScore =
+    kept.reduce((sum, stat) => sum + (stat.score ?? 0), 0) / kept.length;
+  const removedStrong = removed.some(
+    (stat) => (stat.score ?? 0) >= 0.58 || (stat.margin ?? 0) >= 0.04,
+  );
+  const moduleLooksReliable =
+    moduleIcon.score >= 0.48 && moduleIcon.w >= medianStatWidth * 1.6;
+  const removedLooksWeak =
+    removedAvgScore + 0.10 < keptAvgScore ||
+    removed.every((stat) => (stat.score ?? 0) < 0.52);
+
+  if (!moduleLooksReliable || removedStrong || !removedLooksWeak) {
+    return row;
+  }
+
+  console.log(
+    `[OCR] row pruned by module anchor: removed=${removed.length} kept=${kept.length} ` +
+      `moduleRight=${Math.round(moduleRight)} removedAvgScore=${removedAvgScore.toFixed(3)} ` +
+      `keptAvgScore=${keptAvgScore.toFixed(3)}`,
+  );
+
+  return {
+    y: row.y,
+    stats: kept,
+  };
 }
 
 export async function processScreenshot(
@@ -1686,6 +2254,7 @@ export async function processScreenshot(
 
   // 前処理: グレースケール → コントラスト正規化 → エッジ
   const srcMat = cv.imread(canvas);
+  const colorMat = srcMat.clone();
   const gray = new cv.Mat();
   cv.cvtColor(srcMat, gray, cv.COLOR_RGBA2GRAY);
   srcMat.delete();
@@ -1698,8 +2267,9 @@ export async function processScreenshot(
   // スケール検出（フォールバック + 半径推定用）
   onProgress?.({ stage: "スケール検出中...", percent: 20 });
   const scale = detectScale(gray, cv);
+  const moduleScale = detectModuleScale(gray, cv, scale);
   const estimatedRadius = Math.round(40 * scale);
-  const lowResInput = canvas.width < 700 || estimatedRadius < 18;
+  const lowResInput = canvas.width < 500 || estimatedRadius < 12;
   console.log(
     "[OCR] scale:",
     scale,
@@ -1786,7 +2356,126 @@ export async function processScreenshot(
 
   // 行グルーピング
   const iconSize = detections[0]?.w || Math.round(80 * scale);
-  const rows = groupIntoRows(detections, iconSize);
+  let rows = groupIntoRows(detections, iconSize);
+
+  // 行間隔の外れ値フィルタ（フォールバックパスでも適用）
+  if (rows.length >= 4) {
+    const rowYs = rows.map((r) => r.y);
+    const filteredYs = filterRowsBySpacing(rowYs);
+    if (filteredYs.length < rows.length) {
+      const filteredSet = new Set(filteredYs.map((y) => Math.round(y)));
+      rows = rows.filter((r) => filteredSet.has(Math.round(r.y)));
+    }
+  }
+
+  // 行間隔のギャップ補完: 中央値の約2倍の隙間がある場所に空行を挿入
+  if (rows.length >= 3) {
+    const spacings = rows.slice(1).map((r, i) => r.y - rows[i].y);
+    const medSpacing = median(spacings);
+    if (medSpacing > 0) {
+      const insertions: { index: number; y: number }[] = [];
+      for (let i = 0; i < spacings.length; i++) {
+        if (spacings[i] > medSpacing * 1.6) {
+          const gapCount = Math.round(spacings[i] / medSpacing);
+          for (let g = 1; g < gapCount; g++) {
+            const insertY = rows[i].y + medSpacing * g;
+            insertions.push({ index: i + g, y: insertY });
+          }
+        }
+      }
+      if (insertions.length > 0) {
+        // テンプレートマッチングで挿入位置のステータスアイコンを検出
+        for (const ins of insertions.reverse()) {
+          const searchY = Math.max(0, Math.round(ins.y - iconSize * 1.0));
+          const searchH = Math.min(iconSize * 3, edgeMat.rows - searchY);
+          if (searchH < iconSize) continue;
+
+          const searchRect = new cv.Rect(0, searchY, edgeMat.cols, searchH);
+          const searchEdge = edgeMat.roi(searchRect);
+          const searchGray = grayEq.roi(searchRect);
+          const localDets: Detection[] = [];
+
+          for (const tmpl of statTemplates) {
+            const tw = Math.round(tmpl.edgeMat.cols * scale);
+            const th = Math.round(tmpl.edgeMat.rows * scale);
+            if (tw < 10 || th < 10 || tw >= searchEdge.cols || th >= searchEdge.rows) continue;
+
+            // エッジとグレー両方でマッチング
+            const resizedEdge = new cv.Mat();
+            cv.resize(tmpl.edgeMat, resizedEdge, new cv.Size(tw, th));
+            const edgeResult = new cv.Mat();
+            cv.matchTemplate(searchEdge, resizedEdge, edgeResult, cv.TM_CCOEFF_NORMED);
+            const edgeLoc = cv.minMaxLoc(edgeResult);
+
+            const resizedGray = new cv.Mat();
+            cv.resize(tmpl.grayMat, resizedGray, new cv.Size(tw, th));
+            const grayResult = new cv.Mat();
+            cv.matchTemplate(searchGray, resizedGray, grayResult, cv.TM_CCOEFF_NORMED);
+            const grayLoc = cv.minMaxLoc(grayResult);
+
+            const maxVal = Math.max(edgeLoc.maxVal, grayLoc.maxVal);
+            const maxLoc = edgeLoc.maxVal >= grayLoc.maxVal ? edgeLoc.maxLoc : grayLoc.maxLoc;
+            resizedEdge.delete(); edgeResult.delete();
+            resizedGray.delete(); grayResult.delete();
+
+            if (maxVal >= 0.35) {
+              localDets.push({
+                partId: tmpl.partId,
+                x: maxLoc.x,
+                y: searchY + maxLoc.y,
+                w: tw,
+                h: th,
+                score: maxVal,
+                margin: 0,
+              });
+            }
+            // resized/result は既にマッチング直後に delete 済み
+          }
+          searchEdge.delete();
+          searchGray.delete();
+
+          if (localDets.length > 0) {
+            // NMS: 同じ位置の重複を除去
+            localDets.sort((a, b) => b.score - a.score);
+            const nmsThreshold = iconSize * 0.5;
+            const kept: Detection[] = [];
+            for (const det of localDets) {
+              const overlap = kept.some(
+                (k) => Math.abs(k.x - det.x) < nmsThreshold && Math.abs(k.y - det.y) < nmsThreshold,
+              );
+              if (!overlap) kept.push(det);
+            }
+
+            const best = kept[0];
+            console.log(
+              `[OCR] gap fill: inserted row at y=${Math.round(ins.y)} ` +
+                `found ${kept.length} icons, best partId=${best.partId} score=${best.score.toFixed(3)} at (${best.x},${best.y})`,
+            );
+            const newRow: ModuleRow = {
+              y: ins.y,
+              stats: kept.slice(0, 3).map((d) => ({
+                partId: d.partId,
+                x: d.x,
+                y: d.y,
+                w: d.w,
+                h: d.h,
+                score: d.score,
+                margin: d.margin,
+              })),
+            };
+            newRow.stats.sort((a, b) => a.x - b.x);
+            rows.splice(ins.index, 0, newRow);
+          } else {
+            console.log(
+              `[OCR] gap fill: no icons found at y=${Math.round(ins.y)}, inserting empty row`,
+            );
+            rows.splice(ins.index, 0, { y: ins.y, stats: [] });
+          }
+        }
+      }
+    }
+  }
+
   console.log(
     "[OCR] rows:",
     rows.length,
@@ -1797,24 +2486,33 @@ export async function processScreenshot(
   onProgress?.({ stage: "モジュールアイコン検出中...", percent: 55 });
   const moduleIcons: (ModuleIconMatch | null)[] = [];
   for (const row of rows) {
-    moduleIcons.push(classifyModuleIconForRow(grayEq, edgeMat, row, scale, cv));
+    moduleIcons.push(classifyModuleIconForRow(colorMat, grayEq, edgeMat, row, scale, moduleScale, cv));
   }
+  const anchoredRows = rows.map((row, index) =>
+    pruneStatsUsingModuleAnchor(row, moduleIcons[index]),
+  );
+  console.log(
+    "[OCR] rows after module anchor:",
+    anchoredRows.length,
+    anchoredRows.map((r) => r.stats.length),
+  );
 
   grayEq.delete();
   edgeMat.delete();
+  colorMat.delete();
 
   // 数値OCR
   onProgress?.({ stage: "数値読み取り中...", percent: 60 });
   const modules: ModuleInput[] = [];
   let uuidCounter = Date.now();
 
-  for (let i = 0; i < rows.length; i++) {
+  for (let i = 0; i < anchoredRows.length; i++) {
     onProgress?.({
-      stage: `数値読み取り中... (${i + 1}/${rows.length})`,
-      percent: 60 + (i / rows.length) * 35,
+      stage: `数値読み取り中... (${i + 1}/${anchoredRows.length})`,
+      percent: 60 + (i / anchoredRows.length) * 35,
     });
 
-    const stats = await ocrNumbersForRow(canvas, rows[i]) as Array<
+    const stats = await ocrNumbersForRow(canvas, anchoredRows[i]) as Array<
       StatEntry & {
         _ocrDebug?: {
           hadPlus: boolean;
@@ -1825,7 +2523,7 @@ export async function processScreenshot(
       }
     >;
     console.log(
-      `[OCR] row ${i + 1}: icons=${rows[i].stats.length} ocrStats=${stats.length}`,
+      `[OCR] row ${i + 1}: icons=${anchoredRows[i].stats.length} ocrStats=${stats.length}`,
       stats.map(
         (s) =>
           `${s.part_id}:${s.value}${s._ocrDebug?.hadPlus ? "(+)" : "(-)"}`,

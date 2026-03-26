@@ -943,7 +943,21 @@ async function init() {
 
   await listen("server-found", () => {
     $("sb-monitor").textContent = "サーバー接続済み";
-    $("sb-dot").style.background = "#0f7b0f";
+  });
+
+  // キャプチャトグル
+  const capToggle = $("cap-toggle") as HTMLButtonElement;
+  capToggle.addEventListener("click", async () => {
+    const isActive = capToggle.classList.contains("active");
+    if (isActive) {
+      await invoke("stop_capture_cmd");
+      capToggle.classList.remove("active");
+      $("sb-monitor").textContent = "";
+    } else {
+      await invoke("start_capture_cmd");
+      capToggle.classList.add("active");
+      $("sb-monitor").textContent = "サーバー検出中...";
+    }
   });
 
   updateFilterBtnLabel();
