@@ -46,4 +46,5 @@ export interface StatTotal {
   breakpoint: string;
   breakpoint_score: number;
   is_required: boolean;
+  is_desired: boolean;
 }

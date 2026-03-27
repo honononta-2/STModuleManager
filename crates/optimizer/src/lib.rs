@@ -78,6 +78,7 @@ pub struct StatTotal {
     pub breakpoint: String,
     pub breakpoint_score: f64,
     pub is_required: bool,
+    pub is_desired: bool,
 }
 
 // --- 内部用フラット構造 ---
@@ -370,6 +371,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
                         breakpoint: bp_label,
                         breakpoint_score: bp_score,
                         is_required: is_req,
+                        is_desired: is_des,
                     }
                 })
                 .collect();

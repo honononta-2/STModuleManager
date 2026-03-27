@@ -555,7 +555,7 @@ function renderOptResults(res: OptimizeResponse) {
     const rankClass = comb.rank === 1 ? "r1" : comb.rank === 2 ? "r2" : comb.rank === 3 ? "r3" : "";
     const statTags = comb.stat_totals
       .map((st) => {
-        const cls = st.is_required ? "req" : "des";
+        const cls = st.is_required ? "req" : st.is_desired ? "des" : "other";
         return `<span class="opt-stat-tag ${cls}">${statIcon(st.part_id)}<span>${statName(st.part_id)}</span> <span class="bp">+${st.total}</span></span>`;
       }).join("");
 
@@ -611,7 +611,7 @@ function openModal(comb: Combination) {
     statTotalsMap.set(s.part_id, (statTotalsMap.get(s.part_id) ?? 0) + s.value);
   }));
   const reqIds = new Set(comb.stat_totals.filter((st) => st.is_required).map((st) => st.part_id));
-  const desIds = new Set(comb.stat_totals.filter((st) => !st.is_required).map((st) => st.part_id));
+  const desIds = new Set(comb.stat_totals.filter((st) => st.is_desired).map((st) => st.part_id));
 
   const rowsHtml = Array.from(statTotalsMap.entries())
     .sort((a, b) => {

@@ -118,6 +118,7 @@ interface StatTotal {
   breakpoint: string;
   breakpoint_score: number;
   is_required: boolean;
+  is_desired: boolean;
 }
 interface CombinationModule {
   uuid: number;
@@ -610,7 +611,7 @@ function renderOptResults(res: OptimizeResponse) {
 
     const statTags = comb.stat_totals
       .map((st) => {
-        const cls = st.is_required ? "req" : "des";
+        const cls = st.is_required ? "req" : st.is_desired ? "des" : "other";
         return `<span class="opt-stat-tag ${cls}">${statIcon(st.part_id)}<span>${statName(st.part_id)}</span> <span class="bp">+${st.total}</span></span>`;
       })
       .join("");
@@ -666,7 +667,7 @@ function openModal(comb: Combination) {
     });
   });
   const reqIds = new Set(comb.stat_totals.filter((st) => st.is_required).map((st) => st.part_id));
-  const desIds = new Set(comb.stat_totals.filter((st) => !st.is_required).map((st) => st.part_id));
+  const desIds = new Set(comb.stat_totals.filter((st) => st.is_desired).map((st) => st.part_id));
 
   const rowsHtml = Array.from(statTotalsMap.entries())
     .sort((a, b) => {
