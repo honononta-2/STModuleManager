@@ -29,7 +29,8 @@ const BP_THRESHOLDS: [(i64, f64); 6] = [
     (1, 5.0),
 ];
 const DESIRED_WEIGHT: f64 = 0.3;
-const OTHER_WEIGHT: f64 = 0.5;
+const OTHER_WEIGHT: f64 = 0.5; // 貢献度フィルタリング用
+const NON_SELECTED_BP_WEIGHT: f64 = 0.15; // 非選択のBPスコア重み（サブの半分）
 const PLUS_BONUS_MULTIPLIER: f64 = 2.0;
 
 // --- 最適化リクエスト/レスポンス ---
@@ -195,10 +196,13 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
 
     let score_stats = |totals: &[i64]| -> f64 {
         let mut score = 0.0f64;
-        let mut selected_plus = 0i64;
-        let mut other_plus = 0i64;
+        let mut total_plus = 0i64;
         for (si, &total) in totals.iter().enumerate() {
             let pid = all_part_ids[si];
+
+            total_plus += total; // 全ステータスの合計 × 2
+
+            // 除外はBPスコアのみ0
             if excluded_set.contains(&pid) {
                 continue;
             }
@@ -206,21 +210,23 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
             let is_req = required_set.contains(&pid);
             let is_des = desired_set.contains(&pid);
 
-            if is_req || is_des {
-                let weight = if is_req { 1.0 } else { DESIRED_WEIGHT };
-                for &(threshold, points) in &BP_THRESHOLDS {
-                    if total >= threshold {
-                        score += points * weight;
-                        break;
-                    }
-                }
-                selected_plus += total;
+            // BPスコア重み: メイン×1.0 / サブ×0.3 / 非選択×0.15
+            let weight = if is_req {
+                1.0
+            } else if is_des {
+                DESIRED_WEIGHT
             } else {
-                other_plus += total;
+                NON_SELECTED_BP_WEIGHT
+            };
+
+            for &(threshold, points) in &BP_THRESHOLDS {
+                if total >= threshold {
+                    score += points * weight;
+                    break;
+                }
             }
         }
-        score += selected_plus as f64 * PLUS_BONUS_MULTIPLIER;
-        score += other_plus as f64 * PLUS_BONUS_MULTIPLIER * OTHER_WEIGHT;
+        score += total_plus as f64 * PLUS_BONUS_MULTIPLIER;
         score
     };
 
