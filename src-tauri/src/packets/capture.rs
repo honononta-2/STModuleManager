@@ -14,6 +14,7 @@ const MAX_BACKTRACK_BYTES: u32 = 2 * 1024 * 1024;
 
 /// キャプチャした1パケットの情報（モジュール関連のみ送信）
 pub struct ModulePayload {
+    pub opcode: u32,
     pub payload: Vec<u8>,
 }
 
@@ -173,9 +174,9 @@ fn process_frame(mut reader: BinaryReader, module_tx: &Sender<ModulePayload>) {
         match frag_type {
             FragmentType::Notify | FragmentType::Return | FragmentType::Call => {
                 if let Some((opcode, payload)) = parse_service_frame(&mut inner, is_zstd) {
-                    // SyncContainerData のみチャネルに送信
-                    if opcode == 0x15 {
-                        let _ = module_tx.send(ModulePayload { payload });
+                    // SyncContainerData (0x15) と SyncContainerDirtyData (0x16) をチャネルに送信
+                    if opcode == 0x15 || opcode == 0x16 {
+                        let _ = module_tx.send(ModulePayload { opcode, payload });
                     }
                 }
             }

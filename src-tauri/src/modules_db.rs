@@ -140,6 +140,75 @@ impl ModulesDbState {
 
         Ok(new_count)
     }
+
+    /// 単体モジュールを追加する（0x16 差分更新用）。新規なら true を返す。
+    pub fn add_module(&self, uuid: i64, config_id: u64, quality: u64) -> Result<bool, String> {
+        let mut db = self.db.lock().map_err(|e| e.to_string())?;
+        let key = uuid.to_string();
+        let now = Utc::now().naive_utc();
+
+        let is_new = !db.modules.contains_key(&key);
+        let acquired_date = db
+            .modules
+            .get(&key)
+            .map(|e| e.acquired_date)
+            .unwrap_or(now);
+
+        db.modules.insert(
+            key,
+            ModuleEntry {
+                uuid,
+                config_id: Some(config_id),
+                quality: Some(quality),
+                stats: Vec::new(),
+                success_rate: None,
+                equipped_slot: None,
+                acquired_date,
+            },
+        );
+
+        drop(db);
+        self.save()?;
+        Ok(is_new)
+    }
+
+    /// モジュールのステータスを更新する（0x16 差分更新用）
+    pub fn update_stats(
+        &self,
+        uuid: i64,
+        stats: &[(i64, i64)],
+        success_rate: u64,
+    ) -> Result<(), String> {
+        let mut db = self.db.lock().map_err(|e| e.to_string())?;
+        let key = uuid.to_string();
+
+        if let Some(entry) = db.modules.get_mut(&key) {
+            entry.stats = stats
+                .iter()
+                .map(|(part_id, value)| StatEntry {
+                    part_id: *part_id,
+                    value: *value,
+                })
+                .collect();
+            entry.success_rate = Some(success_rate);
+        }
+
+        drop(db);
+        self.save()?;
+        Ok(())
+    }
+
+    /// モジュールを削除する（0x16 差分更新用）。存在していれば true を返す。
+    pub fn remove_module(&self, uuid: i64) -> Result<bool, String> {
+        let mut db = self.db.lock().map_err(|e| e.to_string())?;
+        let key = uuid.to_string();
+        let existed = db.modules.remove(&key).is_some();
+        drop(db);
+        if existed {
+            self.save()?;
+        }
+        Ok(existed)
+    }
 }
 
 fn parse_stats(value: Option<&serde_json::Value>) -> Vec<StatEntry> {

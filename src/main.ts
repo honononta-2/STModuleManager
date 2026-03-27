@@ -56,6 +56,16 @@ const STAT_ICONS: Record<number, string> = {
 const ALL_STAT_NAMES = Object.values(STAT_NAMES);
 const MODULE_TYPES = ["攻撃", "支援", "防御"] as const;
 
+function utcToJst(utcStr: string): string {
+  const d = new Date(utcStr + "Z");
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${y}-${mo}-${day} ${h}:${mi}`;
+}
+
 function statName(partId: number): string {
   return STAT_NAMES[partId] ?? `Unknown(${partId})`;
 }
@@ -210,7 +220,7 @@ function renderGrid() {
     c.innerHTML = `
       <div class="card-head">
         ${moduleIconHtml(m.config_id)}
-        <span class="cdate">${m.acquired_date.replace("T", " ").slice(0, 16)}</span>
+        <span class="cdate">${utcToJst(m.acquired_date)}</span>
       </div>
       <div class="divider"></div>
       <div class="stats">${m.stats
@@ -725,7 +735,7 @@ function generateExportJson(): string {
     total_value: m.stats.reduce((sum, s) => sum + s.value, 0),
     success_rate: m.success_rate,
     equipped_slot: m.equipped_slot,
-    acquired_date: m.acquired_date,
+    acquired_date: utcToJst(m.acquired_date),
   }));
   return JSON.stringify(data, null, 2);
 }
@@ -767,7 +777,7 @@ function generateExportCsv(): string {
     }
     cols.push(
       m.stats.reduce((sum, s) => sum + s.value, 0),
-      m.acquired_date.replace("T", " ")
+      utcToJst(m.acquired_date)
     );
     rows.push(cols.join(","));
   }
