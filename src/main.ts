@@ -810,26 +810,27 @@ async function init() {
     pinToggle.classList.toggle("active", next);
   };
 
-  // Export button
-  $("export-btn").onclick = (e) => {
-    openFly(
-      "fly-f",
-      e.currentTarget as HTMLElement,
-      [
-        { label: "JSON出力", val: "json", disabled: false },
-        { label: "CSV出力", val: "csv", disabled: false },
-      ],
-      async (it) => {
-        const content =
-          it.val === "json" ? generateExportJson() : generateExportCsv();
-        try {
-          await invoke("export_to_file", { format: it.val, content });
-        } catch (err) {
-          console.error("export error:", err);
-        }
-      }
-    );
+  // Menu button
+  $("menu-btn").onclick = () => {
+    $("menu-modal-bd").classList.add("on");
   };
+  $("menu-modal-close").onclick = () => {
+    $("menu-modal-bd").classList.remove("on");
+  };
+  $("menu-modal-bd").onclick = (e) => {
+    if (e.target === $("menu-modal-bd")) $("menu-modal-bd").classList.remove("on");
+  };
+
+  const menuExport = async (format: string) => {
+    const content = format === "json" ? generateExportJson() : generateExportCsv();
+    try {
+      await invoke("export_to_file", { format, content });
+    } catch (err) {
+      console.error("export error:", err);
+    }
+  };
+  $("menu-export-json").onclick = () => menuExport("json");
+  $("menu-export-csv").onclick = () => menuExport("csv");
 
   // Tabs
   document.querySelectorAll<HTMLElement>(".tab").forEach((t) => {
@@ -969,6 +970,95 @@ async function init() {
     $("sb-monitor").textContent = "サーバー接続済み";
   });
 
+  // --- 設定管理 ---
+  type AppSettings = { auto_monitor: boolean; show_monitor_confirm: boolean; theme: string };
+  let appSettings: AppSettings = await invoke("get_settings");
+
+  // --- テーマ管理 ---
+  const THEME_CYCLE: string[] = ["system", "light", "dark"];
+  const THEME_LABELS: Record<string, string> = {
+    system: "システム設定に従う",
+    light: "ライト",
+    dark: "ダーク",
+  };
+
+  const applyTheme = (theme: string) => {
+    let resolved = theme;
+    if (theme === "system") {
+      resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    document.documentElement.setAttribute("data-theme", resolved);
+  };
+
+  // システムテーマ変更を監視
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (appSettings.theme === "system") applyTheme("system");
+  });
+
+  applyTheme(appSettings.theme);
+
+  const updateMenuSettingsLabels = () => {
+    $("menu-auto-monitor-status").textContent = appSettings.auto_monitor ? "ON" : "OFF";
+    $("menu-theme-status").textContent = THEME_LABELS[appSettings.theme] ?? appSettings.theme;
+  };
+  updateMenuSettingsLabels();
+
+  const saveSettings = async (patch: Partial<AppSettings>) => {
+    appSettings = { ...appSettings, ...patch };
+    await invoke("update_settings", { settings: appSettings });
+    updateMenuSettingsLabels();
+  };
+
+  // メニュー: 起動時に自動監視を開始 トグル
+  $("menu-toggle-auto-monitor").onclick = () => {
+    saveSettings({ auto_monitor: !appSettings.auto_monitor });
+  };
+
+  // メニュー: テーマ切替 (system → light → dark → system ...)
+  $("menu-theme-toggle").onclick = () => {
+    const idx = THEME_CYCLE.indexOf(appSettings.theme);
+    const next = THEME_CYCLE[(idx + 1) % THEME_CYCLE.length];
+    applyTheme(next);
+    saveSettings({ theme: next });
+  };
+
+  // --- 監視確認モーダル ---
+  const openMonitorConfirm = (): Promise<{ confirmed: boolean; hide: boolean }> => {
+    return new Promise((resolve) => {
+      const bd = $("monitor-confirm-bd");
+      const checkbox = $("monitor-confirm-hide") as HTMLInputElement;
+      checkbox.checked = false;
+      bd.classList.add("on");
+
+      const cleanup = () => {
+        bd.classList.remove("on");
+        $("monitor-confirm-yes").onclick = null;
+        $("monitor-confirm-no").onclick = null;
+        $("monitor-confirm-close").onclick = null;
+        bd.onclick = null;
+      };
+
+      $("monitor-confirm-yes").onclick = () => {
+        cleanup();
+        resolve({ confirmed: true, hide: checkbox.checked });
+      };
+      $("monitor-confirm-no").onclick = () => {
+        cleanup();
+        resolve({ confirmed: false, hide: checkbox.checked });
+      };
+      $("monitor-confirm-close").onclick = () => {
+        cleanup();
+        resolve({ confirmed: false, hide: false });
+      };
+      bd.onclick = (e) => {
+        if (e.target === bd) {
+          cleanup();
+          resolve({ confirmed: false, hide: false });
+        }
+      };
+    });
+  };
+
   // キャプチャトグル
   const capToggle = $("cap-toggle") as HTMLButtonElement;
   capToggle.addEventListener("click", async () => {
@@ -978,11 +1068,30 @@ async function init() {
       capToggle.classList.remove("active");
       $("sb-monitor").textContent = "";
     } else {
+      // 自動監視が未設定の場合のみ確認モーダルを表示
+      if (!appSettings.auto_monitor && appSettings.show_monitor_confirm) {
+        const result = await openMonitorConfirm();
+        if (result.hide) {
+          await saveSettings({ show_monitor_confirm: false });
+        }
+        if (result.confirmed) {
+          await saveSettings({ auto_monitor: true });
+        }
+      }
       await invoke("start_capture_cmd");
       capToggle.classList.add("active");
       $("sb-monitor").textContent = "サーバー検出中...";
     }
   });
+
+  // 起動時に自動監視が有効ならトグルをON状態にする
+  {
+    const status: { capturing: boolean; server_found: boolean } = await invoke("get_monitor_status");
+    if (status.capturing) {
+      capToggle.classList.add("active");
+      $("sb-monitor").textContent = status.server_found ? "サーバー接続済み" : "サーバー検出中...";
+    }
+  }
 
   updateFilterBtnLabel();
   renderSChips();

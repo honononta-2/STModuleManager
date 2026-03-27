@@ -11,8 +11,8 @@
 
   <!-- Title bar -->
   <div class="titlebar" data-tauri-drag-region>
-    <button class="export-btn" id="export-btn" aria-label="エクスポート">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+    <button class="menu-btn" id="menu-btn" aria-label="メニュー">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
     </button>
     <div class="tab active" data-tab="list">モジュール一覧</div>
     <div class="tab" data-tab="opt">最適化</div>
@@ -100,6 +100,85 @@
           <div>メインステータスを選択して最適化を実行してください</div>
         </div>
         <div class="opt-results" id="opt-results" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- メニューモーダル -->
+    <div class="modal-bd" id="menu-modal-bd">
+      <div class="modal menu-modal">
+        <div class="modal-head">
+          <span class="modal-title">メニュー</span>
+          <button class="modal-close" id="menu-modal-close">&times;</button>
+        </div>
+        <div class="menu-modal-body">
+          <div class="menu-section">
+            <div class="menu-section-label">エクスポート</div>
+            <div class="menu-section-items">
+              <button class="menu-item" id="menu-export-json">
+                <span class="menu-item-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M2 15h8"/><path d="m5 12-3 3 3 3"/></svg>
+                </span>
+                <span class="menu-item-text">
+                  <span class="menu-item-label">JSON</span>
+                  <span class="menu-item-desc">モジュールデータをJSON形式で保存</span>
+                </span>
+              </button>
+              <button class="menu-item" id="menu-export-csv">
+                <span class="menu-item-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/></svg>
+                </span>
+                <span class="menu-item-text">
+                  <span class="menu-item-label">CSV</span>
+                  <span class="menu-item-desc">スプレッドシート向けCSV形式で保存</span>
+                </span>
+              </button>
+            </div>
+          </div>
+          <div class="menu-section">
+            <div class="menu-section-label">設定</div>
+            <div class="menu-section-items">
+              <button class="menu-item" id="menu-toggle-auto-monitor">
+                <span class="menu-item-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                </span>
+                <span class="menu-item-text">
+                  <span class="menu-item-label">起動時にネットワーク監視を開始</span>
+                  <span class="menu-item-desc" id="menu-auto-monitor-status">OFF</span>
+                </span>
+              </button>
+              <button class="menu-item" id="menu-theme-toggle">
+                <span class="menu-item-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                </span>
+                <span class="menu-item-text">
+                  <span class="menu-item-label">テーマ</span>
+                  <span class="menu-item-desc" id="menu-theme-status">システム設定に従う</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 監視確認モーダル -->
+    <div class="modal-bd" id="monitor-confirm-bd">
+      <div class="modal monitor-confirm-modal">
+        <div class="modal-head">
+          <span class="modal-title">ネットワーク監視</span>
+          <button class="modal-close" id="monitor-confirm-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="monitor-confirm-text">次回からアプリ起動時にネットワーク監視を自動的に開始しますか？</p>
+          <label class="monitor-confirm-check">
+            <input type="checkbox" id="monitor-confirm-hide">
+            <span>次回から表示しない（メニューから切替可能です）</span>
+          </label>
+          <div class="monitor-confirm-actions">
+            <button class="monitor-confirm-btn secondary" id="monitor-confirm-no">いいえ</button>
+            <button class="monitor-confirm-btn primary" id="monitor-confirm-yes">はい</button>
+          </div>
+        </div>
       </div>
     </div>
 

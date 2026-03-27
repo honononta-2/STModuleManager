@@ -1,5 +1,6 @@
 use crate::modules_db::{ModuleEntry, ModulesDbState};
 use crate::packets::capture::{run_capture, ModulePayload};
+use crate::settings::{AppSettings, AppSettingsState};
 use serde::{Deserialize, Serialize};
 use star_optimizer::{ModuleInput, OptimizeRequest, OptimizeResponse};
 use std::path::PathBuf;
@@ -163,4 +164,24 @@ pub fn export_to_file(
         }
         None => Ok(false),
     }
+}
+
+/// アプリ設定を取得
+#[tauri::command]
+pub fn get_settings(state: State<AppSettingsState>) -> Result<AppSettings, String> {
+    let settings = state.settings.lock().map_err(|e| e.to_string())?;
+    Ok(settings.clone())
+}
+
+/// アプリ設定を更新して保存
+#[tauri::command]
+pub fn update_settings(
+    state: State<AppSettingsState>,
+    settings: AppSettings,
+) -> Result<(), String> {
+    {
+        let mut current = state.settings.lock().map_err(|e| e.to_string())?;
+        *current = settings;
+    }
+    state.save()
 }

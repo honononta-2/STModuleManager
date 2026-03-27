@@ -1,6 +1,7 @@
 mod commands;
 mod modules_db;
 mod packets;
+mod settings;
 
 use commands::MonitorState;
 use packets::protobuf::{decode_protobuf_raw, extract_dirty_changes, extract_modules, DirtyModuleChange};
@@ -28,6 +29,15 @@ pub fn run() {
             let patterns_path = app_data_dir.join("opt_patterns.json");
             app.manage(commands::OptPatternsPath(patterns_path));
 
+            let settings_path = app_data_dir.join("settings.json");
+            let settings_state = settings::AppSettingsState::new(settings_path);
+            let auto_monitor = settings_state
+                .settings
+                .lock()
+                .map(|s| s.auto_monitor)
+                .unwrap_or(false);
+            app.manage(settings_state);
+
             // 監視ステート（キャプチャはトグルで手動開始）
             let server_found = Arc::new(AtomicBool::new(false));
             let (module_tx, module_rx) = std::sync::mpsc::channel();
@@ -36,6 +46,19 @@ pub fn run() {
                 capture_stop: std::sync::Mutex::new(None),
                 module_tx: std::sync::Mutex::new(module_tx),
             });
+
+            // 起動時に自動監視が有効なら即キャプチャ開始
+            if auto_monitor {
+                let monitor = app.state::<MonitorState>();
+                let flag = Arc::new(AtomicBool::new(false));
+                let sf = monitor.server_found.clone();
+                let tx = monitor.module_tx.lock().unwrap().clone();
+                let f = flag.clone();
+                std::thread::spawn(move || {
+                    packets::capture::run_capture(f, sf, tx);
+                });
+                *monitor.capture_stop.lock().unwrap() = Some(flag);
+            }
 
             // モジュール処理スレッド: チャネルから受信→DB保存→フロントに通知
             let app_handle = app.handle().clone();
@@ -150,6 +173,8 @@ pub fn run() {
             commands::stop_capture_cmd,
             commands::get_opt_patterns,
             commands::save_opt_patterns,
+            commands::get_settings,
+            commands::update_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
