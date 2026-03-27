@@ -21,6 +21,7 @@ tmp/
 
 # Claude Code
 CLAUDE.md
+.claude/
 
 # Release output
 release-v*/
