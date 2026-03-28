@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap');
 
 :root, [data-theme="light"] {
+  color-scheme: light;
   --font: 'Noto Sans JP', sans-serif;
   --mica: #f3f3f3;
   --mica-tint: linear-gradient(150deg,rgba(188,210,238,0.20) 0%,rgba(215,205,240,0.12) 55%,transparent 100%);
@@ -45,9 +46,11 @@
   --toggle-thumb: #fff;
   --toggle-thumb-shadow: 0 0.5px 1px rgba(0,0,0,0.2);
   --sbar-bg: rgba(0,0,0,0.07);
+  --acc-on-text: #fff;
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --mica: #1c1c1c;
   --mica-tint: linear-gradient(150deg,rgba(60,80,120,0.12) 0%,rgba(80,60,100,0.08) 55%,transparent 100%);
   --s-base: #1c1c1c;
@@ -91,6 +94,7 @@
   --toggle-thumb: #fff;
   --toggle-thumb-shadow: 0 0.5px 1px rgba(0,0,0,0.5);
   --sbar-bg: rgba(255,255,255,0.08);
+  --acc-on-text: #fff;
 }
 
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -188,6 +192,79 @@ body {
 .menu-item-label { font-size: 13px; font-weight: 500; color: var(--tx1); }
 .menu-item-desc { font-size: 11px; color: var(--tx3); line-height: 1.3; }
 
+/* Menu export buttons */
+.menu-export-btns { display: flex; gap: 8px; padding: 2px 10px 8px; }
+.menu-export-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--str-soft);
+  border-radius: 6px;
+  background: var(--cf-default);
+  box-shadow: var(--sh2);
+  color: var(--tx2);
+  font-size: 12px; font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s, box-shadow 0.1s, color 0.1s;
+  font-family: var(--font);
+}
+.menu-export-btn:hover { background: var(--cf-hover); box-shadow: var(--sh4); color: var(--tx1); }
+.menu-export-btn:active { background: var(--cf-pressed); box-shadow: none; }
+
+/* Menu row (label + control) */
+.menu-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px; gap: 12px;
+}
+.menu-row-label { font-size: 13px; font-weight: 500; color: var(--tx1); flex: 1; min-width: 0; }
+
+/* Menu toggle */
+.menu-toggle { border: none; background: none; padding: 0; cursor: pointer; flex-shrink: 0; }
+.menu-toggle-track {
+  display: inline-block;
+  width: 36px; height: 18px;
+  border-radius: 9px;
+  background: var(--str-default);
+  border: 1px solid var(--str-soft);
+  position: relative;
+}
+.menu-toggle-thumb {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--toggle-thumb);
+  box-shadow: var(--toggle-thumb-shadow);
+  position: absolute;
+  top: 2px; left: 2px;
+  transition: left 0.15s;
+}
+.menu-toggle.active .menu-toggle-track { background: var(--acc); border-color: var(--acc-d1); }
+.menu-toggle.active .menu-toggle-thumb { left: 20px; }
+
+/* Menu select */
+.menu-select {
+  height: 26px; padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid var(--str-soft);
+  background: var(--cf-default);
+  box-shadow: var(--sh2);
+  color: var(--tx1); font-size: 12px;
+  font-family: var(--font);
+  cursor: pointer; flex-shrink: 0;
+}
+.menu-select:hover { background: var(--cf-hover); }
+.menu-select:focus { outline: none; border-color: var(--acc); }
+.menu-select { color-scheme: inherit; appearance: base-select; }
+.menu-select::picker(select) {
+  appearance: base-select;
+  background: var(--s-content);
+  border: 1px solid var(--str-default);
+  border-radius: 4px;
+  box-shadow: var(--sh8);
+  padding: 2px 0;
+  position-try-fallbacks: none;
+}
+.menu-select option { background: var(--s-content); color: var(--tx1); padding: 4px 8px; }
+.menu-select option:hover, .menu-select option:checked { background: var(--acc); color: var(--acc-on-text); }
+
 /* Monitor confirm modal */
 .monitor-confirm-modal { max-width: 400px; min-width: 320px; }
 .monitor-confirm-text { font-size: 13px; color: var(--tx1); line-height: 1.6; margin-bottom: 14px; }
@@ -218,7 +295,7 @@ body {
 .monitor-confirm-btn.secondary:hover { background: var(--cf-hover); }
 .monitor-confirm-btn.primary {
   background: var(--acc);
-  color: #fff;
+  color: var(--acc-on-text);
   border-color: var(--acc-d1);
 }
 .monitor-confirm-btn.primary:hover { background: var(--acc-d1); }
@@ -660,13 +737,25 @@ body {
   cursor:pointer;
 }
 .opt-select:hover { background:var(--cf-hover); }
+.opt-select { color-scheme: inherit; appearance: base-select; }
+.opt-select::picker(select) {
+  appearance: base-select;
+  background: var(--s-content);
+  border: 1px solid var(--str-default);
+  border-radius: 4px;
+  box-shadow: var(--sh8);
+  padding: 2px 0;
+  position-try-fallbacks: none;
+}
+.opt-select option { background: var(--s-content); color: var(--tx1); padding: 4px 8px; }
+.opt-select option:hover, .opt-select option:checked { background: var(--acc); color: var(--acc-on-text); }
 
 .opt-run-btn {
   height:30px; padding:0 20px;
   border-radius:4px;
   border:none;
   background:var(--acc);
-  color:#fff; font-size:13px; font-weight:600;
+  color:var(--acc-on-text); font-size:13px; font-weight:600;
   font-family:var(--font);
   cursor:pointer;
   box-shadow:var(--sh2);

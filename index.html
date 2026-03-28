@@ -11,19 +11,19 @@
 
   <!-- Title bar -->
   <div class="titlebar" data-tauri-drag-region>
-    <button class="menu-btn" id="menu-btn" aria-label="メニュー">
+    <button class="menu-btn" id="menu-btn" data-i18n-aria="menu_title" aria-label="メニュー">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg>
     </button>
-    <div class="tab active" data-tab="list">モジュール一覧</div>
-    <div class="tab" data-tab="opt">最適化</div>
+    <div class="tab active" data-tab="list" data-i18n="tab_modules">モジュール一覧</div>
+    <div class="tab" data-tab="opt" data-i18n="tab_optimize">最適化</div>
     <button class="pin-wrap" id="pin-toggle" type="button">
-      <span class="pin-label">最前面</span>
+      <span class="pin-label" data-i18n="topmost">最前面</span>
       <span class="pin-track"><span class="pin-thumb"></span></span>
     </button>
     <div class="titlebar-spacer" data-tauri-drag-region></div>
     <div class="win-controls">
-      <button class="win-btn" id="win-minimize" aria-label="最小化">&#xE921;</button>
-      <button class="win-btn win-close" id="win-close" aria-label="閉じる">&#xE8BB;</button>
+      <button class="win-btn" id="win-minimize" data-i18n-aria="minimize" aria-label="最小化">&#xE921;</button>
+      <button class="win-btn win-close" id="win-close" data-i18n-aria="close_btn" aria-label="閉じる">&#xE8BB;</button>
     </div>
   </div>
 
@@ -35,13 +35,13 @@
       <!-- Command bar -->
       <div class="cmdbar">
         <div class="cmd-grp">
-          <span class="cmd-lbl">絞込</span>
+          <span class="cmd-lbl" data-i18n="filter_label">絞込</span>
           <button class="opt-multi-btn" id="filter-btn">未選択</button>
           <button class="filter-mode-btn" id="filter-mode">AND</button>
         </div>
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
-          <span class="cmd-lbl">並び替え</span>
+          <span class="cmd-lbl" data-i18n="sort_label">並び替え</span>
           <div id="schips" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
           <button class="addbtn" id="add-s">＋ Add</button>
         </div>
@@ -58,7 +58,7 @@
       <!-- 設定バー -->
       <div class="cmdbar opt-cmdbar">
         <div class="cmd-grp">
-          <span class="cmd-lbl">レアリティ</span>
+          <span class="cmd-lbl" data-i18n="rarity_label">レアリティ</span>
           <select id="opt-quality" class="opt-select">
             <option value="3">紫以上</option>
             <option value="4">金のみ</option>
@@ -66,38 +66,38 @@
         </div>
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
-          <span class="cmd-lbl">メインステータス</span>
+          <span class="cmd-lbl" data-i18n="main_stat">メインステータス</span>
           <button class="opt-multi-btn" id="opt-btn-req">未選択</button>
         </div>
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
-          <span class="cmd-lbl">サブステータス</span>
+          <span class="cmd-lbl" data-i18n="sub_stat">サブステータス</span>
           <button class="opt-multi-btn" id="opt-btn-des">未選択</button>
         </div>
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
-          <span class="cmd-lbl">対象外</span>
+          <span class="cmd-lbl" data-i18n="exclude_stat">対象外</span>
           <button class="opt-multi-btn" id="opt-btn-excl">未選択</button>
         </div>
       </div>
 
       <!-- パターン管理バー -->
       <div class="opt-pattern-bar">
-        <span class="cmd-lbl">パターン</span>
+        <span class="cmd-lbl" data-i18n="pattern_label">パターン</span>
         <select id="pattern-select" class="opt-select pattern-select">
           <option value="">-- 選択 --</option>
         </select>
-        <button class="addbtn" id="pattern-load">読込</button>
-        <button class="addbtn" id="pattern-save">保存</button>
-        <button class="addbtn pattern-del-btn" id="pattern-delete">削除</button>
-        <button class="opt-run-btn" id="opt-run" disabled>最適化実行</button>
+        <button class="addbtn" id="pattern-load" data-i18n="btn_load">読込</button>
+        <button class="addbtn" id="pattern-save" data-i18n="btn_save">保存</button>
+        <button class="addbtn pattern-del-btn" id="pattern-delete" data-i18n="btn_delete">削除</button>
+        <button class="opt-run-btn" id="opt-run" disabled data-i18n="btn_run">最適化実行</button>
       </div>
 
       <!-- 結果 -->
       <div class="scroll" id="opt-scroll">
         <div class="opt-empty" id="opt-empty">
           <div style="font-size:28px;opacity:0.22">◈</div>
-          <div>メインステータスを選択して最適化を実行してください</div>
+          <div id="opt-empty-text">メインステータスを選択して最適化を実行してください</div>
         </div>
         <div class="opt-results" id="opt-results" style="display:none"></div>
       </div>
@@ -107,54 +107,46 @@
     <div class="modal-bd" id="menu-modal-bd">
       <div class="modal menu-modal">
         <div class="modal-head">
-          <span class="modal-title">メニュー</span>
+          <span class="modal-title" data-i18n="menu_title">メニュー</span>
           <button class="modal-close" id="menu-modal-close">&times;</button>
         </div>
         <div class="menu-modal-body">
           <div class="menu-section">
-            <div class="menu-section-label">エクスポート</div>
-            <div class="menu-section-items">
-              <button class="menu-item" id="menu-export-json">
-                <span class="menu-item-icon">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M2 15h8"/><path d="m5 12-3 3 3 3"/></svg>
-                </span>
-                <span class="menu-item-text">
-                  <span class="menu-item-label">JSON</span>
-                  <span class="menu-item-desc">モジュールデータをJSON形式で保存</span>
-                </span>
+            <div class="menu-section-label" data-i18n="menu_export">エクスポート</div>
+            <div class="menu-export-btns">
+              <button class="menu-export-btn" id="menu-export-json">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+                <span data-i18n="menu_export_json">JSON</span>
               </button>
-              <button class="menu-item" id="menu-export-csv">
-                <span class="menu-item-icon">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/></svg>
-                </span>
-                <span class="menu-item-text">
-                  <span class="menu-item-label">CSV</span>
-                  <span class="menu-item-desc">スプレッドシート向けCSV形式で保存</span>
-                </span>
+              <button class="menu-export-btn" id="menu-export-csv">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+                <span data-i18n="menu_export_csv">CSV</span>
               </button>
             </div>
           </div>
           <div class="menu-section">
-            <div class="menu-section-label">設定</div>
-            <div class="menu-section-items">
-              <button class="menu-item" id="menu-toggle-auto-monitor">
-                <span class="menu-item-icon">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-                </span>
-                <span class="menu-item-text">
-                  <span class="menu-item-label">起動時にネットワーク監視を開始</span>
-                  <span class="menu-item-desc" id="menu-auto-monitor-status">OFF</span>
-                </span>
+            <div class="menu-section-label" data-i18n="menu_settings">設定</div>
+            <div class="menu-row">
+              <span class="menu-row-label" data-i18n="menu_auto_monitor">起動時にネットワーク監視を開始</span>
+              <button class="menu-toggle" id="menu-toggle-auto-monitor" type="button">
+                <span class="menu-toggle-track"><span class="menu-toggle-thumb"></span></span>
               </button>
-              <button class="menu-item" id="menu-theme-toggle">
-                <span class="menu-item-icon">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
-                </span>
-                <span class="menu-item-text">
-                  <span class="menu-item-label">テーマ</span>
-                  <span class="menu-item-desc" id="menu-theme-status">システム設定に従う</span>
-                </span>
-              </button>
+            </div>
+            <div class="menu-row">
+              <span class="menu-row-label" data-i18n="menu_theme">テーマ</span>
+              <select class="menu-select" id="menu-theme-select">
+                <option value="system">システム設定に従う</option>
+                <option value="light">ライト</option>
+                <option value="dark">ダーク</option>
+              </select>
+            </div>
+            <div class="menu-row">
+              <span class="menu-row-label">Language</span>
+              <select class="menu-select" id="menu-lang-select">
+                <option value="ja">日本語</option>
+                <option value="ko">한국어</option>
+                <option value="custom">カスタム</option>
+              </select>
             </div>
           </div>
         </div>
@@ -165,18 +157,18 @@
     <div class="modal-bd" id="monitor-confirm-bd">
       <div class="modal monitor-confirm-modal">
         <div class="modal-head">
-          <span class="modal-title">ネットワーク監視</span>
+          <span class="modal-title" data-i18n="monitor_title">ネットワーク監視</span>
           <button class="modal-close" id="monitor-confirm-close">&times;</button>
         </div>
         <div class="modal-body">
-          <p class="monitor-confirm-text">次回からアプリ起動時にネットワーク監視を自動的に開始しますか？</p>
+          <p class="monitor-confirm-text" data-i18n="monitor_message">次回からアプリ起動時にネットワーク監視を自動的に開始しますか？</p>
           <label class="monitor-confirm-check">
             <input type="checkbox" id="monitor-confirm-hide">
-            <span>次回から表示しない（メニューから切替可能です）</span>
+            <span data-i18n="monitor_remember">次回から表示しない（メニューから切替可能です）</span>
           </label>
           <div class="monitor-confirm-actions">
-            <button class="monitor-confirm-btn secondary" id="monitor-confirm-no">いいえ</button>
-            <button class="monitor-confirm-btn primary" id="monitor-confirm-yes">はい</button>
+            <button class="monitor-confirm-btn secondary" id="monitor-confirm-no" data-i18n="monitor_no">いいえ</button>
+            <button class="monitor-confirm-btn primary" id="monitor-confirm-yes" data-i18n="monitor_yes">はい</button>
           </div>
         </div>
       </div>
@@ -200,7 +192,7 @@
     <div class="sb" id="sb-i"></div>
     <div class="sb" style="margin-left:auto">
       <button class="cap-wrap" id="cap-toggle" type="button">
-        <span class="cap-label">ネットワーク監視</span>
+        <span class="cap-label" data-i18n="network_label">ネットワーク監視</span>
         <span class="cap-track"><span class="cap-thumb"></span></span>
       </button>
       <span id="sb-monitor"></span>

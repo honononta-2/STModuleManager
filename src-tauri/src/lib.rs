@@ -175,6 +175,8 @@ pub fn run() {
             commands::save_opt_patterns,
             commands::get_settings,
             commands::update_settings,
+            commands::get_custom_language,
+            commands::save_custom_language,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

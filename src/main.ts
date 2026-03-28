@@ -2,31 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ModuleEntry } from "./types";
-
-// --- part_id → ステータス名マッピング ---
-const STAT_NAMES: Record<number, string> = {
-  1110: "筋力強化",
-  1111: "敏捷強化",
-  1112: "知力強化",
-  1113: "特攻ダメージ強化",
-  1114: "精鋭打撃",
-  1205: "特攻回復強化",
-  1206: "マスタリー回復強化",
-  1307: "魔法耐性",
-  1308: "物理耐性",
-  1407: "集中・詠唱",
-  1408: "集中・攻撃速度",
-  1409: "集中・会心",
-  1410: "集中・幸運",
-  2104: "極・ダメージ増加",
-  2105: "極・適応力",
-  2204: "極・HP凝縮",
-  2205: "極・応急処置",
-  2304: "極・絶境守護",
-  2404: "極・HP変動",
-  2405: "極・HP吸収",
-  2406: "極・幸運会心",
-};
+import { JA, KO, JA_STAT_NAME_TO_ID, setLang, mergeLang, fmt, t } from "./i18n";
 
 // --- part_id → アイコンファイル名マッピング ---
 const STAT_ICONS: Record<number, string> = {
@@ -53,8 +29,14 @@ const STAT_ICONS: Record<number, string> = {
   2406: "mod_effect_icon_017.png",
 };
 
-const ALL_STAT_NAMES = Object.values(STAT_NAMES);
-const MODULE_TYPES = ["攻撃", "支援", "防御"] as const;
+/** HTML特殊文字をエスケープ（カスタム言語データを innerHTML に挿入する際に使用） */
+function esc(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
 function utcToJst(utcStr: string): string {
   const d = new Date(utcStr + "Z");
@@ -67,7 +49,7 @@ function utcToJst(utcStr: string): string {
 }
 
 function statName(partId: number): string {
-  return STAT_NAMES[partId] ?? `Unknown(${partId})`;
+  return t.stat_names[String(partId)] ?? `Unknown(${partId})`;
 }
 
 function statIcon(partId: number): string {
@@ -77,12 +59,6 @@ function statIcon(partId: number): string {
 
 // --- quality → レアリティ ---
 type Rarity = "orange" | "gold" | "purple" | "blue";
-const RARITY_LABEL: Record<Rarity, string> = {
-  orange: "橙",
-  gold: "金",
-  purple: "紫",
-  blue: "青",
-};
 const RARITY_ORDER: Record<Rarity, number> = { orange: 4, gold: 3, purple: 2, blue: 1 };
 
 function qualityToRarity(q: number | null): Rarity {
@@ -98,13 +74,12 @@ const CONFIG_RARITY_MAP: Record<number, number> = { 1: 2, 2: 3, 3: 4, 4: 5 };
 
 function configIdToIcon(configId: number | null): { icon: string; bgRarity: number } | null {
   if (configId == null) return null;
-  const lower = configId % 1000; // e.g. 5500202 → 202
-  const typeDigit = Math.floor(lower / 100); // 2
-  const rareSub = lower % 100; // 02
+  const lower = configId % 1000;
+  const typeDigit = Math.floor(lower / 100);
+  const rareSub = lower % 100;
   const typeName = CONFIG_TYPE_MAP[typeDigit];
   const rarityNum = CONFIG_RARITY_MAP[rareSub];
   if (!typeName || !rarityNum) return null;
-  // 背景: レア種別03と04は同じレアリティ(4)なのでrarity4.png
   const bgRarity = Math.min(rarityNum, 4);
   return {
     icon: `item_mod_${typeName}${rarityNum}.png`,
@@ -119,6 +94,19 @@ function moduleIconHtml(configId: number | null): string {
     <img class="mod-icon-bg" src="/icons/rarity${info.bgRarity}.png" alt="">
     <img class="mod-icon-fg" src="/icons/${info.icon}" alt="">
   </div>`;
+}
+
+/** config_id → モジュール型名（表示用） */
+function configIdToType(configId: number | null): string {
+  if (configId == null) return "";
+  const prefix = Math.floor(configId / 100);
+  return t.module_types[String(prefix)] ?? "";
+}
+
+/** config_id → モジュール型キー ("55001" | "55002" | "55003") */
+function configIdToTypeKey(configId: number | null): string {
+  if (configId == null) return "";
+  return String(Math.floor(configId / 100));
 }
 
 // --- Optimizer types ---
@@ -151,33 +139,64 @@ interface OptimizeResponse {
 // --- State ---
 let allModules: ModuleEntry[] = [];
 let filterRarities: Rarity[] = [];
-let filterStats: string[] = [];
-let filterTypes: string[] = [];
-let filterMode: 'and' | 'or' = 'and';
+let filterStats: number[] = [];      // part_id
+let filterTypes: string[] = [];      // config prefix key: "55001" | "55002" | "55003"
+let filterMode: "and" | "or" = "and";
 let sortKeys: { k: string; d: number }[] = [];
 
-// Optimizer state
-let optRequired: string[] = [];   // stat names
-let optDesired: string[] = [];
-let optExcluded: string[] = [];
+// Optimizer state (part_ids)
+let optRequired: number[] = [];
+let optDesired: number[] = [];
+let optExcluded: number[] = [];
 
 // --- DOM ---
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
+/** data-i18n / data-i18n-aria 属性を持つ要素にテキストを適用 */
+function applyI18n(): void {
+  document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((el) => {
+    const key = el.dataset.i18n!;
+    el.textContent = t.ui[key] ?? el.textContent;
+  });
+  document.querySelectorAll<HTMLElement>("[data-i18n-aria]").forEach((el) => {
+    const key = el.dataset.i18nAria!;
+    el.setAttribute("aria-label", t.ui[key] ?? "");
+  });
+  // select options
+  const qualSel = $<HTMLSelectElement>("opt-quality");
+  qualSel.options[0].text = t.ui.rarity_purple_up;
+  qualSel.options[1].text = t.ui.rarity_gold_only;
+  // pattern select placeholder
+  const patSel = $<HTMLSelectElement>("pattern-select");
+  if (patSel.options.length > 0) patSel.options[0].text = t.ui.pattern_placeholder;
+  // theme/lang select options
+  const themeSel = $<HTMLSelectElement>("menu-theme-select");
+  themeSel.options[0].text = t.ui.theme_system;
+  themeSel.options[1].text = t.ui.theme_light;
+  themeSel.options[2].text = t.ui.theme_dark;
+  const langSel = $<HTMLSelectElement>("menu-lang-select");
+  langSel.options[0].text = t.ui.lang_ja;
+  langSel.options[1].text = t.ui.lang_ko;
+  langSel.options[2].text = "Custom";
+  // opt-empty 初期テキスト
+  $("opt-empty-text").textContent = t.ui.opt_empty;
+  // ステータスバー初期値
+  $("sb-n").textContent = fmt(t.ui.n_modules, { count: 0 });
+}
+
 function renderGrid() {
   let ms = [...allModules];
 
-  // Apply filters: レアリティ・型は常にOR、ステータスはAND/ORモードに従う
   if (filterRarities.length > 0) {
     ms = ms.filter((m) => filterRarities.includes(qualityToRarity(m.quality)));
   }
   if (filterTypes.length > 0) {
-    ms = ms.filter((m) => filterTypes.some((t) => configIdToType(m.config_id) === t));
+    ms = ms.filter((m) => filterTypes.some((k) => configIdToTypeKey(m.config_id) === k));
   }
   if (filterStats.length > 0) {
-    ms = filterMode === 'and'
-      ? ms.filter((m) => filterStats.every((f) => m.stats.some((s) => statName(s.part_id) === f)))
-      : ms.filter((m) => filterStats.some((f) => m.stats.some((s) => statName(s.part_id) === f)));
+    ms = filterMode === "and"
+      ? ms.filter((m) => filterStats.every((pid) => m.stats.some((s) => s.part_id === pid)))
+      : ms.filter((m) => filterStats.some((pid) => m.stats.some((s) => s.part_id === pid)));
   }
 
   ms.sort((a, b) => {
@@ -194,8 +213,9 @@ function renderGrid() {
         va = a.stats.reduce((sum, x) => sum + x.value, 0);
         vb = b.stats.reduce((sum, x) => sum + x.value, 0);
       } else {
-        va = a.stats.find((x) => statName(x.part_id) === s.k)?.value ?? 0;
-        vb = b.stats.find((x) => statName(x.part_id) === s.k)?.value ?? 0;
+        const pid = Number(s.k);
+        va = a.stats.find((x) => x.part_id === pid)?.value ?? 0;
+        vb = b.stats.find((x) => x.part_id === pid)?.value ?? 0;
       }
       if (va < vb) return s.d;
       if (va > vb) return -s.d;
@@ -207,9 +227,18 @@ function renderGrid() {
   g.innerHTML = "";
 
   if (!ms.length) {
-    g.innerHTML =
-      '<div class="empty"><div style="font-size:24px;opacity:0.25">○</div><div style="font-size:13px">条件に一致するモジュールがありません</div></div>';
-    $("sb-n").textContent = "0 モジュール";
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    const icon = document.createElement("div");
+    icon.style.cssText = "font-size:24px;opacity:0.25";
+    icon.textContent = "○";
+    const msg = document.createElement("div");
+    msg.style.fontSize = "13px";
+    msg.textContent = t.ui.no_modules_msg;
+    empty.appendChild(icon);
+    empty.appendChild(msg);
+    g.appendChild(empty);
+    $("sb-n").textContent = fmt(t.ui.n_modules, { count: 0 });
     return;
   }
 
@@ -217,44 +246,40 @@ function renderGrid() {
     const c = document.createElement("div");
     c.className = "card";
     c.style.animationDelay = `${Math.min(i, 16) * 14}ms`;
-    c.innerHTML = `
-      <div class="card-head">
-        ${moduleIconHtml(m.config_id)}
-        <span class="cdate">${utcToJst(m.acquired_date)}</span>
-      </div>
-      <div class="divider"></div>
-      <div class="stats">${m.stats
-        .map(
-          (s) => `
+    const statsHtml = m.stats
+      .map(
+        (s) => `
         <div class="srow">
-          ${statIcon(s.part_id)}<span class="sname">${statName(s.part_id)}</span>
+          ${statIcon(s.part_id)}<span class="sname">${esc(statName(s.part_id))}</span>
           <div class="sbar-w"><div class="sbar" style="width:${s.value * 10}%"></div></div>
           <span class="sval">+${s.value}</span>
         </div>`
-        )
-        .join("")}
-      </div>`;
+      )
+      .join("");
+    c.innerHTML = `
+      <div class="card-head">
+        ${moduleIconHtml(m.config_id)}
+        <span class="cdate">${esc(utcToJst(m.acquired_date))}</span>
+      </div>
+      <div class="divider"></div>
+      <div class="stats">${statsHtml}</div>`;
     g.appendChild(c);
   });
 
-  $("sb-n").textContent = `${ms.length} モジュール`;
+  $("sb-n").textContent = fmt(t.ui.n_modules, { count: ms.length });
   const info: string[] = [];
   const filterCount = filterRarities.length + filterTypes.length + filterStats.length;
-  if (filterCount) info.push(`絞込 ${filterCount}件(${filterMode.toUpperCase()})`);
+  if (filterCount) info.push(fmt(t.ui.filter_info, { count: filterCount }) + `(${filterMode.toUpperCase()})`);
   $("sb-i").textContent = info.join("　");
 }
 
-const RARITY_FILTERS: { label: string; value: Rarity }[] = [
-  { label: "金", value: "gold" },
-  { label: "紫", value: "purple" },
-  { label: "青", value: "blue" },
-];
+const RARITY_FILTER_KEYS: Rarity[] = ["gold", "purple", "blue"];
 
 function updateFilterBtnLabel() {
   const count = filterRarities.length + filterTypes.length + filterStats.length;
   const btn = $("filter-btn");
-  btn.textContent = count > 0 ? `${count}件選択` : '未選択';
-  btn.classList.toggle('has-items', count > 0);
+  btn.textContent = count > 0 ? fmt(t.ui.filter_count, { count }) : t.ui.filter_none;
+  btn.classList.toggle("has-items", count > 0);
 }
 
 function addFlySection(
@@ -295,10 +320,10 @@ function openFilterMultiFly(anchor: HTMLElement) {
   const refresh = () => { updateFilterBtnLabel(); renderGrid(); };
 
   // Section: レアリティ
-  addFlySection(fl, "レアリティ",
-    RARITY_FILTERS.map((r) => ({ label: r.label, checked: filterRarities.includes(r.value) })),
+  addFlySection(fl, t.ui.fly_rarity,
+    RARITY_FILTER_KEYS.map((r) => ({ label: t.rarity[r], checked: filterRarities.includes(r) })),
     (i, checked) => {
-      const val = RARITY_FILTERS[i].value;
+      const val = RARITY_FILTER_KEYS[i];
       if (checked) filterRarities.push(val);
       else { const idx = filterRarities.indexOf(val); if (idx >= 0) filterRarities.splice(idx, 1); }
       refresh();
@@ -306,23 +331,25 @@ function openFilterMultiFly(anchor: HTMLElement) {
   );
 
   // Section: 型
-  addFlySection(fl, "型",
-    MODULE_TYPES.map((t) => ({ label: t, checked: filterTypes.includes(t) })),
+  const moduleTypeEntries = Object.entries(t.module_types);
+  addFlySection(fl, t.ui.fly_type,
+    moduleTypeEntries.map(([key]) => ({ label: t.module_types[key], checked: filterTypes.includes(key) })),
     (i, checked) => {
-      const val = MODULE_TYPES[i];
-      if (checked) filterTypes.push(val);
-      else { const idx = filterTypes.indexOf(val); if (idx >= 0) filterTypes.splice(idx, 1); }
+      const key = moduleTypeEntries[i][0];
+      if (checked) filterTypes.push(key);
+      else { const idx = filterTypes.indexOf(key); if (idx >= 0) filterTypes.splice(idx, 1); }
       refresh();
     },
   );
 
   // Section: ステータス
-  addFlySection(fl, "ステータス",
-    ALL_STAT_NAMES.map((n) => ({ label: n, checked: filterStats.includes(n) })),
+  const allStatIds = Object.keys(t.stat_names).map(Number);
+  addFlySection(fl, t.ui.fly_stat,
+    allStatIds.map((pid) => ({ label: statName(pid), checked: filterStats.includes(pid) })),
     (i, checked) => {
-      const val = ALL_STAT_NAMES[i];
-      if (checked) filterStats.push(val);
-      else { const idx = filterStats.indexOf(val); if (idx >= 0) filterStats.splice(idx, 1); }
+      const pid = allStatIds[i];
+      if (checked) filterStats.push(pid);
+      else { const idx = filterStats.indexOf(pid); if (idx >= 0) filterStats.splice(idx, 1); }
       refresh();
     },
   );
@@ -337,27 +364,38 @@ function openFilterMultiFly(anchor: HTMLElement) {
 function renderSChips() {
   const c = $("schips");
   c.innerHTML = "";
-  sortKeys.forEach((s, _i) => {
+  sortKeys.forEach((s) => {
     const lbl =
-      s.k === "date" ? "入手" : s.k === "rarity" ? "レアリティ" : s.k === "total" ? "合計値" : s.k;
+      s.k === "date" ? t.ui.sort_date :
+      s.k === "rarity" ? t.ui.sort_rarity :
+      s.k === "total" ? t.ui.sort_total :
+      statName(Number(s.k));
     const el = document.createElement("div");
     el.className = "schip on";
-    el.innerHTML = `<span>${lbl}</span><span class="arr">${s.d === 1 ? "\u2193" : "\u2191"}</span><button class="schip-rm">\u00d7</button>`;
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = lbl;
+    const arrSpan = document.createElement("span");
+    arrSpan.className = "arr";
+    arrSpan.textContent = s.d === 1 ? "\u2193" : "\u2191";
+    const rmBtn = document.createElement("button");
+    rmBtn.className = "schip-rm";
+    rmBtn.textContent = "\u00d7";
+    el.appendChild(labelSpan);
+    el.appendChild(arrSpan);
+    el.appendChild(rmBtn);
     el.addEventListener("click", (e) => {
       if ((e.target as HTMLElement).classList.contains("schip-rm")) return;
       s.d *= -1;
-      renderSChips();
+      arrSpan.textContent = s.d === 1 ? "\u2193" : "\u2191";
       renderGrid();
     });
-    const rm = el.querySelector<HTMLButtonElement>(".schip-rm");
-    if (rm)
-      rm.onclick = (e) => {
-        e.stopPropagation();
-        const idx = sortKeys.indexOf(s);
-        if (idx >= 0) sortKeys.splice(idx, 1);
-        renderSChips();
-        renderGrid();
-      };
+    rmBtn.onclick = (e) => {
+      e.stopPropagation();
+      const idx = sortKeys.indexOf(s);
+      if (idx >= 0) sortKeys.splice(idx, 1);
+      renderSChips();
+      renderGrid();
+    };
     c.appendChild(el);
   });
 }
@@ -398,14 +436,24 @@ function closeFly() {
 // --- Optimizer state persistence ---
 
 const OPT_STATE_KEY = "opt-last-state";
-// パターンのキャッシュ（invoke の非同期を吸収するため）
 let cachedPatterns: OptPattern[] = [];
+
+/** part_id リストに変換（旧フォーマット: 日本語名文字列を自動マイグレーション） */
+function toPartIds(items: (string | number)[]): number[] {
+  const validIds = new Set(Object.keys(t.stat_names).map(Number));
+  return items
+    .map((n): number | null => {
+      if (typeof n === "string") return JA_STAT_NAME_TO_ID[n] ?? null;
+      return n;
+    })
+    .filter((id): id is number => id != null && validIds.has(id));
+}
 
 interface OptPattern {
   name: string;
-  required: string[];
-  desired: string[];
-  excluded: string[];
+  required: (string | number)[];
+  desired: (string | number)[];
+  excluded: (string | number)[];
   quality: number;
 }
 
@@ -424,9 +472,9 @@ function restoreOptState() {
   if (!raw) return;
   try {
     const s = JSON.parse(raw);
-    if (Array.isArray(s.required)) optRequired = s.required.filter((n: string) => ALL_STAT_NAMES.includes(n));
-    if (Array.isArray(s.desired)) optDesired = s.desired.filter((n: string) => ALL_STAT_NAMES.includes(n));
-    if (Array.isArray(s.excluded)) optExcluded = s.excluded.filter((n: string) => ALL_STAT_NAMES.includes(n));
+    if (Array.isArray(s.required)) optRequired = toPartIds(s.required);
+    if (Array.isArray(s.desired)) optDesired = toPartIds(s.desired);
+    if (Array.isArray(s.excluded)) optExcluded = toPartIds(s.excluded);
     if (s.quality) ($<HTMLSelectElement>("opt-quality")).value = String(s.quality);
   } catch { /* ignore */ }
 }
@@ -455,7 +503,11 @@ async function savePatterns(patterns: OptPattern[]) {
 function renderPatternSelect() {
   const sel = $<HTMLSelectElement>("pattern-select");
   const patterns = getPatterns();
-  sel.innerHTML = '<option value="">-- 選択 --</option>';
+  sel.innerHTML = "";
+  const defaultOpt = document.createElement("option");
+  defaultOpt.value = "";
+  defaultOpt.textContent = t.ui.pattern_placeholder;
+  sel.appendChild(defaultOpt);
   patterns.forEach((p, i) => {
     const opt = document.createElement("option");
     opt.value = String(i);
@@ -468,32 +520,28 @@ function loadPattern(idx: number) {
   const patterns = getPatterns();
   const p = patterns[idx];
   if (!p) return;
-  optRequired = p.required.filter((n) => ALL_STAT_NAMES.includes(n));
-  optDesired = p.desired.filter((n) => ALL_STAT_NAMES.includes(n));
-  optExcluded = p.excluded.filter((n) => ALL_STAT_NAMES.includes(n));
+  optRequired = toPartIds(p.required);
+  optDesired = toPartIds(p.desired);
+  optExcluded = toPartIds(p.excluded);
   if (p.quality) ($<HTMLSelectElement>("opt-quality")).value = String(p.quality);
-  updateOptBtnLabel('req');
-  updateOptBtnLabel('des');
-  updateOptBtnLabel('excl');
+  updateOptBtnLabel("req");
+  updateOptBtnLabel("des");
+  updateOptBtnLabel("excl");
   updateOptRunBtn();
   saveOptState();
 }
 
 // --- Optimizer UI ---
 
-const STAT_NAME_TO_ID: Record<string, number> = Object.fromEntries(
-  Object.entries(STAT_NAMES).map(([id, name]) => [name, Number(id)])
-);
-
-function updateOptBtnLabel(category: 'req' | 'des' | 'excl') {
-  const btnId = { req: 'opt-btn-req', des: 'opt-btn-des', excl: 'opt-btn-excl' }[category];
+function updateOptBtnLabel(category: "req" | "des" | "excl") {
+  const btnId = { req: "opt-btn-req", des: "opt-btn-des", excl: "opt-btn-excl" }[category];
   const items = { req: optRequired, des: optDesired, excl: optExcluded }[category];
   const btn = $(btnId);
-  btn.textContent = items.length > 0 ? `${items.length}件選択` : '未選択';
-  btn.classList.toggle('has-items', items.length > 0);
+  btn.textContent = items.length > 0 ? fmt(t.ui.filter_count, { count: items.length }) : t.ui.filter_none;
+  btn.classList.toggle("has-items", items.length > 0);
 }
 
-function openOptMultiFly(anchor: HTMLElement, category: 'req' | 'des' | 'excl') {
+function openOptMultiFly(anchor: HTMLElement, category: "req" | "des" | "excl") {
   const fl = $("fly-multi");
   if (fl.classList.contains("on") && fl.dataset.category === category) {
     closeFly();
@@ -502,15 +550,16 @@ function openOptMultiFly(anchor: HTMLElement, category: 'req' | 'des' | 'excl') 
   closeFly();
   fl.dataset.category = category;
   const current = { req: optRequired, des: optDesired, excl: optExcluded }[category];
-  const others = (['req', 'des', 'excl'] as const)
+  const others = (["req", "des", "excl"] as const)
     .filter((k) => k !== category)
     .flatMap((k) => ({ req: optRequired, des: optDesired, excl: optExcluded }[k]));
   const otherSet = new Set(others);
 
   fl.innerHTML = "";
-  ALL_STAT_NAMES.forEach((name) => {
-    const isSelected = current.includes(name);
-    const isOther = otherSet.has(name);
+  const allStatIds = Object.keys(t.stat_names).map(Number);
+  allStatIds.forEach((pid) => {
+    const isSelected = current.includes(pid);
+    const isOther = otherSet.has(pid);
     const el = document.createElement("label");
     el.className = "fitem-check" + (isOther ? " dim" : "");
     const cb = document.createElement("input");
@@ -520,9 +569,9 @@ function openOptMultiFly(anchor: HTMLElement, category: 'req' | 'des' | 'excl') 
     if (!isOther) {
       cb.onchange = () => {
         if (cb.checked) {
-          current.push(name);
+          current.push(pid);
         } else {
-          const idx = current.indexOf(name);
+          const idx = current.indexOf(pid);
           if (idx >= 0) current.splice(idx, 1);
         }
         updateOptBtnLabel(category);
@@ -531,7 +580,7 @@ function openOptMultiFly(anchor: HTMLElement, category: 'req' | 'des' | 'excl') 
       };
     }
     const span = document.createElement("span");
-    span.textContent = name;
+    span.textContent = statName(pid);
     el.appendChild(cb);
     el.appendChild(span);
     fl.appendChild(el);
@@ -551,7 +600,7 @@ function updateOptRunBtn() {
 async function runOptimize() {
   const btn = $<HTMLButtonElement>("opt-run");
   btn.classList.add("loading");
-  btn.textContent = "計算中...";
+  btn.textContent = t.ui.btn_running;
 
   const scrollArea = $("opt-scroll");
   $("opt-empty").style.display = "none";
@@ -567,9 +616,9 @@ async function runOptimize() {
 
   const quality = Number(($<HTMLSelectElement>("opt-quality")).value);
   const req = {
-    required_stats: optRequired.map((n) => STAT_NAME_TO_ID[n]).filter(Boolean),
-    desired_stats: optDesired.map((n) => STAT_NAME_TO_ID[n]).filter(Boolean),
-    excluded_stats: optExcluded.map((n) => STAT_NAME_TO_ID[n]).filter(Boolean),
+    required_stats: optRequired,
+    desired_stats: optDesired,
+    excluded_stats: optExcluded,
     min_quality: quality,
   };
 
@@ -579,13 +628,20 @@ async function runOptimize() {
   } catch (e) {
     console.error("optimize error:", e);
     $("opt-results").style.display = "none";
-    $("opt-empty").style.display = "flex";
-    ($("opt-empty")).innerHTML =
-      '<div style="font-size:28px;opacity:0.22">!</div><div>最適化中にエラーが発生しました</div>';
+    const empty = $("opt-empty");
+    empty.style.display = "flex";
+    empty.textContent = "";
+    const icon = document.createElement("div");
+    icon.style.cssText = "font-size:28px;opacity:0.22";
+    icon.textContent = "!";
+    const msg = document.createElement("div");
+    msg.textContent = t.ui.error_optimize;
+    empty.appendChild(icon);
+    empty.appendChild(msg);
   } finally {
     overlay.remove();
     btn.classList.remove("loading");
-    btn.textContent = "最適化実行";
+    btn.textContent = t.ui.btn_run;
   }
 }
 
@@ -596,8 +652,14 @@ function renderOptResults(res: OptimizeResponse) {
   if (res.combinations.length === 0) {
     results.style.display = "none";
     empty.style.display = "flex";
-    empty.innerHTML =
-      '<div style="font-size:28px;opacity:0.22">○</div><div>条件に合う組み合わせが見つかりませんでした</div>';
+    empty.textContent = "";
+    const icon = document.createElement("div");
+    icon.style.cssText = "font-size:28px;opacity:0.22";
+    icon.textContent = "○";
+    const msg = document.createElement("div");
+    msg.textContent = t.ui.no_result;
+    empty.appendChild(icon);
+    empty.appendChild(msg);
     return;
   }
 
@@ -605,10 +667,13 @@ function renderOptResults(res: OptimizeResponse) {
   results.style.display = "flex";
   results.innerHTML = "";
 
-  // Info line
   const info = document.createElement("div");
   info.className = "opt-info";
-  info.textContent = `${res.total_modules}件中 ${res.filtered_count}件のモジュールから探索 — 上位${res.combinations.length}件`;
+  info.textContent = fmt(t.ui.result_info, {
+    total: res.total_modules,
+    filtered: res.filtered_count,
+    count: res.combinations.length,
+  });
   results.appendChild(info);
 
   res.combinations.forEach((comb) => {
@@ -622,7 +687,7 @@ function renderOptResults(res: OptimizeResponse) {
     const statTags = comb.stat_totals
       .map((st) => {
         const cls = st.is_required ? "req" : st.is_desired ? "des" : "other";
-        return `<span class="opt-stat-tag ${cls}">${statIcon(st.part_id)}<span>${statName(st.part_id)}</span> <span class="bp">+${st.total}</span></span>`;
+        return `<span class="opt-stat-tag ${cls}">${statIcon(st.part_id)}<span>${esc(statName(st.part_id))}</span> <span class="bp">+${st.total}</span></span>`;
       })
       .join("");
 
@@ -631,7 +696,7 @@ function renderOptResults(res: OptimizeResponse) {
       <div class="opt-card-body">
         <div class="opt-card-stats">${statTags}</div>
       </div>
-      <div class="opt-card-plus">合計: ${comb.total_plus}</div>`;
+      <div class="opt-card-plus">${esc(fmt(t.ui.combo_total, { n: comb.total_plus }))}</div>`;
 
     card.onclick = () => openModal(comb);
     results.appendChild(card);
@@ -643,16 +708,15 @@ function renderOptResults(res: OptimizeResponse) {
 function openModal(comb: Combination) {
   const bd = $("modal-bd");
   const body = $("modal-body");
-  $("modal-title").textContent = `#${comb.rank} 組み合わせ詳細`;
+  $("modal-title").textContent = fmt(t.ui.modal_rank_title, { rank: comb.rank });
 
-  // モジュール一覧
   const modsHtml = comb.modules
     .map((m) => {
       const statsHtml = m.stats
         .map(
           (s) => `
           <div class="srow">
-            ${statIcon(s.part_id)}<span class="sname">${statName(s.part_id)}</span>
+            ${statIcon(s.part_id)}<span class="sname">${esc(statName(s.part_id))}</span>
             <div class="sbar-w"><div class="sbar" style="width:${s.value * 10}%"></div></div>
             <span class="sval">+${s.value}</span>
           </div>`
@@ -669,7 +733,6 @@ function openModal(comb: Combination) {
     })
     .join("");
 
-  // ステータス合計テーブル
   const statTotalsMap = new Map<number, number>();
   comb.modules.forEach((m) => {
     m.stats.forEach((s) => {
@@ -687,31 +750,42 @@ function openModal(comb: Combination) {
     })
     .map(([pid, total]) => {
       const typeTag = reqIds.has(pid)
-        ? `<span class="type-req">メイン</span>`
+        ? `<span class="type-req">${esc(t.ui.modal_main)}</span>`
         : desIds.has(pid)
-          ? `<span class="type-des">サブ</span>`
+          ? `<span class="type-des">${esc(t.ui.modal_sub)}</span>`
           : "";
       return `
       <tr>
-        <td>${statIcon(pid)} ${statName(pid)}</td>
+        <td>${statIcon(pid)} ${esc(statName(pid))}</td>
         <td class="val">+${total}</td>
         <td>${typeTag}</td>
       </tr>`;
     })
     .join("");
 
+  const modalSectionTitle2 = document.createElement("div");
+  modalSectionTitle2.className = "modal-section-title";
+  modalSectionTitle2.textContent = t.ui.modal_stat_total;
+  const grandTotalSpan = document.createElement("span");
+  grandTotalSpan.style.cssText = "font-weight:400;font-size:11px;color:var(--tx2);text-transform:none;letter-spacing:0";
+  grandTotalSpan.textContent = fmt(t.ui.modal_grand_total, { n: comb.total_plus });
+  modalSectionTitle2.appendChild(document.createTextNode(" "));
+  modalSectionTitle2.appendChild(grandTotalSpan);
+
   body.innerHTML = `
     <div class="modal-section">
-      <div class="modal-section-title">使用モジュール</div>
+      <div class="modal-section-title">${esc(t.ui.modal_used_modules)}</div>
       <div class="modal-modules">${modsHtml}</div>
     </div>
-    <div class="modal-section">
-      <div class="modal-section-title">ステータス合計 <span style="font-weight:400;font-size:11px;color:var(--tx2);text-transform:none;letter-spacing:0">合計 ${comb.total_plus}</span></div>
+    <div class="modal-section" id="modal-stat-section">
       <table class="modal-table">
-        <thead><tr><th>ステータス</th><th>合計値</th><th>分類</th></tr></thead>
+        <thead><tr><th>${esc(t.ui.modal_stat)}</th><th>${esc(t.ui.modal_value)}</th><th>${esc(t.ui.modal_category)}</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
     </div>`;
+
+  const statSection = body.querySelector("#modal-stat-section")!;
+  statSection.insertBefore(modalSectionTitle2, statSection.firstChild);
 
   bd.classList.add("on");
 }
@@ -726,7 +800,7 @@ function generateExportJson(): string {
     uuid: m.uuid,
     config_id: m.config_id,
     quality: m.quality,
-    rarity: RARITY_LABEL[qualityToRarity(m.quality)],
+    rarity: t.rarity[qualityToRarity(m.quality)],
     stats: m.stats.map((s) => ({
       name: statName(s.part_id),
       part_id: s.part_id,
@@ -740,25 +814,16 @@ function generateExportJson(): string {
   return JSON.stringify(data, null, 2);
 }
 
-function configIdToType(configId: number | null): string {
-  if (configId == null) return "";
-  const prefix = Math.floor(configId / 100);
-  if (prefix === 55001) return "攻撃";
-  if (prefix === 55002) return "支援";
-  if (prefix === 55003) return "防御";
-  return "";
-}
-
 function generateExportCsv(): string {
   const BOM = "\uFEFF";
   const maxStats = allModules.reduce((mx, m) => Math.max(mx, m.stats.length), 0);
   const statCols = Math.max(maxStats, 3);
 
-  const headers: string[] = ["ID", "型", "レアリティ"];
+  const headers: string[] = [t.ui.csv_id, t.ui.csv_type, t.ui.csv_rarity];
   for (let i = 1; i <= statCols; i++) {
     headers.push(`status_${i}`, `value_${i}`);
   }
-  headers.push("合計値", "入手日時");
+  headers.push(t.ui.csv_total, t.ui.csv_date);
 
   const rows: string[] = [headers.join(",")];
 
@@ -766,7 +831,7 @@ function generateExportCsv(): string {
     const cols: (string | number)[] = [
       m.uuid,
       configIdToType(m.config_id),
-      RARITY_LABEL[qualityToRarity(m.quality)],
+      t.rarity[qualityToRarity(m.quality)],
     ];
     for (let i = 0; i < statCols; i++) {
       if (i < m.stats.length) {
@@ -793,6 +858,26 @@ async function loadModules() {
     allModules = [];
   }
   renderGrid();
+}
+
+// --- Language loading ---
+async function loadLanguage(lang: string): Promise<void> {
+  if (lang === "ko") {
+    setLang(KO);
+    return;
+  }
+  if (lang === "custom") {
+    try {
+      const json = await invoke<string>("get_custom_language");
+      setLang(mergeLang(JSON.parse(json)));
+    } catch {
+      // custom_lang.json が存在しない場合は日本語デフォルトで作成
+      await invoke("save_custom_language", { content: JSON.stringify(JA, null, 2) });
+      setLang(JA);
+    }
+    return;
+  }
+  setLang(JA);
 }
 
 // --- Init ---
@@ -833,12 +918,12 @@ async function init() {
   $("menu-export-csv").onclick = () => menuExport("csv");
 
   // Tabs
-  document.querySelectorAll<HTMLElement>(".tab").forEach((t) => {
-    t.onclick = () => {
+  document.querySelectorAll<HTMLElement>(".tab").forEach((tabEl) => {
+    tabEl.onclick = () => {
       document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
       document.querySelectorAll(".panel").forEach((x) => x.classList.remove("active"));
-      t.classList.add("active");
-      $("panel-" + t.dataset.tab!).classList.add("active");
+      tabEl.classList.add("active");
+      $("panel-" + tabEl.dataset.tab!).classList.add("active");
     };
   });
 
@@ -850,9 +935,9 @@ async function init() {
   // AND/OR toggle
   const modeBtn = $("filter-mode");
   modeBtn.onclick = () => {
-    filterMode = filterMode === 'and' ? 'or' : 'and';
+    filterMode = filterMode === "and" ? "or" : "and";
     modeBtn.textContent = filterMode.toUpperCase();
-    modeBtn.classList.toggle('or', filterMode === 'or');
+    modeBtn.classList.toggle("or", filterMode === "or");
     renderGrid();
   };
 
@@ -860,11 +945,16 @@ async function init() {
   $("add-s").onclick = (e) => {
     const ex = new Set(sortKeys.map((s) => s.k));
     const extraItems: { label: string; val: string; disabled: boolean }[] = [
-      { label: "入手", val: "date", disabled: ex.has("date") },
-      { label: "レアリティ", val: "rarity", disabled: ex.has("rarity") },
-      { label: "合計値", val: "total", disabled: ex.has("total") },
+      { label: t.ui.sort_date, val: "date", disabled: ex.has("date") },
+      { label: t.ui.sort_rarity, val: "rarity", disabled: ex.has("rarity") },
+      { label: t.ui.sort_total, val: "total", disabled: ex.has("total") },
     ];
-    const statItems = ALL_STAT_NAMES.map((s) => ({ label: s, val: s, disabled: ex.has(s) }));
+    const allStatIds = Object.keys(t.stat_names).map(Number);
+    const statItems = allStatIds.map((pid) => ({
+      label: statName(pid),
+      val: String(pid),
+      disabled: ex.has(String(pid)),
+    }));
     openFly(
       "fly-s",
       e.currentTarget as HTMLElement,
@@ -882,25 +972,17 @@ async function init() {
 
   // --- Optimizer panel ---
 
-  // メインステ選択
   $("opt-btn-req").onclick = (e) => {
-    openOptMultiFly(e.currentTarget as HTMLElement, 'req');
+    openOptMultiFly(e.currentTarget as HTMLElement, "req");
   };
-
-  // サブステ選択
   $("opt-btn-des").onclick = (e) => {
-    openOptMultiFly(e.currentTarget as HTMLElement, 'des');
+    openOptMultiFly(e.currentTarget as HTMLElement, "des");
   };
-
-  // 対象外ステ選択
   $("opt-btn-excl").onclick = (e) => {
-    openOptMultiFly(e.currentTarget as HTMLElement, 'excl');
+    openOptMultiFly(e.currentTarget as HTMLElement, "excl");
   };
 
-  // レアリティselect変更時も保存
   $("opt-quality").onchange = () => saveOptState();
-
-  // 実行ボタン
   $("opt-run").onclick = () => runOptimize();
 
   // --- パターン管理 ---
@@ -913,7 +995,7 @@ async function init() {
   };
 
   $("pattern-save").onclick = async () => {
-    const name = prompt("パターン名を入力してください");
+    const name = prompt(t.ui.pattern_prompt);
     if (!name || !name.trim()) return;
     const quality = Number(($<HTMLSelectElement>("opt-quality")).value);
     const patterns = getPatterns();
@@ -942,7 +1024,7 @@ async function init() {
     const patterns = getPatterns();
     const p = patterns[idx];
     if (!p) return;
-    if (!confirm(`パターン「${p.name}」を削除しますか？`)) return;
+    if (!confirm(fmt(t.ui.pattern_delete_confirm, { name: p.name }))) return;
     patterns.splice(idx, 1);
     await savePatterns(patterns);
     renderPatternSelect();
@@ -956,9 +1038,9 @@ async function init() {
 
   // 前回の状態を復元
   restoreOptState();
-  updateOptBtnLabel('req');
-  updateOptBtnLabel('des');
-  updateOptBtnLabel('excl');
+  updateOptBtnLabel("req");
+  updateOptBtnLabel("des");
+  updateOptBtnLabel("excl");
   updateOptRunBtn();
 
   // バックエンドからのイベントを監視
@@ -967,60 +1049,76 @@ async function init() {
   });
 
   await listen("server-found", () => {
-    $("sb-monitor").textContent = "サーバー接続済み";
+    $("sb-monitor").textContent = t.ui.server_found;
   });
 
   // --- 設定管理 ---
-  type AppSettings = { auto_monitor: boolean; show_monitor_confirm: boolean; theme: string };
+  type AppSettings = {
+    auto_monitor: boolean;
+    show_monitor_confirm: boolean;
+    theme: string;
+    language: string;
+  };
   let appSettings: AppSettings = await invoke("get_settings");
 
   // --- テーマ管理 ---
-  const THEME_CYCLE: string[] = ["system", "light", "dark"];
-  const THEME_LABELS: Record<string, string> = {
-    system: "システム設定に従う",
-    light: "ライト",
-    dark: "ダーク",
-  };
-
   const applyTheme = (theme: string) => {
     let resolved = theme;
     if (theme === "system") {
       resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     }
     document.documentElement.setAttribute("data-theme", resolved);
+    let meta = document.querySelector<HTMLMetaElement>('meta[name="color-scheme"]');
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.name = 'color-scheme';
+      document.head.appendChild(meta);
+    }
+    meta.content = resolved;
+    document.querySelectorAll<HTMLSelectElement>("select").forEach((sel) => {
+      sel.style.setProperty("color-scheme", resolved);
+    });
   };
 
-  // システムテーマ変更を監視
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
     if (appSettings.theme === "system") applyTheme("system");
   });
 
   applyTheme(appSettings.theme);
 
-  const updateMenuSettingsLabels = () => {
-    $("menu-auto-monitor-status").textContent = appSettings.auto_monitor ? "ON" : "OFF";
-    $("menu-theme-status").textContent = THEME_LABELS[appSettings.theme] ?? appSettings.theme;
-  };
-  updateMenuSettingsLabels();
-
   const saveSettings = async (patch: Partial<AppSettings>) => {
     appSettings = { ...appSettings, ...patch };
     await invoke("update_settings", { settings: appSettings });
-    updateMenuSettingsLabels();
   };
 
-  // メニュー: 起動時に自動監視を開始 トグル
-  $("menu-toggle-auto-monitor").onclick = () => {
-    saveSettings({ auto_monitor: !appSettings.auto_monitor });
+  // --- 起動時ネットワーク監視トグル ---
+  const autoMonitorToggle = $("menu-toggle-auto-monitor");
+  autoMonitorToggle.classList.toggle("active", appSettings.auto_monitor);
+  autoMonitorToggle.onclick = () => {
+    const next = !appSettings.auto_monitor;
+    autoMonitorToggle.classList.toggle("active", next);
+    saveSettings({ auto_monitor: next });
   };
 
-  // メニュー: テーマ切替 (system → light → dark → system ...)
-  $("menu-theme-toggle").onclick = () => {
-    const idx = THEME_CYCLE.indexOf(appSettings.theme);
-    const next = THEME_CYCLE[(idx + 1) % THEME_CYCLE.length];
-    applyTheme(next);
-    saveSettings({ theme: next });
+  // --- テーマ select ---
+  const themeSelect = $<HTMLSelectElement>("menu-theme-select");
+  themeSelect.value = appSettings.theme;
+  themeSelect.onchange = () => {
+    applyTheme(themeSelect.value);
+    saveSettings({ theme: themeSelect.value });
   };
+
+  // --- 言語切替 ---
+  const switchLanguage = async (lang: string) => {
+    await saveSettings({ language: lang });
+    await loadLanguage(lang);
+    applyI18n();
+    renderGrid();
+  };
+
+  const langSelect = $<HTMLSelectElement>("menu-lang-select");
+  langSelect.value = appSettings.language ?? "ja";
+  langSelect.onchange = () => switchLanguage(langSelect.value);
 
   // --- 監視確認モーダル ---
   const openMonitorConfirm = (): Promise<{ confirmed: boolean; hide: boolean }> => {
@@ -1068,7 +1166,6 @@ async function init() {
       capToggle.classList.remove("active");
       $("sb-monitor").textContent = "";
     } else {
-      // 自動監視が未設定の場合のみ確認モーダルを表示
       if (!appSettings.auto_monitor && appSettings.show_monitor_confirm) {
         const result = await openMonitorConfirm();
         if (result.hide) {
@@ -1080,7 +1177,7 @@ async function init() {
       }
       await invoke("start_capture_cmd");
       capToggle.classList.add("active");
-      $("sb-monitor").textContent = "サーバー検出中...";
+      $("sb-monitor").textContent = t.ui.server_searching;
     }
   });
 
@@ -1089,7 +1186,7 @@ async function init() {
     const status: { capturing: boolean; server_found: boolean } = await invoke("get_monitor_status");
     if (status.capturing) {
       capToggle.classList.add("active");
-      $("sb-monitor").textContent = status.server_found ? "サーバー接続済み" : "サーバー検出中...";
+      $("sb-monitor").textContent = status.server_found ? t.ui.server_found : t.ui.server_searching;
     }
   }
 
@@ -1098,4 +1195,13 @@ async function init() {
   loadModules();
 }
 
-document.addEventListener("DOMContentLoaded", init);
+async function main() {
+  // 設定から言語を読み込んでi18nを初期化してからDOMを更新
+  type SettingsLang = { language?: string };
+  const settings = await invoke<SettingsLang>("get_settings").catch(() => ({} as SettingsLang));
+  await loadLanguage(settings.language ?? "ja");
+  applyI18n();
+  await init();
+}
+
+document.addEventListener("DOMContentLoaded", main);

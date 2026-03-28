@@ -11,10 +11,17 @@ pub struct AppSettings {
     /// テーマ設定: "light", "dark", "system"
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// 言語設定: "ja", "ko", "custom"
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 fn default_theme() -> String {
     "system".to_string()
+}
+
+fn default_language() -> String {
+    "ja".to_string()
 }
 
 impl Default for AppSettings {
@@ -23,6 +30,7 @@ impl Default for AppSettings {
             auto_monitor: false,
             show_monitor_confirm: true,
             theme: default_theme(),
+            language: default_language(),
         }
     }
 }

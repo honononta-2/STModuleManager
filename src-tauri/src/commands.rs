@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 pub struct OptPatternsPath(pub PathBuf);
@@ -106,12 +106,13 @@ pub async fn optimize_modules(
 }
 
 /// 最適化パターン1件
+/// required/desired/excluded は part_id の数値リスト（旧フォーマットの文字列もそのまま保持してマイグレーションはTS側で行う）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptPattern {
     pub name: String,
-    pub required: Vec<String>,
-    pub desired: Vec<String>,
-    pub excluded: Vec<String>,
+    pub required: Vec<serde_json::Value>,
+    pub desired: Vec<serde_json::Value>,
+    pub excluded: Vec<serde_json::Value>,
     pub quality: u32,
 }
 
@@ -164,6 +165,31 @@ pub fn export_to_file(
         }
         None => Ok(false),
     }
+}
+
+/// カスタム言語ファイル (custom_lang.json) を取得する
+#[tauri::command]
+pub fn get_custom_language(app: tauri::AppHandle) -> Result<String, String> {
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("custom_lang.json");
+    if !path.exists() {
+        return Err("not_found".to_string());
+    }
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+/// カスタム言語ファイル (custom_lang.json) を保存する
+#[tauri::command]
+pub fn save_custom_language(app: tauri::AppHandle, content: String) -> Result<(), String> {
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("custom_lang.json");
+    std::fs::write(&path, content.as_bytes()).map_err(|e| e.to_string())
 }
 
 /// アプリ設定を取得
