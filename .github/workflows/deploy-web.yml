@@ -12,6 +12,7 @@ on:
 
 jobs:
   deploy:
+    if: github.repository == 'honononta/STModuleManager'
     runs-on: ubuntu-latest
     permissions:
       contents: read
