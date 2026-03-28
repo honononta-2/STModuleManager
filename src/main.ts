@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ModuleEntry } from "./types";
-import { JA, KO, JA_STAT_NAME_TO_ID, setLang, mergeLang, fmt, t } from "./i18n";
+import { JA, KO, EN, JA_STAT_NAME_TO_ID, setLang, mergeLang, fmt, t } from "./i18n";
 
 // --- part_id → アイコンファイル名マッピング ---
 const STAT_ICONS: Record<number, string> = {
@@ -177,7 +177,8 @@ function applyI18n(): void {
   const langSel = $<HTMLSelectElement>("menu-lang-select");
   langSel.options[0].text = t.ui.lang_ja;
   langSel.options[1].text = t.ui.lang_ko;
-  langSel.options[2].text = "Custom";
+  langSel.options[2].text = t.ui.lang_en;
+  langSel.options[3].text = t.ui.lang_custom;
   // opt-empty 初期テキスト
   $("opt-empty-text").textContent = t.ui.opt_empty;
   // ステータスバー初期値
@@ -866,6 +867,10 @@ async function loadLanguage(lang: string): Promise<void> {
     setLang(KO);
     return;
   }
+  if (lang === "en") {
+    setLang(EN);
+    return;
+  }
   if (lang === "custom") {
     try {
       const json = await invoke<string>("get_custom_language");
@@ -882,10 +887,7 @@ async function loadLanguage(lang: string): Promise<void> {
 
 // --- Init ---
 async function init() {
-  // Window controls
   const appWindow = getCurrentWindow();
-  $("win-minimize").onclick = () => appWindow.minimize();
-  $("win-close").onclick = () => appWindow.close();
 
   // Pin toggle (always on top)
   const pinToggle = $("pin-toggle");
@@ -916,6 +918,20 @@ async function init() {
   };
   $("menu-export-json").onclick = () => menuExport("json");
   $("menu-export-csv").onclick = () => menuExport("csv");
+
+  $("menu-clear-data").onclick = () => {
+    $("clear-data-bd").classList.add("on");
+  };
+  $("clear-data-close").onclick = () => {
+    $("clear-data-bd").classList.remove("on");
+  };
+  $("clear-data-cancel").onclick = () => {
+    $("clear-data-bd").classList.remove("on");
+  };
+  $("clear-data-ok").onclick = async () => {
+    localStorage.clear();
+    await invoke("clear_app_data");
+  };
 
   // Tabs
   document.querySelectorAll<HTMLElement>(".tab").forEach((tabEl) => {
@@ -1058,6 +1074,7 @@ async function init() {
     show_monitor_confirm: boolean;
     theme: string;
     language: string;
+    language_configured: boolean;
   };
   let appSettings: AppSettings = await invoke("get_settings");
 
@@ -1118,7 +1135,189 @@ async function init() {
 
   const langSelect = $<HTMLSelectElement>("menu-lang-select");
   langSelect.value = appSettings.language ?? "ja";
-  langSelect.onchange = () => switchLanguage(langSelect.value);
+
+  // --- カスタム言語エディタ ---
+  const updateLangEditBtn = () => {
+    $("menu-lang-edit-btn").style.display = langSelect.value === "custom" ? "" : "none";
+  };
+  langSelect.onchange = () => {
+    switchLanguage(langSelect.value);
+    updateLangEditBtn();
+  };
+  updateLangEditBtn();
+
+  type CLSection = "stat" | "type" | "rarity" | "ui";
+  let clData = mergeLang({});
+  let clSection: CLSection = "stat";
+  let clQuery = "";
+
+  const COPY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+
+  function renderCLBody() {
+    type RowDef = { key: string; def: string; val: string; set: (v: string) => void };
+    const rows: RowDef[] = [];
+
+    if (clSection === "stat") {
+      Object.entries(JA.stat_names).forEach(([k, d]) => {
+        rows.push({ key: k, def: d, val: clData.stat_names[k] ?? d, set: (v) => { clData.stat_names[k] = v; } });
+      });
+    } else if (clSection === "type") {
+      Object.entries(JA.module_types).forEach(([k, d]) => {
+        rows.push({ key: k, def: d, val: clData.module_types[k] ?? d, set: (v) => { clData.module_types[k] = v; } });
+      });
+    } else if (clSection === "rarity") {
+      (["orange", "gold", "purple", "blue"] as const).forEach((k) => {
+        rows.push({ key: k, def: JA.rarity[k], val: clData.rarity[k] ?? JA.rarity[k], set: (v) => { (clData.rarity as Record<string, string>)[k] = v; } });
+      });
+    } else {
+      Object.entries(JA.ui).forEach(([k, d]) => {
+        rows.push({ key: k, def: d, val: clData.ui[k] ?? d, set: (v) => { clData.ui[k] = v; } });
+      });
+    }
+
+    const q = clQuery.toLowerCase();
+    const filtered = q
+      ? rows.filter((r) => r.key.toLowerCase().includes(q) || r.def.toLowerCase().includes(q) || r.val.toLowerCase().includes(q))
+      : rows;
+
+    const table = document.createElement("table");
+    table.className = "custom-lang-table";
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    (["Key", "Default (Japanese)", "Translation"] as const).forEach((text, i) => {
+      const th = document.createElement("th");
+      if (i === 0) th.className = "cl-key";
+      th.textContent = text;
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    filtered.forEach((row) => {
+      const tr = document.createElement("tr");
+
+      const keyTd = document.createElement("td");
+      keyTd.className = "cl-key";
+      keyTd.textContent = row.key;
+      tr.appendChild(keyTd);
+
+      const defTd = document.createElement("td");
+      defTd.className = "cl-default";
+      const defInner = document.createElement("div");
+      defInner.className = "cl-default-inner";
+      const defText = document.createElement("span");
+      defText.className = "cl-default-text";
+      defText.textContent = row.def;
+      defText.title = row.def;
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "cl-copy-btn";
+      copyBtn.innerHTML = COPY_SVG;
+      copyBtn.title = "Copy";
+      copyBtn.onclick = () => {
+        navigator.clipboard.writeText(row.def);
+        copyBtn.classList.add("copied");
+        copyBtn.textContent = "✓";
+        setTimeout(() => {
+          copyBtn.classList.remove("copied");
+          copyBtn.innerHTML = COPY_SVG;
+        }, 800);
+      };
+      defInner.appendChild(defText);
+      defInner.appendChild(copyBtn);
+      defTd.appendChild(defInner);
+      tr.appendChild(defTd);
+
+      const inputTd = document.createElement("td");
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "cl-input";
+      input.value = row.val;
+      input.placeholder = row.def;
+      input.oninput = () => row.set(input.value);
+      inputTd.appendChild(input);
+      tr.appendChild(inputTd);
+
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+
+    const body = $("custom-lang-body");
+    body.innerHTML = "";
+    body.appendChild(table);
+  }
+
+  const openCustomLangEditor = async () => {
+    try {
+      const json = await invoke<string>("get_custom_language");
+      clData = mergeLang(JSON.parse(json));
+    } catch {
+      clData = mergeLang({});
+    }
+    clSection = "stat";
+    clQuery = "";
+    $<HTMLInputElement>("custom-lang-search").value = "";
+    document.querySelectorAll<HTMLElement>(".custom-lang-tab").forEach((tab) => {
+      tab.classList.toggle("active", tab.dataset.tab === "stat");
+    });
+    renderCLBody();
+    $("custom-lang-bd").classList.add("on");
+  };
+
+  $("menu-lang-edit-btn").onclick = () => openCustomLangEditor();
+
+  document.querySelectorAll<HTMLElement>(".custom-lang-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".custom-lang-tab").forEach((el) => el.classList.remove("active"));
+      tab.classList.add("active");
+      clSection = tab.dataset.tab as CLSection;
+      renderCLBody();
+    });
+  });
+
+  $<HTMLInputElement>("custom-lang-search").oninput = (e) => {
+    clQuery = (e.target as HTMLInputElement).value;
+    renderCLBody();
+  };
+
+  const closeCustomLangEditor = () => $("custom-lang-bd").classList.remove("on");
+  $("custom-lang-close").onclick = closeCustomLangEditor;
+  $("custom-lang-cancel").onclick = closeCustomLangEditor;
+
+  $("custom-lang-save").onclick = async () => {
+    await invoke("save_custom_language", { content: JSON.stringify(clData, null, 2) });
+    closeCustomLangEditor();
+    if (langSelect.value === "custom") {
+      await loadLanguage("custom");
+      applyI18n();
+      renderGrid();
+    }
+  };
+
+  $("custom-lang-import").onclick = () => {
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = ".json";
+    fileInput.onchange = async () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      try {
+        clData = mergeLang(JSON.parse(await file.text()));
+        renderCLBody();
+      } catch { /* 不正なJSONは無視 */ }
+    };
+    fileInput.click();
+  };
+
+  $("custom-lang-export").onclick = () => {
+    const blob = new Blob([JSON.stringify(clData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "custom_lang.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // --- 監視確認モーダル ---
   const openMonitorConfirm = (): Promise<{ confirmed: boolean; hide: boolean }> => {
@@ -1196,10 +1395,35 @@ async function init() {
 }
 
 async function main() {
+  // ウィンドウ操作は最初に登録（言語選択モーダル表示中も動作させるため）
+  const appWindow = getCurrentWindow();
+  $("win-minimize").onclick = () => appWindow.minimize();
+  $("win-close").onclick = () => appWindow.close();
+
   // 設定から言語を読み込んでi18nを初期化してからDOMを更新
-  type SettingsLang = { language?: string };
-  const settings = await invoke<SettingsLang>("get_settings").catch(() => ({} as SettingsLang));
-  await loadLanguage(settings.language ?? "ja");
+  type SettingsMain = { language?: string; language_configured?: boolean; [key: string]: unknown };
+  const settings = await invoke<SettingsMain>("get_settings").catch(() => ({} as SettingsMain));
+
+  let initLang = settings.language ?? "ja";
+
+  // 初回起動時: 言語選択モーダルを表示
+  if (!settings.language_configured) {
+    const locale = await invoke<string>("get_system_locale").catch(() => "ja");
+    const suggested = locale.startsWith("ko") ? "ko" : locale.startsWith("en") ? "en" : "ja";
+    const sel = $<HTMLSelectElement>("firstrun-lang-select");
+    sel.value = suggested;
+    $("firstrun-bd").classList.add("on");
+    initLang = await new Promise<string>((resolve) => {
+      $("firstrun-save").onclick = async () => {
+        const lang = sel.value;
+        await invoke("update_settings", { settings: { ...settings, language: lang, language_configured: true } });
+        $("firstrun-bd").classList.remove("on");
+        resolve(lang);
+      };
+    });
+  }
+
+  await loadLanguage(initLang);
   applyI18n();
   await init();
 }

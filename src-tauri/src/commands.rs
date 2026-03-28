@@ -199,6 +199,31 @@ pub fn get_settings(state: State<AppSettingsState>) -> Result<AppSettings, Strin
     Ok(settings.clone())
 }
 
+/// OSのシステムロケールを返す
+#[tauri::command]
+pub fn get_system_locale() -> String {
+    sys_locale::get_locale().unwrap_or_else(|| "ja".to_string())
+}
+
+/// AppDataのデータファイルをすべて削除してアプリを終了する
+#[tauri::command]
+pub fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    for file in &["modules_db.json", "opt_patterns.json", "settings.json", "custom_lang.json"] {
+        let path = app_data_dir.join(file);
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        }
+    }
+
+    app.exit(0);
+    Ok(())
+}
+
 /// アプリ設定を更新して保存
 #[tauri::command]
 pub fn update_settings(

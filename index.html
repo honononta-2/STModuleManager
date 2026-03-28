@@ -142,11 +142,21 @@
             </div>
             <div class="menu-row">
               <span class="menu-row-label">Language</span>
-              <select class="menu-select" id="menu-lang-select">
-                <option value="ja">日本語</option>
-                <option value="ko">한국어</option>
-                <option value="custom">カスタム</option>
-              </select>
+              <div class="menu-lang-controls">
+                <select class="menu-select" id="menu-lang-select">
+                  <option value="ja">日本語</option>
+                  <option value="ko">한국어</option>
+                  <option value="en">English</option>
+                  <option value="custom">カスタム</option>
+                </select>
+                <button class="menu-lang-edit-btn" id="menu-lang-edit-btn" style="display:none">Edit</button>
+              </div>
+            </div>
+          </div>
+          <div class="menu-section">
+            <div class="menu-section-label" data-i18n="menu_danger">危険な操作</div>
+            <div class="menu-row">
+              <button class="menu-danger-btn" id="menu-clear-data" data-i18n="menu_clear_data">データを全て削除して終了</button>
             </div>
           </div>
         </div>
@@ -169,6 +179,72 @@
           <div class="monitor-confirm-actions">
             <button class="monitor-confirm-btn secondary" id="monitor-confirm-no" data-i18n="monitor_no">いいえ</button>
             <button class="monitor-confirm-btn primary" id="monitor-confirm-yes" data-i18n="monitor_yes">はい</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- カスタム言語エディタモーダル -->
+    <div class="modal-bd" id="custom-lang-bd">
+      <div class="modal custom-lang-modal">
+        <div class="modal-head">
+          <span class="modal-title">Custom Language</span>
+          <button class="modal-close" id="custom-lang-close">&times;</button>
+        </div>
+        <div class="custom-lang-toolbar">
+          <input type="text" class="custom-lang-search" id="custom-lang-search" placeholder="Filter by key...">
+          <button class="menu-export-btn" id="custom-lang-import">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span>Import</span>
+          </button>
+          <button class="menu-export-btn" id="custom-lang-export">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+            <span>Export</span>
+          </button>
+        </div>
+        <div class="custom-lang-tabs">
+          <button class="custom-lang-tab active" data-tab="stat">Stat Names</button>
+          <button class="custom-lang-tab" data-tab="type">Module Types</button>
+          <button class="custom-lang-tab" data-tab="rarity">Rarity</button>
+          <button class="custom-lang-tab" data-tab="ui">UI Text</button>
+        </div>
+        <div class="custom-lang-body" id="custom-lang-body"></div>
+        <div class="custom-lang-footer">
+          <button class="custom-lang-footer-btn" id="custom-lang-cancel">Cancel</button>
+          <button class="custom-lang-footer-btn primary" id="custom-lang-save">Save & Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 初回言語選択モーダル -->
+    <div class="modal-bd" id="firstrun-bd">
+      <div class="modal firstrun-modal">
+        <div class="modal-head">
+          <span class="modal-title">Language</span>
+        </div>
+        <div class="firstrun-body">
+          <select class="menu-select firstrun-select" id="firstrun-lang-select">
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+            <option value="en">English</option>
+          </select>
+          <button class="firstrun-save-btn" id="firstrun-save">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- データ削除確認モーダル -->
+    <div class="modal-bd" id="clear-data-bd">
+      <div class="modal monitor-confirm-modal">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="menu_clear_data">データを全て削除して終了</span>
+          <button class="modal-close" id="clear-data-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="monitor-confirm-text" data-i18n="clear_data_confirm">保存されたデータをすべて削除してアプリを終了します。この操作は取り消せません。</p>
+          <div class="monitor-confirm-actions">
+            <button class="monitor-confirm-btn secondary" id="clear-data-cancel" data-i18n="monitor_no">いいえ</button>
+            <button class="monitor-confirm-btn danger" id="clear-data-ok" data-i18n="menu_clear_data">削除して終了</button>
           </div>
         </div>
       </div>

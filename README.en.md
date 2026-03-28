@@ -7,6 +7,10 @@
 
 [日本語](README.md) | [한국어](README.ko.md)
 
+> [!NOTE]
+> The desktop app (Tauri version) supports English. You can switch the language from the menu button in the top-left → **Language**.
+> The Web version does not currently support English.
+
 > [!WARNING]
 > This tool has no affiliation with the game's official operators.
 > The developer assumes no responsibility for any issues arising from its use.
@@ -17,6 +21,9 @@
 **[Open Web Version](https://st-module-manager.pages.dev/)** (mobile-friendly)
 
 You can import modules via OCR from screenshots and run optimization — no packet capture required, usable from any device.
+
+> [!WARNING]
+> The Web version does not currently support English. The interface is displayed in Japanese.
 
 > [!TIP]
 > Importing too many screenshots at once may crash the browser. Import a few at a time.
