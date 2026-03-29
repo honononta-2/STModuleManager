@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 // --- 共有型 ---
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StatEntry {
     pub part_id: i64,
     pub value: i64,

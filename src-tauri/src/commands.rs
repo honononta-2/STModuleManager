@@ -1,6 +1,7 @@
 use crate::modules_db::{ModuleEntry, ModulesDbState};
 use crate::packets::capture::{run_capture, ModulePayload};
 use crate::settings::{AppSettings, AppSettingsState};
+use crate::BackgroundActive;
 use serde::{Deserialize, Serialize};
 use star_optimizer::{ModuleInput, OptimizeRequest, OptimizeResponse};
 use std::path::PathBuf;
@@ -221,6 +222,16 @@ pub fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     app.exit(0);
+    Ok(())
+}
+
+/// バックグラウンドモードに移行（ウィンドウを破棄してトレイ常駐）
+#[tauri::command]
+pub fn enter_background_mode(app: tauri::AppHandle, bg: State<BackgroundActive>) -> Result<(), String> {
+    bg.0.store(true, Ordering::Relaxed);
+    if let Some(window) = app.get_webview_window("main") {
+        window.destroy().map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

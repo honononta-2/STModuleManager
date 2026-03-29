@@ -83,10 +83,11 @@ impl ModulesDbState {
     /// キャプチャで取得したモジュール群をDBにマージする。
     /// 新規UUIDは現在日時を入手日時として追加。既存UUIDはステータスを更新。
     /// キャプチャに含まれないUUIDはDBから削除する。
-    pub fn merge_modules(&self, raw_modules: &[serde_json::Value]) -> Result<usize, String> {
+    pub fn merge_modules(&self, raw_modules: &[serde_json::Value]) -> Result<(usize, bool), String> {
         let mut db = self.db.lock().map_err(|e| e.to_string())?;
         let now = Utc::now().naive_utc();
         let mut new_count = 0;
+        let mut changed = false;
 
         // キャプチャに含まれるUUIDを収集
         let mut seen_keys = std::collections::HashSet::new();
@@ -106,39 +107,64 @@ impl ModulesDbState {
 
             let stats = parse_stats(raw.get("stats"));
 
-            let is_new = !db.modules.contains_key(&key);
-            if is_new {
+            if let Some(existing) = db.modules.get(&key) {
+                // 既存モジュールと比較し、変化がなければスキップ
+                if existing.config_id == config_id
+                    && existing.quality == quality
+                    && existing.stats == stats
+                    && existing.success_rate == success_rate
+                    && existing.equipped_slot == equipped_slot
+                {
+                    continue;
+                }
+                // 変化あり → 入手日時を引き継いで更新
+                let acquired_date = existing.acquired_date;
+                db.modules.insert(
+                    key,
+                    ModuleEntry {
+                        uuid,
+                        config_id,
+                        quality,
+                        stats,
+                        success_rate,
+                        equipped_slot,
+                        acquired_date,
+                    },
+                );
+                changed = true;
+            } else {
+                // 新規モジュール
                 new_count += 1;
+                changed = true;
+                db.modules.insert(
+                    key,
+                    ModuleEntry {
+                        uuid,
+                        config_id,
+                        quality,
+                        stats,
+                        success_rate,
+                        equipped_slot,
+                        acquired_date: now,
+                    },
+                );
             }
-
-            let acquired_date = db
-                .modules
-                .get(&key)
-                .map(|existing| existing.acquired_date)
-                .unwrap_or(now);
-
-            db.modules.insert(
-                key,
-                ModuleEntry {
-                    uuid,
-                    config_id,
-                    quality,
-                    stats,
-                    success_rate,
-                    equipped_slot,
-                    acquired_date,
-                },
-            );
         }
 
         // キャプチャに含まれないモジュールを削除
+        let before_len = db.modules.len();
         db.modules.retain(|key, _| seen_keys.contains(key));
+        if db.modules.len() != before_len {
+            changed = true;
+        }
 
-        // メモリ上のDBを更新したのでロックを先に解放してからファイルに保存
+        // 変化がなければファイル書き出しをスキップ
         drop(db);
-        self.save()?;
+        if changed {
+            self.save()?;
+        }
 
-        Ok(new_count)
+        Ok((new_count, changed))
     }
 
     /// 単体モジュールを追加する（0x16 差分更新用）。新規なら true を返す。

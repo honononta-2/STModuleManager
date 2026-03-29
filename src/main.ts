@@ -1075,6 +1075,7 @@ async function init() {
     theme: string;
     language: string;
     language_configured: boolean;
+    background_mode: boolean;
   };
   let appSettings: AppSettings = await invoke("get_settings");
 
@@ -1115,6 +1116,15 @@ async function init() {
     const next = !appSettings.auto_monitor;
     autoMonitorToggle.classList.toggle("active", next);
     saveSettings({ auto_monitor: next });
+  };
+
+  // --- バックグラウンドモードトグル ---
+  const bgModeToggle = $("menu-toggle-background-mode");
+  bgModeToggle.classList.toggle("active", appSettings.background_mode);
+  bgModeToggle.onclick = () => {
+    const next = !appSettings.background_mode;
+    bgModeToggle.classList.toggle("active", next);
+    saveSettings({ background_mode: next });
   };
 
   // --- テーマ select ---
@@ -1397,7 +1407,15 @@ async function init() {
 async function main() {
   // ウィンドウ操作は最初に登録（言語選択モーダル表示中も動作させるため）
   const appWindow = getCurrentWindow();
-  $("win-minimize").onclick = () => appWindow.minimize();
+  $("win-minimize").onclick = async () => {
+    const bgEnabled = $("menu-toggle-background-mode").classList.contains("active");
+    const capturing = $("cap-toggle").classList.contains("active");
+    if (bgEnabled && capturing) {
+      await invoke("enter_background_mode");
+    } else {
+      appWindow.minimize();
+    }
+  };
   $("win-close").onclick = () => appWindow.close();
 
   // 設定から言語を読み込んでi18nを初期化してからDOMを更新

@@ -7,7 +7,12 @@ use commands::MonitorState;
 use packets::protobuf::{decode_protobuf_raw, extract_dirty_changes, extract_modules, DirtyModuleChange};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+/// バックグラウンドモードが有効（ウィンドウ破棄済み）かどうか
+pub struct BackgroundActive(pub AtomicBool);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -37,6 +42,36 @@ pub fn run() {
                 .map(|s| s.auto_monitor)
                 .unwrap_or(false);
             app.manage(settings_state);
+
+            // バックグラウンドモード管理
+            app.manage(BackgroundActive(AtomicBool::new(false)));
+
+            // システムトレイアイコン
+            let show_i = MenuItem::with_id(app, "show", "表示", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("STModuleManager")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => restore_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        restore_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
 
             // 監視ステート（キャプチャはトグルで手動開始）
             let server_found = Arc::new(AtomicBool::new(false));
@@ -75,13 +110,16 @@ pub fn run() {
                                 continue;
                             }
                             match db.merge_modules(&modules) {
-                                Ok(new_count) => {
+                                Ok((new_count, changed)) => {
                                     eprintln!(
-                                        "[monitor] モジュール全量同期: {}件 (新規: {}件)",
+                                        "[monitor] モジュール全量同期: {}件 (新規: {}件, 変化: {})",
                                         modules.len(),
-                                        new_count
+                                        new_count,
+                                        changed
                                     );
-                                    let _ = app_handle.emit("modules-updated", new_count);
+                                    if changed {
+                                        let _ = app_handle.emit("modules-updated", new_count);
+                                    }
                                 }
                                 Err(e) => eprintln!("[monitor] DB保存エラー: {}", e),
                             }
@@ -179,7 +217,35 @@ pub fn run() {
             commands::save_custom_language,
             commands::get_system_locale,
             commands::clear_app_data,
+            commands::enter_background_mode,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                let bg = app.state::<BackgroundActive>();
+                if bg.0.load(Ordering::Relaxed) {
+                    api.prevent_exit();
+                }
+            }
+        });
+}
+
+/// ウィンドウを復元（存在しなければ新規作成）
+fn restore_window(app: &tauri::AppHandle) {
+    let bg = app.state::<BackgroundActive>();
+    bg.0.store(false, Ordering::Relaxed);
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    } else {
+        let _ = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            .title("STModuleManager")
+            .inner_size(1100.0, 720.0)
+            .resizable(false)
+            .decorations(false)
+            .build();
+    }
 }

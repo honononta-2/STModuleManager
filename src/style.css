@@ -236,6 +236,7 @@ body {
   padding: 8px 10px; gap: 12px;
 }
 .menu-row-label { font-size: 13px; font-weight: 500; color: var(--tx1); flex: 1; min-width: 0; }
+.menu-row-hint { font-size: 11px; color: var(--tx2); margin-top: 2px; }
 
 /* Menu toggle */
 .menu-toggle { border: none; background: none; padding: 0; cursor: pointer; flex-shrink: 0; }

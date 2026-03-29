@@ -17,6 +17,9 @@ pub struct AppSettings {
     /// 初回言語選択モーダルを完了したか
     #[serde(default)]
     pub language_configured: bool,
+    /// 最小化時にバックグラウンドモードに移行するか
+    #[serde(default)]
+    pub background_mode: bool,
 }
 
 fn default_theme() -> String {
@@ -35,6 +38,7 @@ impl Default for AppSettings {
             theme: default_theme(),
             language: default_language(),
             language_configured: false,
+            background_mode: false,
         }
     }
 }
