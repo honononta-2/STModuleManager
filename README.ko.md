@@ -1,7 +1,7 @@
 # 스타레조 모듈 관리 소프트웨어
 
-[![GitHub Release](https://img.shields.io/github/v/release/honononta/STModuleManager)](https://github.com/honononta/STModuleManager/releases/latest)
-[![GitHub Downloads](https://img.shields.io/github/downloads/honononta/STModuleManager/total)](https://github.com/honononta/STModuleManager/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/honononta-2/STModuleManager)](https://github.com/honononta-2/STModuleManager/releases/latest)
+[![GitHub Downloads](https://img.shields.io/github/downloads/honononta-2/STModuleManager/total)](https://github.com/honononta-2/STModuleManager/releases)
 
 **[블루 프로토콜: 스타 레조넌스](https://bpsr.xdg.com/jp/)의 모듈을 관리·최적화하는 비공식 툴입니다.**
 

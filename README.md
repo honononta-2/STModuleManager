@@ -1,7 +1,7 @@
 # スタレゾのモジュール管理ソフト
 
-[![GitHub Release](https://img.shields.io/github/v/release/honononta/STModuleManager)](https://github.com/honononta/STModuleManager/releases/latest)
-[![GitHub Downloads](https://img.shields.io/github/downloads/honononta/STModuleManager/total)](https://github.com/honononta/STModuleManager/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/honononta-2/STModuleManager)](https://github.com/honononta-2/STModuleManager/releases/latest)
+[![GitHub Downloads](https://img.shields.io/github/downloads/honononta-2/STModuleManager/total)](https://github.com/honononta-2/STModuleManager/releases)
 
 **[ブループロトコル：スターレゾナンス](https://bpsr.xdg.com/jp/)（スタレゾ）のモジュールを管理・最適化する非公式ツールです。**
 
