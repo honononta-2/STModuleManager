@@ -99,91 +99,109 @@ pub fn run() {
             }
 
             // モジュール処理スレッド: チャネルから受信→DB保存→フロントに通知
+            // 同一イベントの複数パケットをまとめて処理してからUIに1回だけ通知する
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
-                for msg in module_rx {
-                    let decoded = decode_protobuf_raw(&msg.payload);
-                    let db = app_handle.state::<modules_db::ModulesDbState>();
+                loop {
+                    // ブロッキングで最初の1件を待つ
+                    let first = match module_rx.recv() {
+                        Ok(msg) => msg,
+                        Err(_) => break, // チャネル切断
+                    };
 
-                    match msg.opcode {
-                        0x15 => {
-                            // 全量同期（既存処理）
-                            let modules = extract_modules(&decoded);
-                            if modules.is_empty() {
-                                continue;
-                            }
-                            match db.merge_modules(&modules) {
-                                Ok((new_count, changed)) => {
-                                    eprintln!(
-                                        "[monitor] モジュール全量同期: {}件 (新規: {}件, 変化: {})",
-                                        modules.len(),
-                                        new_count,
-                                        changed
-                                    );
-                                    if changed {
-                                        let _ = app_handle.emit("modules-updated", new_count);
-                                    }
+                    // チャネルに溜まっている残りのパケットも一括取得
+                    let mut batch = vec![first];
+                    while let Ok(msg) = module_rx.try_recv() {
+                        batch.push(msg);
+                    }
+
+                    let db = app_handle.state::<modules_db::ModulesDbState>();
+                    let mut changed = false;
+                    let mut new_count = 0i32;
+
+                    for msg in &batch {
+                        let decoded = decode_protobuf_raw(&msg.payload);
+
+                        match msg.opcode {
+                            0x15 => {
+                                // 全量同期
+                                let modules = extract_modules(&decoded);
+                                if modules.is_empty() {
+                                    continue;
                                 }
-                                Err(e) => eprintln!("[monitor] DB保存エラー: {}", e),
-                            }
-                        }
-                        0x16 => {
-                            // 差分更新
-                            let changes = extract_dirty_changes(&decoded);
-                            if changes.is_empty() {
-                                continue;
-                            }
-                            let mut changed = false;
-                            for change in &changes {
-                                match change {
-                                    DirtyModuleChange::Added {
-                                        uuid,
-                                        config_id,
-                                        quality,
-                                    } => match db.add_module(*uuid, *config_id, *quality) {
-                                        Ok(is_new) => {
-                                            let label = if is_new { "新規" } else { "更新" };
-                                            eprintln!(
-                                                "[monitor] モジュール{}: uuid={}, config_id={}",
-                                                label, uuid, config_id
-                                            );
+                                match db.merge_modules(&modules) {
+                                    Ok((nc, c)) => {
+                                        eprintln!(
+                                            "[monitor] モジュール全量同期: {}件 (新規: {}件, 変化: {})",
+                                            modules.len(), nc, c
+                                        );
+                                        if c {
+                                            new_count = nc as i32;
                                             changed = true;
                                         }
-                                        Err(e) => eprintln!("[monitor] DB保存エラー: {}", e),
-                                    },
-                                    DirtyModuleChange::Removed { uuid } => {
-                                        match db.remove_module(*uuid) {
-                                            Ok(true) => {
+                                    }
+                                    Err(e) => eprintln!("[monitor] DB保存エラー: {}", e),
+                                }
+                            }
+                            0x16 => {
+                                // 差分更新
+                                let changes = extract_dirty_changes(&decoded);
+                                for change in &changes {
+                                    match change {
+                                        DirtyModuleChange::Added {
+                                            uuid,
+                                            config_id,
+                                            quality,
+                                        } => match db.add_module(*uuid, *config_id, *quality) {
+                                            Ok(is_new) => {
+                                                let label = if is_new { "新規" } else { "更新" };
                                                 eprintln!(
-                                                    "[monitor] モジュール削除: uuid={}",
-                                                    uuid
+                                                    "[monitor] モジュール{}: uuid={}, config_id={}",
+                                                    label, uuid, config_id
                                                 );
                                                 changed = true;
                                             }
-                                            Ok(false) => {}
                                             Err(e) => eprintln!("[monitor] DB保存エラー: {}", e),
+                                        },
+                                        DirtyModuleChange::Removed { uuid } => {
+                                            match db.remove_module(*uuid) {
+                                                Ok(true) => {
+                                                    eprintln!(
+                                                        "[monitor] モジュール削除: uuid={}",
+                                                        uuid
+                                                    );
+                                                    changed = true;
+                                                }
+                                                Ok(false) => {}
+                                                Err(e) => {
+                                                    eprintln!("[monitor] DB保存エラー: {}", e)
+                                                }
+                                            }
                                         }
-                                    }
-                                    DirtyModuleChange::StatsUpdated {
-                                        uuid,
-                                        stats,
-                                        success_rate,
-                                    } => {
-                                        if let Err(e) =
-                                            db.update_stats(*uuid, stats, *success_rate)
-                                        {
-                                            eprintln!("[monitor] ステータス更新エラー: {}", e);
-                                        } else {
-                                            changed = true;
+                                        DirtyModuleChange::StatsUpdated {
+                                            uuid,
+                                            stats,
+                                            success_rate,
+                                        } => {
+                                            if let Err(e) =
+                                                db.update_stats(*uuid, stats, *success_rate)
+                                            {
+                                                eprintln!(
+                                                    "[monitor] ステータス更新エラー: {}", e
+                                                );
+                                            } else {
+                                                changed = true;
+                                            }
                                         }
                                     }
                                 }
                             }
-                            if changed {
-                                let _ = app_handle.emit("modules-updated", 0);
-                            }
+                            _ => {}
                         }
-                        _ => {}
+                    }
+
+                    if changed {
+                        let _ = app_handle.emit("modules-updated", new_count);
                     }
                 }
             });

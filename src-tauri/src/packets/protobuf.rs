@@ -505,23 +505,39 @@ fn extract_from_container7(values: &[DVal]) -> Vec<DirtyModuleChange> {
         return Vec::new();
     }
 
-    // sub-type 5 以降で最初の i64 値が uuid
-    let (uuid_idx, uuid) = match values[10..]
-        .iter()
-        .enumerate()
-        .find_map(|(i, v)| match v {
-            DVal::I64(val) => Some((10 + i, *val)),
-            _ => None,
-        }) {
-        Some(r) => r,
-        None => return Vec::new(),
-    };
+    // values[10..16] = items block header: -2, size, 4, count, 0, 0
+    // values[16] 以降: uuid(i64), detail_block(-2...-3), uuid, detail_block, ... の繰り返し
+    let mut results = Vec::new();
+    let mut i = 16;
 
-    // uuid の次が -2 なら追加、-3 なら削除
-    match values.get(uuid_idx + 1).and_then(|v| v.as_i32()) {
-        Some(-2) => extract_module_addition(values, uuid_idx, uuid),
-        _ => vec![DirtyModuleChange::Removed { uuid }],
+    while i < values.len() {
+        match &values[i] {
+            DVal::I64(uuid_val) => {
+                let uuid = *uuid_val;
+                match values.get(i + 1).and_then(|v| v.as_i32()) {
+                    Some(-2) => {
+                        // 追加: detail block を解析
+                        results.extend(extract_module_addition(values, i, uuid));
+                        i = skip_nested(values, i + 1);
+                    }
+                    _ => {
+                        // 削除
+                        results.push(DirtyModuleChange::Removed { uuid });
+                        i += 1;
+                    }
+                }
+            }
+            DVal::I32(-2) => {
+                i = skip_nested(values, i);
+            }
+            DVal::I32(-3) => break,
+            _ => {
+                i += 1;
+            }
+        }
     }
+
+    results
 }
 
 /// コンテナタイプ7の詳細ブロックから config_id, quality を抽出
@@ -580,80 +596,99 @@ fn extract_module_addition(values: &[DVal], uuid_idx: usize, uuid: i64) -> Vec<D
 
 /// コンテナタイプ57（モジュールステータス）からステータス情報を抽出
 fn extract_from_container57(values: &[DVal]) -> Vec<DirtyModuleChange> {
-    // values[9] = uuid (i64)
-    let uuid = match values.get(9) {
-        Some(DVal::I64(v)) => *v,
-        _ => return Vec::new(),
-    };
-
-    // uuid の次が -3 なら削除通知（container 7 側で処理済み）
-    if values.get(10).and_then(|v| v.as_i32()) == Some(-3) {
-        return Vec::new();
-    }
-
-    // values[10] = -2, values[11] = size
-    // values[12] = 1 (field 1 = part_ids セクション)
-    // values[13] = count
-    // values[14..14+count] = part_ids
-    let count = match values.get(13).and_then(|v| v.as_i32()) {
-        Some(c) if c > 0 && c <= 10 => c as usize,
-        _ => return Vec::new(),
-    };
-
-    let mut part_ids = Vec::new();
-    for j in 14..14 + count {
-        if let Some(v) = values.get(j) {
-            part_ids.push(v.as_u64() as i64);
-        }
-    }
-
-    // ロールエントリをカウントしてステータス値を算出
-    // 各ロール: -2, size, 1, stat_type, 2, flag, -3
-    let mut roll_counts: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
-    let rolls_start = 14 + count + 2; // field 2 + total_rolls をスキップ
-    let mut i = rolls_start;
-    let mut success_rate: u64 = 0;
+    // values[9] 以降: uuid(i64), stats_block(-2...-3), uuid, stats_block, ... の繰り返し
+    let mut results = Vec::new();
+    let mut i = 9;
 
     while i < values.len() {
-        match values[i].as_i32() {
-            Some(-2) => {
-                // ロールエントリ: -2, size, 1, stat_type, ...
-                if let Some(stat_type) = values.get(i + 3).map(|v| v.as_u64() as i64) {
-                    if part_ids.contains(&stat_type) {
-                        *roll_counts.entry(stat_type).or_insert(0) += 1;
-                    }
-                }
-                i = skip_nested(values, i);
-            }
-            Some(3) => {
-                // field 3 = success_rate
-                i += 1;
-                if let Some(v) = values.get(i) {
-                    success_rate = v.as_u64();
-                }
-                break;
-            }
-            Some(-3) => break,
+        let uuid = match &values[i] {
+            DVal::I64(v) => *v,
+            _ => break,
+        };
+        i += 1;
+
+        // uuid の次が -3 なら削除通知（container 7 側で処理済み）→ スキップ
+        if values.get(i).and_then(|v| v.as_i32()) == Some(-3) {
+            i += 1;
+            continue;
+        }
+
+        // -2 = stats ブロック開始
+        if values.get(i).and_then(|v| v.as_i32()) != Some(-2) {
+            break;
+        }
+        let block_end = skip_nested(values, i);
+        // ブロック内: i+1=size, i+2 以降がデータ
+        let base = i + 2;
+
+        // field 1 = part_ids セクション
+        if values.get(base).and_then(|v| v.as_i32()) != Some(1) {
+            i = block_end;
+            continue;
+        }
+        let part_count = match values.get(base + 1).and_then(|v| v.as_i32()) {
+            Some(c) if c > 0 && c <= 10 => c as usize,
             _ => {
-                i += 1;
+                i = block_end;
+                continue;
+            }
+        };
+
+        let mut part_ids = Vec::new();
+        for j in (base + 2)..(base + 2 + part_count) {
+            if let Some(v) = values.get(j) {
+                part_ids.push(v.as_u64() as i64);
             }
         }
+
+        // ロールエントリをカウントしてステータス値を算出
+        let rolls_start = base + 2 + part_count + 2; // field 2 + total_rolls をスキップ
+        let mut roll_counts: std::collections::HashMap<i64, i64> =
+            std::collections::HashMap::new();
+        let mut success_rate: u64 = 0;
+        let mut j = rolls_start;
+
+        while j < block_end {
+            match values[j].as_i32() {
+                Some(-2) => {
+                    if let Some(stat_type) = values.get(j + 3).map(|v| v.as_u64() as i64) {
+                        if part_ids.contains(&stat_type) {
+                            *roll_counts.entry(stat_type).or_insert(0) += 1;
+                        }
+                    }
+                    j = skip_nested(values, j);
+                }
+                Some(3) => {
+                    j += 1;
+                    if let Some(v) = values.get(j) {
+                        success_rate = v.as_u64();
+                    }
+                    break;
+                }
+                Some(-3) => break,
+                _ => {
+                    j += 1;
+                }
+            }
+        }
+
+        let stats: Vec<(i64, i64)> = part_ids
+            .iter()
+            .map(|pid| (*pid, *roll_counts.get(pid).unwrap_or(&0)))
+            .collect();
+
+        if !stats.is_empty() {
+            results.push(DirtyModuleChange::StatsUpdated {
+                uuid,
+                stats,
+                success_rate,
+            });
+        }
+
+        i = block_end;
     }
 
-    let stats: Vec<(i64, i64)> = part_ids
-        .iter()
-        .map(|pid| (*pid, *roll_counts.get(pid).unwrap_or(&0)))
-        .collect();
-
-    if stats.is_empty() {
-        return Vec::new();
-    }
-
-    vec![DirtyModuleChange::StatsUpdated {
-        uuid,
-        stats,
-        success_rate,
-    }]
+    results
 }
 
 #[cfg(test)]

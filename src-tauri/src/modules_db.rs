@@ -217,6 +217,11 @@ impl ModulesDbState {
                 })
                 .collect();
             entry.success_rate = Some(success_rate);
+        } else {
+            eprintln!(
+                "[monitor] ステータス更新: uuid={} が見つかりません",
+                uuid
+            );
         }
 
         drop(db);
