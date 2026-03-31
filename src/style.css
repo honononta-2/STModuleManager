@@ -270,6 +270,7 @@ body {
   color: var(--tx1); font-size: 12px;
   font-family: var(--font);
   cursor: pointer; flex-shrink: 0;
+  align-items: center;
 }
 .menu-select:hover { background: var(--cf-hover); }
 .menu-select:focus { outline: none; border-color: var(--acc); }
@@ -760,6 +761,7 @@ body {
   color:var(--tx1); font-size:12px;
   font-family:var(--font);
   cursor:pointer;
+  align-items:center;
 }
 .opt-select:hover { background:var(--cf-hover); }
 .opt-select { color-scheme: inherit; appearance: base-select; }
@@ -904,6 +906,13 @@ body {
 .opt-info {
   font-size:12px; color:var(--tx3); margin-bottom:4px;
 }
+.speed-info-btn {
+  width:22px; height:22px; padding:0; border:none; background:transparent;
+  color:var(--tx3); cursor:pointer; display:flex; align-items:center; justify-content:center;
+  border-radius:4px; transition:background 0.1s, color 0.1s; flex-shrink:0;
+}
+.speed-info-btn:hover { background:var(--cf-subtle-h); color:var(--tx1); }
+.speed-info-modal { max-width:480px; }
 
 /* Result card */
 .opt-card {

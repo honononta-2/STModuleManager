@@ -79,6 +79,18 @@
           <span class="cmd-lbl" data-i18n="exclude_stat">対象外</span>
           <button class="opt-multi-btn" id="opt-btn-excl">未選択</button>
         </div>
+        <div class="cmd-sep"></div>
+        <div class="cmd-grp">
+          <span class="cmd-lbl" data-i18n="speed_label">探索速度</span>
+          <select id="opt-speed" class="opt-select">
+            <option value="standard" data-i18n="speed_standard">標準</option>
+            <option value="precise" data-i18n="speed_precise">高精度</option>
+            <option value="most_precise" data-i18n="speed_most_precise">最高精度</option>
+          </select>
+          <button class="speed-info-btn" id="speed-info-btn" title="探索速度について">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+          </button>
+        </div>
       </div>
 
       <!-- パターン管理バー -->
@@ -256,6 +268,17 @@
             <button class="monitor-confirm-btn danger" id="clear-data-ok" data-i18n="menu_clear_data">削除して終了</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 探索速度モーダル -->
+    <div class="modal-bd" id="speed-info-bd">
+      <div class="modal speed-info-modal">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="speed_info_title">探索速度について</span>
+          <button class="modal-close" id="speed-info-close">&times;</button>
+        </div>
+        <div class="modal-body" id="speed-info-body"></div>
       </div>
     </div>
 

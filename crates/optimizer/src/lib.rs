@@ -20,17 +20,20 @@ pub struct ModuleInput {
 }
 
 // --- スコアリング定数 ---
-const BP_THRESHOLDS: [(i64, f64); 6] = [
-    (20, 10000.0),
-    (16, 5000.0),
-    (12, 100.0),
-    (8, 50.0),
-    (4, 20.0),
-    (1, 5.0),
+// BPスコア: カテゴリ別の固定点数テーブル（READMEの表と完全一致）
+const BP_MAIN: [(i64, f64); 6] = [
+    (20, 10000.0), (16, 5000.0), (12, 100.0), (8, 50.0), (4, 20.0), (1, 5.0),
 ];
-const DESIRED_WEIGHT: f64 = 0.3;
-const OTHER_WEIGHT: f64 = 0.5; // 貢献度フィルタリング用
-const NON_SELECTED_BP_WEIGHT: f64 = 0.15; // 非選択のBPスコア重み（サブの半分）
+const BP_SUB: [(i64, f64); 6] = [
+    (20, 3000.0), (16, 1500.0), (12, 30.0), (8, 15.0), (4, 6.0), (1, 1.5),
+];
+const BP_NON_SELECTED: [(i64, f64); 6] = [
+    (20, 1000.0), (16, 500.0), (12, 10.0), (8, 5.0), (4, 2.0), (1, 0.5),
+];
+// 貢献度フィルタリング用の重み
+const CONTRIB_MAIN_WEIGHT: f64 = 3.0;
+const CONTRIB_SUB_WEIGHT: f64 = 1.0;
+const CONTRIB_OTHER_WEIGHT: f64 = 0.5;
 const PLUS_BONUS_MULTIPLIER: f64 = 2.0;
 
 // --- 最適化リクエスト/レスポンス ---
@@ -41,6 +44,9 @@ pub struct OptimizeRequest {
     pub desired_stats: Vec<i64>,
     pub excluded_stats: Vec<i64>,
     pub min_quality: u64,
+    /// 探索スピードモード: "standard"(200件) / "precise"(300件) / "most_precise"(600件)
+    #[serde(default)]
+    pub speed_mode: Option<String>,
     /// Web Worker分割用: このWorkerのID (0-based)
     #[serde(default)]
     pub worker_id: Option<usize>,
@@ -132,11 +138,11 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
                     let w = if excluded_set.contains(pid) {
                         0.0
                     } else if required_set.contains(pid) {
-                        3.0
+                        CONTRIB_MAIN_WEIGHT
                     } else if desired_set.contains(pid) {
-                        1.0
+                        CONTRIB_SUB_WEIGHT
                     } else {
-                        OTHER_WEIGHT
+                        CONTRIB_OTHER_WEIGHT
                     };
                     *val as f64 * w
                 })
@@ -152,9 +158,13 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
 
     flats.sort_by(|a, b| b.contribution.partial_cmp(&a.contribution).unwrap());
 
-    const TOP_N: usize = 300;
-    if flats.len() > TOP_N {
-        flats.truncate(TOP_N);
+    let top_n: usize = match req.speed_mode.as_deref() {
+        Some("precise") => 300,
+        Some("most_precise") => 600,
+        _ => 200, // "standard" またはデフォルト
+    };
+    if flats.len() > top_n {
+        flats.truncate(top_n);
     }
 
     let filtered_count = flats.len();
@@ -181,53 +191,54 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         .collect();
     let stat_count = all_part_ids.len();
 
-    let stat_arrays: Vec<Vec<i64>> = flats
+    let stat_arrays: Vec<Vec<u8>> = flats
         .iter()
         .map(|f| {
-            let mut arr = vec![0i64; stat_count];
+            let mut arr = vec![0u8; stat_count];
             for &(pid, val) in &f.stats {
                 if let Some(&idx) = pid_to_idx.get(&pid) {
-                    arr[idx] = val;
+                    arr[idx] = val as u8;
                 }
             }
             arr
         })
         .collect();
 
-    let score_stats = |totals: &[i64]| -> f64 {
+    // ステータスインデックスごとのBPスコアルックアップテーブル（値0〜20→スコア）
+    let bp_lookup: Vec<[f64; 21]> = (0..stat_count)
+        .map(|si| {
+            let pid = all_part_ids[si];
+            let bp_table: &[(i64, f64)] = if excluded_set.contains(&pid) {
+                &[]
+            } else if required_set.contains(&pid) {
+                &BP_MAIN
+            } else if desired_set.contains(&pid) {
+                &BP_SUB
+            } else {
+                &BP_NON_SELECTED
+            };
+            let mut table = [0.0f64; 21];
+            for v in 0..=20usize {
+                for &(th, pts) in bp_table {
+                    if v as i64 >= th {
+                        table[v] = pts;
+                        break;
+                    }
+                }
+            }
+            table
+        })
+        .collect();
+
+    let score_stats = |totals: &[u8]| -> f64 {
         let mut score = 0.0f64;
         let mut total_plus = 0i64;
         for (si, &total) in totals.iter().enumerate() {
-            let pid = all_part_ids[si];
-
-            total_plus += total; // 全ステータスの合計 × 2
-
-            // 除外はBPスコアのみ0
-            if excluded_set.contains(&pid) {
-                continue;
-            }
-
-            let is_req = required_set.contains(&pid);
-            let is_des = desired_set.contains(&pid);
-
-            // BPスコア重み: メイン×1.0 / サブ×0.3 / 非選択×0.15
-            let weight = if is_req {
-                1.0
-            } else if is_des {
-                DESIRED_WEIGHT
-            } else {
-                NON_SELECTED_BP_WEIGHT
-            };
-
-            for &(threshold, points) in &BP_THRESHOLDS {
-                if total >= threshold {
-                    score += points * weight;
-                    break;
-                }
-            }
+            total_plus += total as i64;
+            let clamped = (total as usize).min(20);
+            score += bp_lookup[si][clamped];
         }
-        score += total_plus as f64 * PLUS_BONUS_MULTIPLIER;
-        score
+        score + total_plus as f64 * PLUS_BONUS_MULTIPLIER
     };
 
     // --- 4重ループ探索 ---
@@ -251,10 +262,10 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         let mut local_best = BoundedHeap::new(top_k);
         let si = &stat_arrays[i];
 
-        let mut partial2 = vec![0i64; stat_count];
-        let mut partial3 = vec![0i64; stat_count];
-        let mut totals_buf = vec![0i64; stat_count];
-        let mut ub_buf = vec![0i64; stat_count];
+        let mut partial2 = vec![0u8; stat_count];
+        let mut partial3 = vec![0u8; stat_count];
+        let mut totals_buf = vec![0u8; stat_count];
+        let mut ub_buf = vec![0u8; stat_count];
 
         let mut cached_global_threshold = f64::NEG_INFINITY;
         let mut j_count = 0u32;
@@ -346,7 +357,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
                 .map(|si| {
                     indices
                         .iter()
-                        .map(|&idx| stat_arrays[idx][si])
+                        .map(|&idx| stat_arrays[idx][si] as i64)
                         .sum::<i64>()
                 })
                 .collect();
@@ -360,15 +371,21 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
                     let is_req = required_set.contains(&pid);
                     let is_des = desired_set.contains(&pid);
 
-                    let (bp_label, bp_score) = if is_req || is_des {
-                        let weight = if is_req { 1.0 } else { DESIRED_WEIGHT };
-                        BP_THRESHOLDS
+                    let (bp_label, bp_score) = if excluded_set.contains(&pid) {
+                        ("—".to_string(), 0.0)
+                    } else {
+                        let bp_table = if is_req {
+                            &BP_MAIN
+                        } else if is_des {
+                            &BP_SUB
+                        } else {
+                            &BP_NON_SELECTED
+                        };
+                        bp_table
                             .iter()
                             .find(|(th, _)| total >= *th)
-                            .map(|(th, pts)| (format!("+{}到達", th), *pts * weight))
+                            .map(|(th, pts)| (format!("+{}到達", th), *pts))
                             .unwrap_or(("未到達".to_string(), 0.0))
-                    } else {
-                        ("—".to_string(), 0.0)
                     };
 
                     StatTotal {

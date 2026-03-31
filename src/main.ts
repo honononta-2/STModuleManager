@@ -616,11 +616,13 @@ async function runOptimize() {
   scrollArea.appendChild(overlay);
 
   const quality = Number(($<HTMLSelectElement>("opt-quality")).value);
+  const speedMode = ($<HTMLSelectElement>("opt-speed")).value;
   const req = {
     required_stats: optRequired,
     desired_stats: optDesired,
     excluded_stats: optExcluded,
     min_quality: quality,
+    speed_mode: speedMode,
   };
 
   try {
@@ -677,6 +679,7 @@ function renderOptResults(res: OptimizeResponse) {
   });
   results.appendChild(info);
 
+
   res.combinations.forEach((comb) => {
     const card = document.createElement("div");
     card.className = "opt-card";
@@ -686,6 +689,12 @@ function renderOptResults(res: OptimizeResponse) {
       comb.rank === 1 ? "r1" : comb.rank === 2 ? "r2" : comb.rank === 3 ? "r3" : "";
 
     const statTags = comb.stat_totals
+      .slice()
+      .sort((a, b) => {
+        const aP = a.is_required ? 0 : a.is_desired ? 1 : 2;
+        const bP = b.is_required ? 0 : b.is_desired ? 1 : 2;
+        return aP !== bP ? aP - bP : b.total - a.total;
+      })
       .map((st) => {
         const cls = st.is_required ? "req" : st.is_desired ? "des" : "other";
         return `<span class="opt-stat-tag ${cls}">${statIcon(st.part_id)}<span>${esc(statName(st.part_id))}</span> <span class="bp">+${st.total}</span></span>`;
@@ -1000,6 +1009,34 @@ async function init() {
 
   $("opt-quality").onchange = () => saveOptState();
   $("opt-run").onclick = () => runOptimize();
+
+  // 探索速度インフォモーダル
+  $("speed-info-btn").onclick = () => {
+    const body = $("speed-info-body");
+    while (body.firstChild) body.removeChild(body.firstChild);
+    const desc = document.createElement("p");
+    desc.textContent = t.ui.speed_info_desc;
+    desc.style.cssText = "margin:0 0 12px;font-size:13px;line-height:1.6";
+    body.appendChild(desc);
+    const items = [t.ui.speed_info_standard, t.ui.speed_info_precise, t.ui.speed_info_most_precise];
+    const ul = document.createElement("ul");
+    ul.style.cssText = "margin:0 0 12px;padding-left:20px;font-size:13px;line-height:1.8";
+    items.forEach((text) => {
+      const li = document.createElement("li");
+      li.textContent = text;
+      ul.appendChild(li);
+    });
+    body.appendChild(ul);
+    const note = document.createElement("p");
+    note.textContent = t.ui.speed_info_note;
+    note.style.cssText = "margin:0;font-size:12px;color:#e8a735;line-height:1.6";
+    body.appendChild(note);
+    $("speed-info-bd").classList.add("on");
+  };
+  $("speed-info-close").onclick = () => $("speed-info-bd").classList.remove("on");
+  $("speed-info-bd").onclick = (e) => {
+    if (e.target === $("speed-info-bd")) $("speed-info-bd").classList.remove("on");
+  };
 
   // --- パターン管理 ---
   await loadPatternsFromBackend();

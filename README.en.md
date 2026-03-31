@@ -108,14 +108,14 @@ The effect of a stat increases in stages based on its total value across 4 modul
 
 Points are added based on the highest breakpoint reached for each stat.
 
-| Breakpoint | Main (× 1.0) | Sub (× 0.3) | Unselected (× 0.15) | Excluded |
+| Breakpoint | Main (× 1.0) | Sub (× 0.3) | Unselected (× 0.1) | Excluded |
 |-----------|--------------|-------------|---------------------|---------|
-| +20 reached | 10,000 pt | 3,000 pt | 1,500 pt | 0 |
-| +16 reached | 5,000 pt | 1,500 pt | 750 pt | 0 |
-| +12 reached | 100 pt | 30 pt | 15 pt | 0 |
-| +8 reached | 50 pt | 15 pt | 7.5 pt | 0 |
-| +4 reached | 20 pt | 6 pt | 3 pt | 0 |
-| +1 reached | 5 pt | 1.5 pt | 0.75 pt | 0 |
+| +20 reached | 10,000 pt | 3,000 pt | 1,000 pt | 0 |
+| +16 reached | 5,000 pt | 1,500 pt | 500 pt | 0 |
+| +12 reached | 100 pt | 30 pt | 10 pt | 0 |
+| +8 reached | 50 pt | 15 pt | 5 pt | 0 |
+| +4 reached | 20 pt | 6 pt | 2 pt | 0 |
+| +1 reached | 5 pt | 1.5 pt | 0.5 pt | 0 |
 
 In addition, **total + values across all stats × 2** is added to the score.
 
@@ -129,9 +129,17 @@ Exhaustively searching C(2000, 4) ≈ 665 billion combinations is impractical, s
 
 1. **Relevance filter** — Exclude modules with no main/sub stats
 2. **Rarity filter** — Exclude modules below the specified quality
-3. **Contribution Score Top N** — Narrow down to top 300 modules by contribution score (`Σ(main value × 3) + Σ(sub value × 1) + Σ(other value × 0.5)`)
+3. **Contribution Score Top N** — Narrow down to top N modules by contribution score (`Σ(main value × 3) + Σ(sub value × 1) + Σ(other value × 0.5)`)
 
-After filtering, the pool is reduced to roughly 150–300 modules. Combined with **multi-core parallel search** via Rayon and **branch pruning** (cutting off when the optimistic upper-bound score — adding +20 to remaining stats after choosing 2 — falls below the current best), the search runs within a practical time on CPU.
+The candidate count N can be adjusted via the search precision setting.
+
+| Setting | Candidates | Description |
+|---------|-----------|-------------|
+| Standard (default) | 200 | Fast with sufficient accuracy |
+| Precise | 300 | Wider search range for better accuracy |
+| Most Precise | 600 | Most accurate but takes the longest |
+
+After filtering, **multi-core parallel search** via Rayon and **branch pruning** (cutting off when the optimistic upper-bound score — adding +20 to remaining stats after choosing 2 — falls below the current best) are combined to complete the search within a practical time on CPU.
 
 ## License
 

@@ -480,11 +480,13 @@ function runOptimize() {
   let totalModules = 0;
 
   for (let i = 0; i < numWorkers; i++) {
+    const speedMode = $<HTMLSelectElement>("opt-speed").value;
     const req: OptimizeRequest = {
       required_stats: optRequired.map((n) => STAT_NAME_TO_ID[n]).filter(Boolean),
       desired_stats: optDesired.map((n) => STAT_NAME_TO_ID[n]).filter(Boolean),
       excluded_stats: optExcluded.map((n) => STAT_NAME_TO_ID[n]).filter(Boolean),
       min_quality: quality,
+      speed_mode: speedMode as OptimizeRequest["speed_mode"],
       worker_id: i,
       num_workers: numWorkers,
     };
@@ -548,12 +550,19 @@ function renderOptResults(res: OptimizeResponse) {
   info.textContent = `${res.total_modules}件中 ${res.filtered_count}件のモジュールから探索 — 上位${res.combinations.length}件`;
   results.appendChild(info);
 
+
   res.combinations.forEach((comb) => {
     const card = document.createElement("div");
     card.className = "opt-card";
     card.style.animationDelay = `${(comb.rank - 1) * 30}ms`;
     const rankClass = comb.rank === 1 ? "r1" : comb.rank === 2 ? "r2" : comb.rank === 3 ? "r3" : "";
     const statTags = comb.stat_totals
+      .slice()
+      .sort((a, b) => {
+        const aP = a.is_required ? 0 : a.is_desired ? 1 : 2;
+        const bP = b.is_required ? 0 : b.is_desired ? 1 : 2;
+        return aP !== bP ? aP - bP : b.total - a.total;
+      })
       .map((st) => {
         const cls = st.is_required ? "req" : st.is_desired ? "des" : "other";
         return `<span class="opt-stat-tag ${cls}">${statIcon(st.part_id)}<span>${statName(st.part_id)}</span> <span class="bp">+${st.total}</span></span>`;
@@ -1506,6 +1515,38 @@ document.addEventListener("DOMContentLoaded", () => {
   $("opt-btn-excl").onclick = (e) => openOptMultiFly(e.currentTarget as HTMLElement, "excl");
   $("opt-quality").onchange = () => { minQuality = Number($<HTMLSelectElement>("opt-quality").value); saveOptState(); };
   $("opt-run").onclick = () => runOptimize();
+
+  // 探索速度インフォモーダル
+  $("speed-info-btn").onclick = () => {
+    const body = $("speed-info-body");
+    while (body.firstChild) body.removeChild(body.firstChild);
+    const desc = document.createElement("p");
+    desc.textContent = "最適化は手持ちモジュールから貢献度の高い順に候補を絞り込み、その中から最適な4つの組み合わせを探索します。精度の設定により、この候補数が変わります。";
+    desc.style.cssText = "margin:0 0 12px;font-size:13px;line-height:1.6";
+    body.appendChild(desc);
+    const items = [
+      "標準 — 上位200件から探索。多くの場合、十分な精度で高速に結果が得られます。",
+      "高精度 — 上位300件から探索。より広い範囲を探索するため精度が上がりますが、時間がかかります。",
+      "最高精度 — 上位600件から探索。最も精度が高い結果が得られますが、最も時間がかかります。",
+    ];
+    const ul = document.createElement("ul");
+    ul.style.cssText = "margin:0 0 12px;padding-left:20px;font-size:13px;line-height:1.8";
+    items.forEach((text) => {
+      const li = document.createElement("li");
+      li.textContent = text;
+      ul.appendChild(li);
+    });
+    body.appendChild(ul);
+    const note = document.createElement("p");
+    note.textContent = "高精度・最高精度モードでは探索範囲が広がるため、処理に時間がかかります。通常は標準で十分な結果が得られます。";
+    note.style.cssText = "margin:0;font-size:12px;color:#e8a735;line-height:1.6";
+    body.appendChild(note);
+    $("speed-info-bd").classList.add("on");
+  };
+  $("speed-info-close").onclick = () => $("speed-info-bd").classList.remove("on");
+  $("speed-info-bd").onclick = (e) => {
+    if (e.target === $("speed-info-bd")) $("speed-info-bd").classList.remove("on");
+  };
 
   // Pattern management
   renderPatternSelect();

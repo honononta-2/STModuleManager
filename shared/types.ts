@@ -11,11 +11,15 @@ export interface ModuleInput {
   stats: StatEntry[];
 }
 
+/** 探索スピードモード: "standard"=標準(170件), "precise"=高精度(250件), "most_precise"=最高精度(300件) */
+export type SpeedMode = "standard" | "precise" | "most_precise";
+
 export interface OptimizeRequest {
   required_stats: number[];
   desired_stats: number[];
   excluded_stats: number[];
   min_quality: number;
+  speed_mode?: SpeedMode;
   worker_id?: number;
   num_workers?: number;
 }
