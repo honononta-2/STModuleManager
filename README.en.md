@@ -74,6 +74,15 @@ Sorting by individual stat values is not available in-game, but this tool suppor
 4. Set **Excluded Stats** and rarity filters as needed
 5. Run to display the top 10 combinations by score
 
+#### Stat Category Guide
+
+| Category | Intent |
+|----------|--------|
+| **Main** | The stat you prioritize reaching +20. This is the core of your build |
+| **Sub** | Stats you'd like to push to +16 or higher if there's room after securing Main |
+| **Unselected** | Low-priority stats that aren't harmful to have. Not ignored entirely — they contribute a small amount to the score |
+| **Excluded** | Stats with no benefit to your build. They add zero to the score, making modules that only carry excluded stats less likely to be chosen |
+
 Frequently used settings can be saved and recalled with a name using "Save Pattern".
 
 ## Optimization Algorithm
@@ -116,7 +125,7 @@ In addition, **total + values across all stats × 2** is added to the score.
 
 ### Search Optimization
 
-Exhaustively searching C(2000, 4) ≈ 66 billion combinations is impractical, so the following filtering steps are applied:
+Exhaustively searching C(2000, 4) ≈ 665 billion combinations is impractical, so the following filtering steps are applied:
 
 1. **Relevance filter** — Exclude modules with no main/sub stats
 2. **Rarity filter** — Exclude modules below the specified quality
