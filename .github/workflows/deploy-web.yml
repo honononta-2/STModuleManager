@@ -12,7 +12,7 @@ on:
 
 jobs:
   deploy:
-    if: github.repository == 'honononta/STModuleManager'
+    if: github.repository == 'honononta/STModuleManager' || github.repository == 'honononta-2/STModuleManager'
     runs-on: ubuntu-latest
     permissions:
       contents: read
