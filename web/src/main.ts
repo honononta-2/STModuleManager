@@ -659,6 +659,7 @@ interface OcrGroup {
 
 let pendingOcrGroups: OcrGroup[] = [];
 let ocrImageZoomStates: { scale: number; translateX: number; translateY: number }[] = [];
+let ocrCurrentPage = 0;
 
 function openOcrConfirmationModal(groups: OcrGroup[]) {
   pendingOcrGroups = groups.map((g) => ({
@@ -666,6 +667,7 @@ function openOcrConfirmationModal(groups: OcrGroup[]) {
     modules: g.modules.map((m) => ({ ...m, stats: m.stats.map((s) => ({ ...s })) })),
   }));
   ocrImageZoomStates = groups.map(() => ({ scale: 1, translateX: 0, translateY: 0 }));
+  ocrCurrentPage = 0;
   renderOcrModalBody();
   $("ocr-modal-bd").classList.add("on");
 }
@@ -675,10 +677,24 @@ function closeOcrModal() {
   // imageUrlはData URL（サムネイル）なのでrevokeは不要、参照を切るだけ
   pendingOcrGroups = [];
   ocrImageZoomStates = [];
+  ocrCurrentPage = 0;
 }
 
 function allPendingModules(): ModuleInput[] {
   return pendingOcrGroups.flatMap((g) => g.modules);
+}
+
+function updateOcrPager() {
+  const total = pendingOcrGroups.length;
+  const pager = $("ocr-pager");
+  const info = $("ocr-pager-info");
+  const prev = $("ocr-prev") as HTMLButtonElement;
+  const next = $("ocr-next") as HTMLButtonElement;
+  // ページが1つだけならページャー非表示
+  pager.style.display = total <= 1 ? "none" : "";
+  info.textContent = `${ocrCurrentPage + 1} / ${total}`;
+  prev.disabled = ocrCurrentPage <= 0;
+  next.disabled = ocrCurrentPage >= total - 1;
 }
 
 function renderOcrModalBody() {
@@ -687,114 +703,122 @@ function renderOcrModalBody() {
 
   if (allMods.length === 0) {
     body.innerHTML = '<div class="ocr-empty">検出されたモジュールがありません</div>';
+    updateOcrPager();
     return;
   }
 
+  // ページ範囲を補正
+  if (ocrCurrentPage >= pendingOcrGroups.length) {
+    ocrCurrentPage = pendingOcrGroups.length - 1;
+  }
+  if (ocrCurrentPage < 0) ocrCurrentPage = 0;
+
+  const gi = ocrCurrentPage;
+  const group = pendingOcrGroups[gi];
+
   // スクロール位置を保存
-  const bodyScrollTop = body.scrollTop;
-  const listScrollTops: number[] = [];
-  body.querySelectorAll<HTMLElement>(".ocr-group-list").forEach((el) => {
-    listScrollTops.push(el.scrollTop);
-  });
+  const listEl = body.querySelector<HTMLElement>(".ocr-group-list");
+  const listScrollTop = listEl ? listEl.scrollTop : 0;
 
   body.innerHTML = "";
 
-  pendingOcrGroups.forEach((group, gi) => {
-    const section = document.createElement("div");
-    section.className = "ocr-group";
+  const section = document.createElement("div");
+  section.className = "ocr-group";
 
-    // 画像プレビュー（ピンチ拡大可能）
-    const imgWrap = document.createElement("div");
-    imgWrap.className = "ocr-group-img";
-    imgWrap.innerHTML = `<img src="${group.imageUrl}" alt="スクリーンショット ${gi + 1}">`;
-    section.appendChild(imgWrap);
+  // 画像プレビュー（ピンチ拡大可能）
+  const imgWrap = document.createElement("div");
+  imgWrap.className = "ocr-group-img";
+  const img = document.createElement("img");
+  img.src = group.imageUrl;
+  img.alt = `スクリーンショット ${gi + 1}`;
+  imgWrap.appendChild(img);
+  section.appendChild(imgWrap);
 
-    // ヒントテキスト
-    const hint = document.createElement("div");
-    hint.className = "ocr-group-hint";
-    hint.textContent = "\u203B \u30B9\u30DE\u30DB\u306F\u753B\u50CF\u3092\u30D4\u30F3\u30C1\u3067\u62E1\u5927\u8868\u793A\u3067\u304D\u307E\u3059";
-    section.appendChild(hint);
+  // ヒントテキスト
+  const hint = document.createElement("div");
+  hint.className = "ocr-group-hint";
+  hint.textContent = "\u203B \u30B9\u30DE\u30DB\u306F\u753B\u50CF\u3092\u30D4\u30F3\u30C1\u3067\u62E1\u5927\u8868\u793A\u3067\u304D\u307E\u3059";
+  section.appendChild(hint);
 
-    // モジュール一覧（個別スクロール）
-    const listWrap = document.createElement("div");
-    listWrap.className = "ocr-group-list";
+  // モジュール一覧（個別スクロール）
+  const listWrap = document.createElement("div");
+  listWrap.className = "ocr-group-list";
 
-    group.modules.forEach((m, mi) => {
-      const comp = configIdToComponents(m.config_id);
-      const typeDigit = comp?.typeDigit ?? 1;
-      const raritySub = comp?.raritySub ?? 2;
+  group.modules.forEach((m, mi) => {
+    const comp = configIdToComponents(m.config_id);
+    const typeDigit = comp?.typeDigit ?? 1;
+    const raritySub = comp?.raritySub ?? 2;
 
-      const row = document.createElement("div");
-      row.className = "ocr-row";
-      row.dataset.gi = String(gi);
-      row.dataset.mi = String(mi);
+    const row = document.createElement("div");
+    row.className = "ocr-row";
+    row.dataset.gi = String(gi);
+    row.dataset.mi = String(mi);
 
-      const statsHtml = m.stats.map((s, si) => {
-        const statOptions = ALL_STAT_IDS.map((id) =>
-          `<option value="${id}"${id === s.part_id ? " selected" : ""}>${statName(id)}</option>`
-        ).join("");
-        const valueOptions = Array.from({ length: 10 }, (_, i) => i + 1)
-          .map((v) => `<option value="${v}"${v === s.value ? " selected" : ""}>${v}</option>`)
-          .join("");
-        return `<div class="ocr-stat-row">
-          <select class="opt-select ocr-stat-name" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${statOptions}</select>
-          <select class="opt-select ocr-stat-value" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${valueOptions}</select>
-          <button class="ocr-stat-remove" data-gi="${gi}" data-mi="${mi}" data-si="${si}">&times;</button>
-        </div>`;
-      }).join("");
-      const addStatHtml = m.stats.length < 3
-        ? `<button class="addbtn ocr-add-stat" data-gi="${gi}" data-mi="${mi}">+ ステータス追加</button>`
-        : "";
+    const statsHtml = m.stats.map((s, si) => {
+      const statOptions = ALL_STAT_IDS.map((id) =>
+        `<option value="${id}"${id === s.part_id ? " selected" : ""}>${statName(id)}</option>`
+      ).join("");
+      const valueOptions = Array.from({ length: 10 }, (_, i) => i + 1)
+        .map((v) => `<option value="${v}"${v === s.value ? " selected" : ""}>${v}</option>`)
+        .join("");
+      return `<div class="ocr-stat-row">
+        <select class="opt-select ocr-stat-name" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${statOptions}</select>
+        <select class="opt-select ocr-stat-value" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${valueOptions}</select>
+        <button class="ocr-stat-remove" data-gi="${gi}" data-mi="${mi}" data-si="${si}">&times;</button>
+      </div>`;
+    }).join("");
+    const addStatHtml = m.stats.length < 3
+      ? `<button class="addbtn ocr-add-stat" data-gi="${gi}" data-mi="${mi}">+ ステータス追加</button>`
+      : "";
 
-      row.innerHTML = `
-        <span class="ocr-row-index">${mi + 1}</span>
-        <div class="ocr-row-icon" id="ocr-icon-${gi}-${mi}">${moduleIconHtml(m.config_id)}</div>
-        <div class="ocr-row-body">
-          <div class="ocr-row-fields">
-            <label class="form-field">
-              <span class="cmd-lbl">型</span>
-              <select class="opt-select ocr-type" data-gi="${gi}" data-mi="${mi}">
-                <option value="1"${typeDigit === 1 ? " selected" : ""}>攻撃</option>
-                <option value="2"${typeDigit === 2 ? " selected" : ""}>支援</option>
-                <option value="3"${typeDigit === 3 ? " selected" : ""}>防御</option>
-              </select>
-            </label>
-            <label class="form-field">
-              <span class="cmd-lbl">レア種別</span>
-              <select class="opt-select ocr-rarity-sub" data-gi="${gi}" data-mi="${mi}">
-                <option value="1"${raritySub === 1 ? " selected" : ""}>青</option>
-                <option value="2"${raritySub === 2 ? " selected" : ""}>紫</option>
-                <option value="3"${raritySub === 3 ? " selected" : ""}>金A</option>
-                <option value="4"${raritySub === 4 ? " selected" : ""}>金B</option>
-              </select>
-            </label>
-          </div>
-          <div class="ocr-row-stats">${statsHtml}${addStatHtml}</div>
+    row.innerHTML = `
+      <span class="ocr-row-index">${mi + 1}</span>
+      <div class="ocr-row-icon" id="ocr-icon-${gi}-${mi}">${moduleIconHtml(m.config_id)}</div>
+      <div class="ocr-row-body">
+        <div class="ocr-row-fields">
+          <label class="form-field">
+            <span class="cmd-lbl">型</span>
+            <select class="opt-select ocr-type" data-gi="${gi}" data-mi="${mi}">
+              <option value="1"${typeDigit === 1 ? " selected" : ""}>攻撃</option>
+              <option value="2"${typeDigit === 2 ? " selected" : ""}>支援</option>
+              <option value="3"${typeDigit === 3 ? " selected" : ""}>防御</option>
+            </select>
+          </label>
+          <label class="form-field">
+            <span class="cmd-lbl">レア種別</span>
+            <select class="opt-select ocr-rarity-sub" data-gi="${gi}" data-mi="${mi}">
+              <option value="1"${raritySub === 1 ? " selected" : ""}>青</option>
+              <option value="2"${raritySub === 2 ? " selected" : ""}>紫</option>
+              <option value="3"${raritySub === 3 ? " selected" : ""}>金A</option>
+              <option value="4"${raritySub === 4 ? " selected" : ""}>金B</option>
+            </select>
+          </label>
         </div>
-        <button class="ocr-row-remove" data-gi="${gi}" data-mi="${mi}">&times;</button>`;
+        <div class="ocr-row-stats">${statsHtml}${addStatHtml}</div>
+      </div>
+      <button class="ocr-row-remove" data-gi="${gi}" data-mi="${mi}">&times;</button>`;
 
-      listWrap.appendChild(row);
-    });
-
-    // モジュール追加ボタン
-    const addBtn = document.createElement("button");
-    addBtn.className = "addbtn ocr-group-add";
-    addBtn.textContent = "+ モジュール追加";
-    addBtn.dataset.gi = String(gi);
-    listWrap.appendChild(addBtn);
-
-    section.appendChild(listWrap);
-    body.appendChild(section);
-
-    // 画像ピンチズームを有効化
-    setupImagePinchZoom(imgWrap, gi);
+    listWrap.appendChild(row);
   });
+
+  // モジュール追加ボタン
+  const addBtn = document.createElement("button");
+  addBtn.className = "addbtn ocr-group-add";
+  addBtn.textContent = "+ モジュール追加";
+  addBtn.dataset.gi = String(gi);
+  listWrap.appendChild(addBtn);
+
+  section.appendChild(listWrap);
+  body.appendChild(section);
+
+  // 画像ピンチズームを有効化
+  setupImagePinchZoom(imgWrap, gi);
 
   // モジュール追加
   body.querySelectorAll<HTMLButtonElement>(".ocr-group-add").forEach((btn) => {
     btn.onclick = () => {
-      const gi = Number(btn.dataset.gi);
-      pendingOcrGroups[gi].modules.push({
+      const g = Number(btn.dataset.gi);
+      pendingOcrGroups[g].modules.push({
         uuid: Date.now() + Math.floor(Math.random() * 1000),
         config_id: buildConfigId(1, 2),
         quality: 3,
@@ -805,10 +829,8 @@ function renderOcrModalBody() {
   });
 
   // スクロール位置を復元
-  body.scrollTop = bodyScrollTop;
-  body.querySelectorAll<HTMLElement>(".ocr-group-list").forEach((el, i) => {
-    if (i < listScrollTops.length) el.scrollTop = listScrollTops[i];
-  });
+  const newListEl = body.querySelector<HTMLElement>(".ocr-group-list");
+  if (newListEl) newListEl.scrollTop = listScrollTop;
 
   // Bind events
   body.querySelectorAll<HTMLSelectElement>(".ocr-type, .ocr-rarity-sub").forEach((sel) => {
@@ -827,11 +849,15 @@ function renderOcrModalBody() {
   // モジュール行削除
   body.querySelectorAll<HTMLButtonElement>(".ocr-row-remove").forEach((btn) => {
     btn.onclick = () => {
-      const gi = Number(btn.dataset.gi);
+      const g = Number(btn.dataset.gi);
       const mi = Number(btn.dataset.mi);
-      pendingOcrGroups[gi].modules.splice(mi, 1);
-      if (pendingOcrGroups[gi].modules.length === 0) {
-        pendingOcrGroups.splice(gi, 1);
+      pendingOcrGroups[g].modules.splice(mi, 1);
+      if (pendingOcrGroups[g].modules.length === 0) {
+        ocrImageZoomStates.splice(g, 1);
+        pendingOcrGroups.splice(g, 1);
+        if (ocrCurrentPage >= pendingOcrGroups.length && ocrCurrentPage > 0) {
+          ocrCurrentPage--;
+        }
       }
       renderOcrModalBody();
     };
@@ -839,22 +865,25 @@ function renderOcrModalBody() {
   // ステータス削除
   body.querySelectorAll<HTMLButtonElement>(".ocr-stat-remove").forEach((btn) => {
     btn.onclick = () => {
-      const gi = Number(btn.dataset.gi);
+      const g = Number(btn.dataset.gi);
       const mi = Number(btn.dataset.mi);
       const si = Number(btn.dataset.si);
-      pendingOcrGroups[gi].modules[mi].stats.splice(si, 1);
+      pendingOcrGroups[g].modules[mi].stats.splice(si, 1);
       renderOcrModalBody();
     };
   });
   // ステータス追加
   body.querySelectorAll<HTMLButtonElement>(".ocr-add-stat").forEach((btn) => {
     btn.onclick = () => {
-      const gi = Number(btn.dataset.gi);
+      const g = Number(btn.dataset.gi);
       const mi = Number(btn.dataset.mi);
-      pendingOcrGroups[gi].modules[mi].stats.push({ part_id: ALL_STAT_IDS[0], value: 1 });
+      pendingOcrGroups[g].modules[mi].stats.push({ part_id: ALL_STAT_IDS[0], value: 1 });
       renderOcrModalBody();
     };
   });
+
+  // ページャー更新
+  updateOcrPager();
 }
 
 function onOcrFieldChange(gi: number, mi: number) {
@@ -1643,6 +1672,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ocr-register").onclick = registerOcrModules;
   $("ocr-cancel").onclick = closeOcrModal;
   $("ocr-modal-close").onclick = closeOcrModal;
+  $("ocr-prev").onclick = () => { ocrCurrentPage--; renderOcrModalBody(); };
+  $("ocr-next").onclick = () => { ocrCurrentPage++; renderOcrModalBody(); };
   // Manual input modal
   $("manual-btn").onclick = () => openManualInputModal();
   $("manual-modal-close").onclick = closeManualModal;

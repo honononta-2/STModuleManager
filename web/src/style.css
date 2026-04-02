@@ -116,7 +116,7 @@ body {
 
 /* ===== Add button ===== */
 .addbtn {
-  height:26px; padding:0 11px;
+  height:26px; padding:0 11px; flex-shrink:0;
   background:var(--cf-default);
   border:1px solid var(--str-soft);
   border-radius:4px;
@@ -399,7 +399,7 @@ body {
 .opt-select:hover { background:var(--cf-hover); }
 
 .opt-run-btn {
-  height:30px; padding:0 20px;
+  height:30px; padding:0 20px; flex-shrink:0;
   border-radius:4px;
   border:none;
   background:var(--acc);
@@ -798,6 +798,35 @@ body {
   text-align:center; color:var(--tx3); padding:32px 0; font-size:13px;
 }
 
+/* OCR pager */
+.ocr-pager {
+  display:flex; align-items:center; gap:6px;
+}
+.ocr-pager-btn {
+  width:28px; height:28px;
+  border:1px solid var(--str-soft);
+  background:var(--s-alt);
+  border-radius:6px;
+  font-size:16px; line-height:1;
+  color:var(--tx1);
+  cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  transition:background 0.1s, border-color 0.1s;
+  padding:0;
+}
+.ocr-pager-btn:hover:not(:disabled) {
+  background:var(--cf-subtle-h);
+  border-color:var(--str-default);
+}
+.ocr-pager-btn:disabled {
+  opacity:0.35; cursor:default;
+}
+.ocr-pager-info {
+  font-size:13px; font-weight:600; color:var(--tx2);
+  min-width:40px; text-align:center;
+  user-select:none;
+}
+
 /* ===== Manual Input Modal ===== */
 .manual-form { display:flex; flex-direction:column; gap:14px; }
 
@@ -902,7 +931,7 @@ body {
   .opt-pattern-bar > div[style*="flex:1"] {
     display: none;
   }
-  .opt-run-btn {
+  .opt-pattern-bar .opt-run-btn {
     width: 100%;
     margin-top: 2px;
   }
