@@ -1216,7 +1216,7 @@ function addManualModule() {
 
 // ========== Screenshot Import ==========
 
-function createThumbnailDataUrl(img: HTMLImageElement, maxWidth = 480): string {
+function createThumbnailDataUrl(img: HTMLImageElement, maxWidth = 1920): string {
   const scale = Math.min(1, maxWidth / img.naturalWidth);
   const w = Math.round(img.naturalWidth * scale);
   const h = Math.round(img.naturalHeight * scale);
@@ -1225,7 +1225,7 @@ function createThumbnailDataUrl(img: HTMLImageElement, maxWidth = 480): string {
   c.height = h;
   const ctx = c.getContext("2d")!;
   ctx.drawImage(img, 0, 0, w, h);
-  const dataUrl = c.toDataURL("image/jpeg", 0.7);
+  const dataUrl = c.toDataURL("image/webp", 0.8);
   // Canvas即時解放
   c.width = 0;
   c.height = 0;

@@ -75,6 +75,7 @@ interface UserModuleOcrTemplateInfo {
   rarity: number;
   colorMat: any;
   avgHash: number[];
+  grayEqMat: any; // グレースケール+equalizeHist版（キャッシュ）
 }
 
 let userModuleOcrTemplates: UserModuleOcrTemplateInfo[] = [];
@@ -195,11 +196,19 @@ async function loadTemplates(): Promise<void> {
       const img = await loadImage(`/icons/OCR_${modIcon.type}${modIcon.rarity}.png`);
       const colorCanvas = renderTemplateCanvas(img, null);
       const colorMat = buildColorMat(colorCanvas, cv);
+      // グレースケール+equalizeHist版をキャッシュ（スライディング検出で毎回変換する無駄を排除）
+      const grayTmpl = new cv.Mat();
+      cv.cvtColor(colorMat, grayTmpl, cv.COLOR_RGBA2GRAY);
+      const grayEqTmpl = new cv.Mat();
+      cv.equalizeHist(grayTmpl, grayEqTmpl);
+      grayTmpl.delete();
+
       userModuleOcrTemplates.push({
         type: modIcon.type,
         rarity: modIcon.rarity,
         colorMat,
         avgHash: computeAverageHash(colorMat, cv),
+        grayEqMat: grayEqTmpl,
       });
     } catch {
       // User-provided OCR templates are optional.
@@ -1988,25 +1997,15 @@ function classifyModuleIconByOcrGraySliding(
     if (sc < 0.18 || sc > 0.45) continue;
 
     for (const tmpl of userModuleOcrTemplates) {
-      // userModuleOcrTemplates は colorMat を持っているが、ここではグレー変換して使う
-      // colorMat → グレー → equalizeHist は loadTemplates 時にやるべきだが、
-      // 既存構造を壊さないため、ここでオンザフライ変換する
-      const grayTmpl = new cv.Mat();
-      cv.cvtColor(tmpl.colorMat, grayTmpl, cv.COLOR_RGBA2GRAY);
-      const grayTmplEq = new cv.Mat();
-      cv.equalizeHist(grayTmpl, grayTmplEq);
-      grayTmpl.delete();
-
-      const tw = Math.round(grayTmplEq.cols * sc);
-      const th = Math.round(grayTmplEq.rows * sc);
+      // grayEqMat はテンプレート読み込み時にキャッシュ済み
+      const tw = Math.round(tmpl.grayEqMat.cols * sc);
+      const th = Math.round(tmpl.grayEqMat.rows * sc);
       if (tw < 20 || th < 20 || tw >= roiGray.cols || th >= roiGray.rows) {
-        grayTmplEq.delete();
         continue;
       }
 
       const resized = new cv.Mat();
-      cv.resize(grayTmplEq, resized, new cv.Size(tw, th));
-      grayTmplEq.delete();
+      cv.resize(tmpl.grayEqMat, resized, new cv.Size(tw, th));
       cv.matchTemplate(roiGray, resized, result, cv.TM_CCOEFF_NORMED);
       const mm = cv.minMaxLoc(result);
       const score = isNaN(mm.maxVal) ? 0 : mm.maxVal;
