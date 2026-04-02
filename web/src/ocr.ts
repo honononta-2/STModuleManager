@@ -82,7 +82,7 @@ let userModuleOcrTemplates: UserModuleOcrTemplateInfo[] = [];
 let templatesLoaded = false;
 
 const CLASSIFY_BACKGROUNDS = [
-  { name: "selected", fill: "#CAD8D8" },
+  { name: "selected", fill: "#C8D8D8" },
   { name: "idleDark", fill: "#1F2E33" },
   { name: "idleLight", fill: "#65777B" },
 ];
@@ -178,16 +178,22 @@ async function loadTemplates(): Promise<void> {
     const baseCanvas = renderTemplateCanvas(img, bgImg);
     const baseMats = buildTemplateMats(baseCanvas, cv);
 
+    const modClassifyVariants = CLASSIFY_BACKGROUNDS.map((background) => {
+      const variantCanvas = renderTemplateCanvas(img, background.fill);
+      const mats = buildTemplateMats(variantCanvas, cv);
+      return {
+        name: background.name,
+        grayMat: mats.grayMat,
+        edgeMat: mats.edgeMat,
+      };
+    });
+
     moduleIconTemplates.push({
       type: modIcon.type,
       rarity: modIcon.rarity,
       grayMat: baseMats.grayMat,
       edgeMat: baseMats.edgeMat,
-      classifyVariants: [{
-        name: `rarity${bgRarity}`,
-        grayMat: baseMats.grayMat,
-        edgeMat: baseMats.edgeMat,
-      }],
+      classifyVariants: modClassifyVariants,
     });
   }
 
@@ -436,7 +442,7 @@ function applyCLAHE(
   return result;
 }
 
-// --- スケール検出（フォールバック + 半径推定用） ---
+// --- スケール検出（半径推定 + スケール基準用） ---
 
 function detectScale(grayImage: any, cv: any): number {
   const refs = statTemplates.slice(0, 5);
@@ -445,7 +451,7 @@ function detectScale(grayImage: any, cv: any): number {
   let bestScale = 0.5;
   let bestScore = -1;
 
-  for (let scale = 0.35; scale <= 0.65; scale += 0.02) {
+  for (let scale = 0.2; scale <= 0.65; scale += 0.02) {
     let maxScore = 0;
     for (const ref of refs) {
       const w = Math.round(ref.grayMat.cols * scale);
@@ -475,60 +481,6 @@ function detectScale(grayImage: any, cv: any): number {
   return bestScale;
 }
 
-function detectModuleScale(grayImage: any, cv: any, statScale: number): number {
-  const refs: ModuleIconTemplateInfo[] = [];
-  const seenTypes = new Set<string>();
-  for (const tmpl of moduleIconTemplates) {
-    if (seenTypes.has(tmpl.type)) continue;
-    refs.push(tmpl);
-    seenTypes.add(tmpl.type);
-    if (refs.length >= 3) break;
-  }
-  if (refs.length === 0) return 0.2;
-
-  // statScale からモジュールスケールの妥当な範囲を制約
-  // モジュールアイコンはステータスアイコンの約2倍幅
-  // (statIcon=80px base, moduleIcon=256px base → ratio ≈ 80*statScale*2 / 256)
-  const minScale = Number.isFinite(statScale) && statScale > 0
-    ? Math.max(0.22, statScale * 0.55)
-    : 0.22;
-  const maxScale = Number.isFinite(statScale) && statScale > 0
-    ? Math.min(0.45, statScale * 0.75)
-    : 0.42;
-
-  let bestScale = (minScale + maxScale) / 2;
-  let bestScore = -1;
-
-  for (let scale = minScale; scale <= maxScale; scale += 0.02) {
-    let maxScore = 0;
-    for (const ref of refs) {
-      const w = Math.round(ref.grayMat.cols * scale);
-      const h = Math.round(ref.grayMat.rows * scale);
-      if (w < 10 || h < 10 || w >= grayImage.cols || h >= grayImage.rows)
-        continue;
-
-      const resized = new cv.Mat();
-      cv.resize(ref.grayMat, resized, new cv.Size(w, h));
-      const result = new cv.Mat();
-      cv.matchTemplate(grayImage, resized, result, cv.TM_CCOEFF_NORMED);
-      const { maxVal } = cv.minMaxLoc(result);
-      if (maxVal > maxScore) maxScore = maxVal;
-      resized.delete();
-      result.delete();
-    }
-
-    if (maxScore > bestScore) {
-      bestScore = maxScore;
-      bestScale = scale;
-    }
-  }
-
-  console.log(
-    `[OCR] detectModuleScale: scale=${bestScale.toFixed(3)} score=${bestScore.toFixed(3)}` +
-      ` range=[${minScale.toFixed(3)}, ${maxScale.toFixed(3)}] (statScale=${statScale.toFixed(3)})`,
-  );
-  return bestScale;
-}
 
 // --- テンプレートマッチング（フォールバック用） ---
 
@@ -699,8 +651,6 @@ function fillGridGaps(
   }
   rows.sort((a, b) => a - b);
 
-  console.log("[OCR] grid columns:", columns, "rows:", rows);
-
   const filled = [...detections];
   for (const rowY of rows) {
     for (const colX of columns) {
@@ -746,9 +696,6 @@ function fillGridGaps(
       roi.delete();
 
       if (bestPartId >= 0 && bestScore > 0.25) {
-        console.log(
-          `[OCR] grid fill: (${colX}, ${rowY}) → partId=${bestPartId} score=${bestScore.toFixed(3)}`,
-        );
         filled.push({
           partId: bestPartId,
           x: colX,
@@ -778,15 +725,25 @@ function detectCircles(
   estimatedRadius: number,
 ): Circle[] {
   const circles = new cv.Mat();
+  const tiny = estimatedRadius < 15;
   const lowRes = blurredGray.cols < 700 || estimatedRadius < 18;
-  const minR = lowRes
-    ? Math.max(8, Math.round(estimatedRadius * 0.8))
-    : Math.max(5, Math.round(estimatedRadius * 0.5));
-  const maxR = lowRes
-    ? Math.round(estimatedRadius * 1.45)
-    : Math.round(estimatedRadius * 1.8);
-  const minDist = Math.round(estimatedRadius * (lowRes ? 1.4 : 1.5));
-  const param2 = lowRes ? 18 : 22;
+  let minR: number, maxR: number, minDist: number, param2: number;
+  if (tiny) {
+    minR = Math.max(5, Math.round(estimatedRadius * 0.55));
+    maxR = Math.round(estimatedRadius * 1.8);
+    minDist = Math.max(8, Math.round(estimatedRadius * 1.2));
+    param2 = 13;
+  } else if (lowRes) {
+    minR = Math.max(8, Math.round(estimatedRadius * 0.8));
+    maxR = Math.round(estimatedRadius * 1.45);
+    minDist = Math.round(estimatedRadius * 1.4);
+    param2 = 18;
+  } else {
+    minR = Math.max(5, Math.round(estimatedRadius * 0.5));
+    maxR = Math.round(estimatedRadius * 1.8);
+    minDist = Math.round(estimatedRadius * 1.5);
+    param2 = 22;
+  }
 
   cv.HoughCircles(
     blurredGray,
@@ -795,7 +752,7 @@ function detectCircles(
     1, // dp
     minDist,
     100, // param1 (Canny上限閾値)
-    param2, // param2 (累積閾値、低めで広く取得)
+    param2, // param2 (累積閾値)
     minR,
     maxR,
   );
@@ -861,70 +818,6 @@ function clusterValuesWithCounts(
   }));
 }
 
-function scoreColumnWindow(
-  window: ClusterCandidate[],
-  medianR: number,
-  preferRight: boolean,
-): number {
-  const support = window.reduce((sum, c) => sum + c.count, 0);
-  if (window.length <= 1) {
-    const rightBias = preferRight && window.length === 1 ? window[0].center * 0.6 : 0;
-    return support * 100 + rightBias;
-  }
-
-  const gaps: number[] = [];
-  for (let i = 1; i < window.length; i++) {
-    gaps.push(window[i].center - window[i - 1].center);
-  }
-
-  const medianGap = median(gaps);
-  const irregularity = gaps.reduce((sum, gap) => sum + Math.abs(gap - medianGap), 0);
-  const tooNarrow = gaps.some((gap) => gap < medianR * 2.2);
-  const tooWide = gaps.some((gap) => gap > medianR * 7.5);
-  const supportWeight = preferRight ? 70 : 100;
-  const rightBias = preferRight ? window[0].center * 0.5 : 0;
-
-  return (
-    support * supportWeight -
-    irregularity * 6 -
-    (tooNarrow ? 60 : 0) -
-    (tooWide ? 20 : 0) +
-    rightBias
-  );
-}
-
-function inferStatColumnCount(
-  clusters: ClusterCandidate[],
-  maxColsPerRow: number,
-): number {
-  if (clusters.length === 0) return 0;
-  if (clusters.length === 1) return 1;
-  if (clusters.length > maxColsPerRow) return maxColsPerRow;
-
-  const centers = clusters.map((c) => c.center).sort((a, b) => a - b);
-  const leftmost = centers[0];
-  const rightmost = centers[centers.length - 1];
-
-  if (centers.length === 2) {
-    return leftmost < rightmost * 0.75 ? 1 : 2;
-  }
-
-  const gaps: number[] = [];
-  for (let i = 1; i < centers.length; i++) {
-    gaps.push(centers[i] - centers[i - 1]);
-  }
-
-  const remainingGaps = gaps.slice(1);
-  const remainingMedianGap =
-    remainingGaps.length > 0 ? median(remainingGaps) : gaps[0];
-  const leftGap = gaps[0];
-  const looksLikeModuleColumn =
-    leftmost < rightmost * 0.45 ||
-    (remainingMedianGap > 0 && leftGap > remainingMedianGap * 1.35);
-
-  return looksLikeModuleColumn ? centers.length - 1 : centers.length;
-}
-
 // --- 行間隔フィルタ ---
 
 function filterRowsBySpacing(rowYs: number[]): number[] {
@@ -959,18 +852,12 @@ function filterRowsBySpacing(rowYs: number[]): number[] {
     const lastSpacing = spacings[spacings.length - 1];
 
     if (firstSpacing < minAllowed || firstSpacing > maxAllowed) {
-      console.log(
-        `[OCR] filterRowsBySpacing: dropping first row (spacing=${firstSpacing} allowed=[${minAllowed.toFixed(0)},${maxAllowed.toFixed(0)}])`,
-      );
       filtered = filtered.slice(1);
       changed = true;
       continue;
     }
 
     if (lastSpacing < minAllowed || lastSpacing > maxAllowed) {
-      console.log(
-        `[OCR] filterRowsBySpacing: dropping last row (spacing=${lastSpacing} allowed=[${minAllowed.toFixed(0)},${maxAllowed.toFixed(0)}])`,
-      );
       filtered = filtered.slice(0, -1);
       changed = true;
     }
@@ -993,106 +880,116 @@ function selectGlobalStatColumns(
   medianR: number,
   maxColsPerRow: number,
 ): number[] {
-  const lowRes = medianR < 20;
-  const xThreshold = medianR * (lowRes ? 2.0 : 1.2);
-  const maxXRatio = lowRes ? 1.0 : 0.97;
-  const maxX = circles.reduce((m, c) => Math.max(m, c.cx), 0) * maxXRatio;
-  const candidates = circles.filter((c) => c.cx <= maxX);
-
+  const xThreshold = medianR * 1.2;
   const xClusters = clusterValuesWithCounts(
-    candidates.map((c) => c.cx),
+    circles.map((c) => c.cx),
     xThreshold,
   ).sort((a, b) => a.center - b.center);
 
-  const minSupport = lowRes ? 1 : 2;
-  const supported = xClusters.filter((c) => c.count >= minSupport);
-  const usable = supported.length > 0 ? supported : xClusters;
-  const inferredCols = Math.min(
-    maxColsPerRow,
-    Math.max(1, inferStatColumnCount(usable, maxColsPerRow)),
-  );
+  let supported = xClusters.filter((c) => c.count >= 2);
+  if (supported.length === 0) supported = xClusters;
 
-  if (usable.length <= inferredCols) {
-    return usable.slice(0, inferredCols).map((c) => c.center);
-  }
-
-  let bestWindow: ClusterCandidate[] = usable.slice(0, inferredCols);
-  let bestScore = -Infinity;
-  for (let i = 0; i <= usable.length - inferredCols; i++) {
-    const window = usable.slice(i, i + inferredCols);
-    const score = scoreColumnWindow(window, medianR, !lowRes);
-    if (score > bestScore) {
-      bestScore = score;
-      bestWindow = window;
+  let colXs: number[];
+  if (supported.length > maxColsPerRow) {
+    let bestWindow: ClusterCandidate[] | null = null;
+    let bestScore = -1;
+    for (let i = 0; i <= supported.length - maxColsPerRow; i++) {
+      const window = supported.slice(i, i + maxColsPerRow);
+      const support = window.reduce((s, c) => s + c.count, 0);
+      let regularity = 0;
+      if (window.length > 1) {
+        const gaps: number[] = [];
+        for (let j = 0; j < window.length - 1; j++) {
+          gaps.push(window[j + 1].center - window[j].center);
+        }
+        const medGap = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+        const irregularity = gaps.reduce((s, g) => s + Math.abs(g - medGap), 0);
+        regularity = Math.max(0, 1 - irregularity / (medianR * 4));
+      }
+      const rightBias = window[window.length - 1].center * 0.001;
+      const score = support * 10 + regularity * 50 + rightBias;
+      if (score > bestScore) {
+        bestScore = score;
+        bestWindow = window;
+      }
     }
+    colXs = bestWindow!.map((c) => c.center);
+  } else {
+    colXs = supported.slice(0, maxColsPerRow).map((c) => c.center);
   }
 
-  return bestWindow.map((c) => c.center);
+  return colXs;
 }
 
 function selectRowYsForColumns(
   circles: Circle[],
   globalCols: number[],
   medianR: number,
+  imgHeight: number,
+  estimatedRadius: number,
 ): number[] {
   if (globalCols.length === 0) return [];
 
-  const rowThreshold = medianR * 1.2;
-  const colThreshold = medianR * (medianR < 20 ? 2.0 : 1.4);
+  const colThreshold = medianR * 1.4;
   const aligned = circles.filter((c) =>
     globalCols.some((colX) => Math.abs(c.cx - colX) <= colThreshold),
   );
 
+  const rowThreshold = medianR * 1.2;
   const rowClusters = clusterValuesWithCounts(
     aligned.map((c) => c.cy),
     rowThreshold,
   ).sort((a, b) => a.center - b.center);
 
-  const minSupport = medianR < 20 ? 1 : Math.min(2, globalCols.length);
-  const supported = rowClusters.filter((c) => c.count >= minSupport);
-  const usable = supported.length > 0 ? supported : rowClusters;
-  const filtered = filterRowsBySpacing(usable.map((c) => c.center));
-  if (filtered.length < 2) return filtered;
+  const rowYs = rowClusters
+    .filter((c) => c.count >= 1)
+    .map((c) => c.center);
 
-  const allCenters = rowClusters.map((c) => c.center);
-  const spacings: number[] = [];
-  for (let i = 1; i < filtered.length; i++) {
-    spacings.push(filtered[i] - filtered[i - 1]);
+  const MIN_ROW_Y = 100;
+  let validRows = rowYs.filter((ry) => ry >= MIN_ROW_Y);
+
+  if (estimatedRadius < 15) {
+    validRows = extrapolateRows(validRows, imgHeight, MIN_ROW_Y);
   }
-  const medianSpacing = median(spacings);
-  if (medianSpacing <= 0) return filtered;
 
-  const extended = [...filtered];
-  const addEdgeCandidate = (expectedY: number, atStart: boolean): void => {
-    const candidate = allCenters
-      .filter((y) =>
-        atStart
-          ? y < extended[0] - rowThreshold * 0.4
-          : y > extended[extended.length - 1] + rowThreshold * 0.4,
-      )
-      .sort((a, b) => Math.abs(a - expectedY) - Math.abs(b - expectedY))[0];
+  return validRows;
+}
 
-    if (
-      candidate !== undefined &&
-      Math.abs(candidate - expectedY) <= rowThreshold * 1.2 &&
-      !extended.some((y) => Math.abs(y - candidate) < rowThreshold * 0.5)
-    ) {
-      if (atStart) {
-        extended.unshift(candidate);
-      } else {
-        extended.push(candidate);
-      }
-    }
-  };
+function extrapolateRows(
+  rowYs: number[],
+  imgHeight: number,
+  minY: number = 100,
+): number[] {
+  if (rowYs.length < 3) return rowYs;
 
-  addEdgeCandidate(extended[0] - medianSpacing, true);
-  addEdgeCandidate(extended[extended.length - 1] + medianSpacing, false);
+  const gaps: number[] = [];
+  for (let i = 0; i < rowYs.length - 1; i++) {
+    gaps.push(rowYs[i + 1] - rowYs[i]);
+  }
+  const medGap = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+
+  const regular = gaps.filter((g) => Math.abs(g - medGap) < medGap * 0.3).length;
+  if (regular < gaps.length * 0.5) return rowYs;
+
+  const extended = [...rowYs];
+  let y = extended[0] - medGap;
+  while (y >= minY) {
+    extended.unshift(y);
+    y -= medGap;
+  }
+  y = extended[extended.length - 1] + medGap;
+  while (y < imgHeight - medGap * 0.3) {
+    extended.push(y);
+    y += medGap;
+  }
   return extended;
 }
 
 function buildGridSlots(
   circles: Circle[],
   maxColsPerRow: number = 3,
+  imgHeight: number = 0,
+  estimatedRadius: number = 0,
 ): Slot[] {
   if (circles.length === 0) return [];
 
@@ -1105,10 +1002,6 @@ function buildGridSlots(
   const filtered = circles.filter(
     (c) => c.r >= medianR * 0.7 && c.r <= medianR * 1.3,
   );
-  console.log(
-    `[OCR] Hough: ${circles.length} candidates → ${filtered.length} after radius filter (medianR=${medianR.toFixed(1)})`,
-  );
-
   if (filtered.length < 2) {
     return filtered.map((c) => ({ cx: c.cx, cy: c.cy, r: medianR }));
   }
@@ -1119,16 +1012,8 @@ function buildGridSlots(
     medianR,
     maxColsPerRow,
   ).sort((a, b) => a - b);
-  console.log(
-    "[OCR] stat columns:",
-    globalCols.map((x) => Math.round(x)),
-  );
 
-  const validRowYs = selectRowYsForColumns(filtered, globalCols, medianR);
-  console.log(
-    `[OCR] Hough rows: ${validRowYs.length}`,
-    validRowYs.map((y) => Math.round(y)),
-  );
+  const validRowYs = selectRowYsForColumns(filtered, globalCols, medianR, imgHeight, estimatedRadius);
 
   // 各行のX座標クラスタリング → グローバル列に最も近い候補だけ採用
   const slots: Slot[] = [];
@@ -1200,11 +1085,10 @@ function buildGridSlots(
     }
   }
 
-  console.log("[OCR] grid slots:", slots.length, "cols per row:", colCounts);
   return slots;
 }
 
-// --- 局所分類（背景バリエーション付き edge + gray） ---
+// --- 局所分類（背景バリエーション付き gray_only） ---
 
 interface ClassificationResult {
   detections: Detection[];
@@ -1278,19 +1162,10 @@ function pruneWeakLeadingColumn(detections: Detection[]): Detection[] {
       ? validOtherMargins.reduce((sum, s) => sum + s, 0) / validOtherMargins.length
       : 0;
 
-  const shouldDropLeft =
-    left.avgScore < 0.55 &&
-    left.avgMargin < 0.03 &&
-    otherAvgScore - left.avgScore > 0.12 &&
-    otherAvgMargin - left.avgMargin > 0.03;
+  // 先頭列の平均スコアが他列平均の78%未満なら除去
+  const shouldDropLeft = left.avgScore < otherAvgScore * 0.78;
 
   if (!shouldDropLeft) return detections;
-
-  console.log(
-    `[OCR] dropping weak leading column: x=${Math.round(left.centerX)} ` +
-      `avgScore=${left.avgScore.toFixed(3)} avgMargin=${left.avgMargin.toFixed(3)} ` +
-      `otherAvgScore=${otherAvgScore.toFixed(3)} otherAvgMargin=${otherAvgMargin.toFixed(3)}`,
-  );
 
   const dropped = new Set(left.column);
   return detections.filter((det) => !dropped.has(det));
@@ -1337,8 +1212,7 @@ function classifyAllSlots(
   const symbolRect = new cv.Rect(symbolInset, symbolInset, symbolSide, symbolSide);
 
   // テンプレート前処理:
-  // 1) 中央シンボルのエッジで形を比較
-  // 2) 背景合成版テンプレで全体グレー比較
+  // 背景合成版テンプレで全体グレー比較（gray_only方式）
   const preppedTemplates = statTemplates.map((tmpl) => {
     return {
       partId: tmpl.partId,
@@ -1470,10 +1344,6 @@ function classifyAllSlots(
 
       const margin = bestScore - secondBestScore;
       marginSum += margin;
-      console.log(
-        `[OCR] slot (${Math.round(slot.cx)}, ${Math.round(slot.cy)}): ` +
-          `partId=${bestPartId} bg=${bestVariantName} score=${bestScore.toFixed(3)} margin=${margin.toFixed(3)}`,
-      );
 
       const confident =
         bestPartId >= 0 &&
@@ -1840,13 +1710,6 @@ async function ocrNumbersForRow(
               threshold: attempt.threshold,
               upscale: attempt.upscale,
             };
-            console.log(
-              `[OCR] value OCR hit: partId=${stat.part_id} value=${extracted.value} ` +
-                `plus=${extracted.hadPlus} raw="${extracted.rawText.replace(/\s+/g, " ").trim()}" ` +
-                `normalized="${extracted.normalized}" match="${extracted.matchedText}" ` +
-                `crop=${cropIndex + 1} mode=${attempt.mode} threshold=${attempt.threshold ?? "gray"} ` +
-                `upscale=${attempt.upscale}`,
-            );
             break;
           }
         }
@@ -1856,7 +1719,6 @@ async function ocrNumbersForRow(
       // OCR失敗
     }
     if (stat.value === 0) {
-      console.log(`[OCR] value OCR failed: partId=${stat.part_id}`);
     }
     delete (stat as any)._ocrCrops;
   }
@@ -1967,12 +1829,7 @@ function classifyModuleIconByOcrGraySliding(
 ): ModuleIconMatch | null {
   if (userModuleOcrTemplates.length === 0 || row.stats.length === 0) return null;
 
-  const leftStat = row.stats.reduce((min, s) => (s.x < min.x ? s : min), row.stats[0]);
-  const derivedModuleScale = estimateModuleScaleFromRow(row);
-  const baseModuleScale =
-    Number.isFinite(moduleScale) && Math.abs(moduleScale - derivedModuleScale) <= 0.08
-      ? moduleScale
-      : derivedModuleScale;
+  const baseModuleScale = moduleScale;
 
   // スライディング検索領域: 画像の左30%、行のY位置周辺
   const modPx = Math.round(256 * baseModuleScale);
@@ -1994,7 +1851,6 @@ function classifyModuleIconByOcrGraySliding(
 
   for (const m of scaleMultipliers) {
     const sc = baseModuleScale * m;
-    if (sc < 0.18 || sc > 0.45) continue;
 
     for (const tmpl of userModuleOcrTemplates) {
       // grayEqMat はテンプレート読み込み時にキャッシュ済み
@@ -2050,34 +1906,18 @@ function classifyModuleIconByExistingTemplates(
 ): ModuleIconMatch | null {
   if (moduleIconTemplates.length === 0 || row.stats.length === 0) return null;
 
-  // ステータスアイコンの左端を基準に検索領域を決定
-  const leftStat = row.stats.reduce((min, s) => (s.x < min.x ? s : min), row.stats[0]);
+  const baseModuleScale = moduleScale;
 
-  const derivedModuleScale = estimateModuleScaleFromRow(row);
-  const useDetectedScale =
-    Number.isFinite(moduleScale) &&
-    Math.abs(moduleScale - derivedModuleScale) <= 0.08;
-  const baseModuleScale = useDetectedScale ? moduleScale : derivedModuleScale;
+  // 画像左30%、行Y±modPx*0.7
+  const modPx = Math.round(256 * baseModuleScale);
+  const sw = Math.round(grayEq.cols * 0.3);
+  const hh = Math.round(modPx * 0.7);
+  const roiY = Math.max(0, Math.round(row.y - hh));
+  const roiH = Math.min(grayEq.rows, Math.round(row.y + hh)) - roiY;
 
-  // モジュールアイコンの想定サイズ
-  const modSizeEstimate = Math.round(256 * baseModuleScale);
-  const searchMargin = Math.round(modSizeEstimate * 0.3);
+  if (roiH < 20 || sw < 20) return null;
 
-  console.log(
-    `[OCR] module scale hint: detected=${moduleScale.toFixed(3)} ` +
-      `derived=${derivedModuleScale.toFixed(3)} chosen=${baseModuleScale.toFixed(3)} ` +
-      `statScale=${statScale.toFixed(3)}`,
-  );
-
-  // 検索領域: ステータスアイコンの左側
-  const roiX = Math.max(0, leftStat.x - modSizeEstimate * 2 - searchMargin);
-  const roiY = Math.max(0, leftStat.y - Math.round(modSizeEstimate * 0.5));
-  const roiW = Math.min(leftStat.x - roiX, grayEq.cols - roiX);
-  const roiH = Math.min(modSizeEstimate * 2, grayEq.rows - roiY);
-
-  if (roiW < modSizeEstimate * 0.5 || roiH < modSizeEstimate * 0.5) return null;
-
-  const roiRect = new cv.Rect(roiX, roiY, roiW, roiH);
+  const roiRect = new cv.Rect(0, roiY, sw, roiH);
   const roiGray = grayEq.roi(roiRect);
   const roiEdge = edgeMat.roi(roiRect);
 
@@ -2085,19 +1925,14 @@ function classifyModuleIconByExistingTemplates(
   let secondBestScore = -1;
 
   const scaleCandidates = new Set<number>([
+    baseModuleScale * 0.85,
     baseModuleScale * 0.9,
-    baseModuleScale * 0.97,
+    baseModuleScale * 0.95,
     baseModuleScale,
-    baseModuleScale * 1.03,
+    baseModuleScale * 1.05,
     baseModuleScale * 1.1,
   ]);
-  if (useDetectedScale) {
-    scaleCandidates.add(moduleScale * 0.95);
-    scaleCandidates.add(moduleScale * 1.05);
-  }
-  const scaleRange = [...scaleCandidates]
-    .filter((scaleVal) => scaleVal >= 0.18 && scaleVal <= 0.45)
-    .sort((a, b) => a - b);
+  const scaleRange = [...scaleCandidates].sort((a, b) => a - b);
 
   for (const scaleMul of scaleRange) {
     const modScale = scaleMul;
@@ -2105,7 +1940,7 @@ function classifyModuleIconByExistingTemplates(
     for (const tmpl of moduleIconTemplates) {
       const tw = Math.round(tmpl.edgeMat.cols * modScale);
       const th = Math.round(tmpl.edgeMat.rows * modScale);
-      if (tw < 10 || th < 10 || tw >= roiW || th >= roiH) continue;
+      if (tw < 10 || th < 10 || tw >= sw || th >= roiH) continue;
 
       // エッジマッチング
       const resizedEdge = new cv.Mat();
@@ -2140,7 +1975,7 @@ function classifyModuleIconByExistingTemplates(
           configId: buildConfigId(tmpl.type, tmpl.rarity),
           score: combined,
           margin: 0,
-          x: roiX + edgeLoc.maxLoc.x,
+          x: edgeLoc.maxLoc.x,
           y: roiY + edgeLoc.maxLoc.y,
           w: tw,
           h: th,
@@ -2161,20 +1996,10 @@ function classifyModuleIconByExistingTemplates(
 
   // 信頼度が低すぎる場合はnull
   if (bestMatch && bestMatch.score < 0.2) {
-    console.log(
-      `[OCR] module icon: weak score=${bestMatch.score.toFixed(3)} ` +
-        `margin=${bestMatch.margin.toFixed(3)}, skipping`,
-    );
     return null;
   }
 
   if (bestMatch) {
-    console.log(
-      `[OCR] module icon: type=${bestMatch.type} rarity=${bestMatch.rarity} ` +
-        `score=${bestMatch.score.toFixed(3)} margin=${bestMatch.margin.toFixed(3)} ` +
-        `configId=${bestMatch.configId} ` +
-        `rect=(${bestMatch.x},${bestMatch.y},${bestMatch.w},${bestMatch.h})`,
-    );
   }
 
   return bestMatch;
@@ -2310,14 +2135,6 @@ function classifyModuleIconByUserTemplates(
     ahashReranked,
   };
 
-  console.log(
-    `[OCR] module icon user-template: type=${match.type} rarity=${match.rarity} ` +
-      `score=${match.score.toFixed(3)} margin=${match.margin.toFixed(3)} ` +
-      `baseType=${match.baseRgbType} baseScore=${(match.baseRgbScore ?? match.score).toFixed(3)} ` +
-      `ahash=${match.ahashDistance?.toFixed(3) ?? "n/a"} reranked=${match.ahashReranked ? "yes" : "no"} ` +
-      `configId=${match.configId} rect=(${match.x},${match.y},${match.w},${match.h})`,
-  );
-
   return match;
 }
 
@@ -2371,13 +2188,6 @@ function classifyModuleIconForRow(
     );
     ensembleMatch = ranked[0].bestMatch;
 
-    console.log(
-      `[OCR] module icon ensemble: ` +
-        `slEdge=${slEdge ? `${slEdge.type}${slEdge.rarity}` : "null"} ` +
-        `slGray=${slGray ? `${slGray.type}${slGray.rarity}` : "null"} ` +
-        `clGray=${clGray ? `${clGray.type}${clGray.rarity}` : "null"} ` +
-        `→ ${ensembleMatch.type}${ensembleMatch.rarity} (${ranked[0].count}/${candidates.length} votes)`,
-    );
   }
 
   // ユーザーテンプレートも試行（カラーマッチング + averageHash）
@@ -2399,16 +2209,6 @@ function classifyModuleIconForRow(
     ensembleMatch.score > userMatch.score + 0.08;
 
   const chosen = (useUserMatch && !existingClearlyBetter) ? userMatch : ensembleMatch;
-
-  if (chosen) {
-    console.log(
-      `[OCR] module icon chosen: source=${useUserMatch ? "user" : "ensemble"} ` +
-        `type=${chosen.type} rarity=${chosen.rarity} score=${chosen.score.toFixed(3)} ` +
-        `margin=${chosen.margin.toFixed(3)} ahash=${chosen.ahashDistance?.toFixed(3) ?? "n/a"} ` +
-        `configId=${chosen.configId} ` +
-        `rect=(${chosen.x},${chosen.y},${chosen.w},${chosen.h})`,
-    );
-  }
 
   return chosen;
 }
@@ -2453,12 +2253,6 @@ function pruneStatsUsingModuleAnchor(
     return row;
   }
 
-  console.log(
-    `[OCR] row pruned by module anchor: removed=${removed.length} kept=${kept.length} ` +
-      `moduleRight=${Math.round(moduleRight)} removedAvgScore=${removedAvgScore.toFixed(3)} ` +
-      `keptAvgScore=${keptAvgScore.toFixed(3)}`,
-  );
-
   return {
     y: row.y,
     stats: kept,
@@ -2493,15 +2287,6 @@ function applySmartAlignment(
     const rightScore = rightSlice.reduce((sum, s) => sum + (s.score ?? 0), 0);
 
     const chosen = leftScore > rightScore ? leftSlice : rightSlice;
-    const chosenSide = leftScore > rightScore ? "left" : "right";
-
-    if (chosen.length !== row.stats.length) {
-      console.log(
-        `[OCR] smart alignment R${index + 1}: ${row.stats.length} stats → ${chosen.length} (${chosenSide}) ` +
-          `leftScore=${leftScore.toFixed(3)} rightScore=${rightScore.toFixed(3)}`,
-      );
-    }
-
     return { y: row.y, stats: chosen };
   });
 }
@@ -2552,21 +2337,12 @@ export async function processScreenshot(
   const edgeCl = new cv.Mat();
   cv.Canny(grayCl, edgeCl, 50, 150);
 
-  // スケール検出（フォールバック + 半径推定用）
+  // スケール検出（半径推定 + スケール基準用）
   onProgress?.({ stage: "スケール検出中...", percent: 20 });
   const scale = detectScale(gray, cv);
-  const moduleScale = detectModuleScale(gray, cv, scale);
+  const moduleScale = scale * 0.65;
   const estimatedRadius = Math.round(40 * scale);
   const lowResInput = canvas.width < 500 || estimatedRadius < 12;
-  console.log(
-    "[OCR] scale:",
-    scale,
-    "estimatedRadius:",
-    estimatedRadius,
-    "lowResInput:",
-    lowResInput,
-  );
-
   // HoughCircles用にmedianBlur適用
   const blurred = new cv.Mat();
   cv.medianBlur(gray, blurred, 5);
@@ -2576,29 +2352,19 @@ export async function processScreenshot(
   onProgress?.({ stage: "アイコン位置検出中...", percent: 30 });
   const circles = detectCircles(blurred, cv, estimatedRadius);
   blurred.delete();
-  console.log("[OCR] HoughCircles candidates:", circles.length);
-
   let detections: Detection[];
 
   if (!lowResInput && circles.length >= 3) {
     // グリッドスロット構築
     onProgress?.({ stage: "グリッド解析中...", percent: 40 });
-    const slots = buildGridSlots(circles, 3);
+    const slots = buildGridSlots(circles, 3, imgHeight, estimatedRadius);
 
     if (slots.length > 0) {
-      // 局所分類（edge + gray + hist + pHash）
+      // 局所分類（gray_only方式）
       onProgress?.({ stage: "アイコン分類中...", percent: 50 });
       const classified = classifyAllSlots(grayEq, edgeMat, grayCl, slots, scale, cv);
-      console.log(
-        "[OCR] Hough+classify detections:",
-        classified.detections.length,
-        `attempted=${classified.attemptedSlots}`,
-        `avgMargin=${classified.avgMargin.toFixed(3)}`,
-        `lowConfidence=${classified.lowConfidenceCount}`,
-      );
 
       if (shouldFallbackToTemplateMatching(slots, classified)) {
-        console.log("[OCR] classification weak, falling back to template matching");
         const fallback = matchAllStatIcons(edgeMat, cv, scale);
         const fallbackIconSize = Math.round(80 * scale);
         const fallbackFilled = fillGridGaps(
@@ -2617,23 +2383,16 @@ export async function processScreenshot(
       }
     } else {
       // スロット構築失敗 → フォールバック
-      console.log("[OCR] grid slot construction failed, falling back");
       detections = matchAllStatIcons(edgeMat, cv, scale);
       const iconSize = Math.round(80 * scale);
       detections = fillGridGaps(detections, edgeMat, cv, scale, iconSize);
     }
   } else {
     // HoughCircles候補不足 → フォールバック（既存テンプレートマッチング方式）
-    console.log(
-      "[OCR] skipping Hough path, falling back to template matching",
-      `lowRes=${lowResInput}`,
-      `circles=${circles.length}`,
-    );
     onProgress?.({ stage: "アイコン検出中（フォールバック）...", percent: 40 });
     detections = matchAllStatIcons(edgeMat, cv, scale);
     const iconSize = Math.round(80 * scale);
     detections = fillGridGaps(detections, edgeMat, cv, scale, iconSize);
-    console.log("[OCR] fallback detections:", detections.length);
   }
 
   if (detections.length === 0) {
@@ -2741,10 +2500,6 @@ export async function processScreenshot(
             }
 
             const best = kept[0];
-            console.log(
-              `[OCR] gap fill: inserted row at y=${Math.round(ins.y)} ` +
-                `found ${kept.length} icons, best partId=${best.partId} score=${best.score.toFixed(3)} at (${best.x},${best.y})`,
-            );
             const newRow: ModuleRow = {
               y: ins.y,
               stats: kept.slice(0, 3).map((d) => ({
@@ -2760,21 +2515,12 @@ export async function processScreenshot(
             newRow.stats.sort((a, b) => a.x - b.x);
             rows.splice(ins.index, 0, newRow);
           } else {
-            console.log(
-              `[OCR] gap fill: no icons found at y=${Math.round(ins.y)}, inserting empty row`,
-            );
             rows.splice(ins.index, 0, { y: ins.y, stats: [] });
           }
         }
       }
     }
   }
-
-  console.log(
-    "[OCR] rows:",
-    rows.length,
-    rows.map((r) => r.stats.length),
-  );
 
   // モジュールアイコン分類（各行の左側を検索）
   onProgress?.({ stage: "モジュールアイコン検出中...", percent: 55 });
@@ -2787,12 +2533,6 @@ export async function processScreenshot(
   );
   // スマートアライメント: 列数が期待より多い行で左寄せ/右寄せを最適化
   const anchoredRows = applySmartAlignment(prunedRows, moduleIcons);
-  console.log(
-    "[OCR] rows after module anchor + smart alignment:",
-    anchoredRows.length,
-    anchoredRows.map((r) => r.stats.length),
-  );
-
   grayEq.delete();
   edgeMat.delete();
   grayCl.delete();
@@ -2834,13 +2574,6 @@ export async function processScreenshot(
           };
         }
       >;
-      console.log(
-        `[OCR] row ${i + 1}: icons=${anchoredRows[i].stats.length} ocrStats=${stats.length}`,
-        stats.map(
-          (s) =>
-            `${s.part_id}:${s.value}${s._ocrDebug?.hadPlus ? "(+)" : "(-)"}`,
-        ),
-      );
       if (stats.length > 0) {
         const modIcon = moduleIcons[i];
         modules.push({

@@ -1,12 +1,15 @@
 import {
-  STAT_NAMES, STAT_ICONS, ALL_STAT_IDS, ALL_STAT_NAMES,
-  MODULE_TYPES, statName, statIdByName, configIdToType, configIdToIcon,
+  STAT_ICONS, ALL_STAT_IDS, configIdToIcon,
 } from "@shared/stats";
 import type {
   Combination, CombinationModule, ModuleInput, OptimizeRequest,
   OptimizeResponse, StatEntry, StatTotal,
 } from "@shared/types";
 import { processScreenshot } from "./ocr";
+import {
+  t, fmt, statName, applyI18n, initLang, saveLang, getSavedLang,
+  JA, migrateStatNamesToIds,
+} from "./i18n";
 
 // --- Helpers ---
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -15,7 +18,6 @@ function positionFlyout(fl: HTMLElement, anchor: HTMLElement) {
   const r = anchor.getBoundingClientRect();
   const vw = window.innerWidth;
   let left = r.left;
-  // Ensure flyout stays within viewport on mobile
   fl.style.top = r.bottom + 4 + "px";
   if (vw <= 600) {
     fl.style.left = "8px";
@@ -36,7 +38,6 @@ function statIcon(partId: number): string {
 }
 
 type Rarity = "orange" | "gold" | "purple" | "blue";
-const RARITY_LABEL: Record<Rarity, string> = { orange: "橙", gold: "金", purple: "紫", blue: "青" };
 const RARITY_ORDER: Record<Rarity, number> = { orange: 4, gold: 3, purple: 2, blue: 1 };
 
 function qualityToRarity(q: number | null): Rarity {
@@ -55,7 +56,6 @@ function moduleIconHtml(configId: number | null): string {
   </div>`;
 }
 
-// config_id = 5500000 + typeDigit*100 + raritySub
 function configIdToComponents(configId: number | null): { typeDigit: number; raritySub: number } | null {
   if (configId == null) return null;
   const lower = configId % 1000;
@@ -68,24 +68,20 @@ function buildConfigId(typeDigit: number, raritySub: number): number {
 
 const RARITY_SUB_TO_QUALITY: Record<number, number> = { 1: 2, 2: 3, 3: 4, 4: 4 };
 
-const STAT_NAME_TO_ID: Record<string, number> = Object.fromEntries(
-  Object.entries(STAT_NAMES).map(([id, name]) => [name, Number(id)]),
-);
+const MODULE_TYPE_PREFIXES = [55001, 55002, 55003] as const;
 
 // --- State ---
 let modules: ModuleInput[] = [];
 
-// Filter / sort
 let filterRarities: Rarity[] = [];
-let filterStats: string[] = [];
-let filterTypes: string[] = [];
+let filterStats: number[] = [];
+let filterTypes: number[] = [];
 let filterMode: "and" | "or" = "and";
 let sortKeys: { k: string; d: number }[] = [];
 
-// Optimizer
-let optRequired: string[] = [];
-let optDesired: string[] = [];
-let optExcluded: string[] = [];
+let optRequired: number[] = [];
+let optDesired: number[] = [];
+let optExcluded: number[] = [];
 let minQuality = 3;
 
 // --- Multi Web Worker ---
@@ -106,25 +102,52 @@ function loadModulesFromStorage() {
   } catch { /* ignore */ }
 }
 
-// ========== Grid rendering (ported from desktop) ==========
+// ========== Shared select option builders ==========
+
+function typeSelectOptions(selectedDigit: number): string {
+  return MODULE_TYPE_PREFIXES.map((p) => {
+    const digit = p % 10;
+    return `<option value="${digit}"${digit === selectedDigit ? " selected" : ""}>${t.module_types[String(p)]}</option>`;
+  }).join("");
+}
+
+function raritySubSelectOptions(selectedSub: number): string {
+  const opts = [
+    { value: 1, key: "rarity_sub_blue" },
+    { value: 2, key: "rarity_sub_purple" },
+    { value: 3, key: "rarity_sub_gold_a" },
+    { value: 4, key: "rarity_sub_gold_b" },
+  ];
+  return opts.map((o) => `<option value="${o.value}"${o.value === selectedSub ? " selected" : ""}>${t.ui[o.key]}</option>`).join("");
+}
+
+function statSelectOptions(selectedId?: number): string {
+  return ALL_STAT_IDS.map((id) =>
+    `<option value="${id}"${id === selectedId ? " selected" : ""}>${statName(id)}</option>`
+  ).join("");
+}
+
+// ========== Grid rendering ==========
 
 function renderGrid() {
   let ms = [...modules];
 
-  // Filters
   if (filterRarities.length > 0) {
     ms = ms.filter((m) => filterRarities.includes(qualityToRarity(m.quality)));
   }
   if (filterTypes.length > 0) {
-    ms = ms.filter((m) => filterTypes.some((t) => configIdToType(m.config_id) === t));
+    ms = ms.filter((m) => {
+      if (m.config_id == null) return false;
+      const prefix = Math.floor(m.config_id / 100);
+      return filterTypes.includes(prefix);
+    });
   }
   if (filterStats.length > 0) {
     ms = filterMode === "and"
-      ? ms.filter((m) => filterStats.every((f) => m.stats.some((s) => statName(s.part_id) === f)))
-      : ms.filter((m) => filterStats.some((f) => m.stats.some((s) => statName(s.part_id) === f)));
+      ? ms.filter((m) => filterStats.every((id) => m.stats.some((s) => s.part_id === id)))
+      : ms.filter((m) => filterStats.some((id) => m.stats.some((s) => s.part_id === id)));
   }
 
-  // Sort
   ms.sort((a, b) => {
     for (const s of sortKeys) {
       let va: number, vb: number;
@@ -135,8 +158,9 @@ function renderGrid() {
         va = a.stats.reduce((sum, x) => sum + x.value, 0);
         vb = b.stats.reduce((sum, x) => sum + x.value, 0);
       } else {
-        va = a.stats.find((x) => statName(x.part_id) === s.k)?.value ?? 0;
-        vb = b.stats.find((x) => statName(x.part_id) === s.k)?.value ?? 0;
+        const partId = Number(s.k);
+        va = a.stats.find((x) => x.part_id === partId)?.value ?? 0;
+        vb = b.stats.find((x) => x.part_id === partId)?.value ?? 0;
       }
       if (va < vb) return s.d;
       if (va > vb) return -s.d;
@@ -145,11 +169,21 @@ function renderGrid() {
   });
 
   const g = $<HTMLDivElement>("grid");
-  g.innerHTML = "";
+  g.textContent = "";
 
   if (!ms.length) {
-    g.innerHTML = '<div class="empty"><div style="font-size:24px;opacity:0.25">○</div><div style="font-size:13px">モジュールがありません</div></div>';
-    $("sb-n").textContent = "0 モジュール";
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    const icon = document.createElement("div");
+    icon.style.cssText = "font-size:24px;opacity:0.25";
+    icon.textContent = "\u25CB";
+    const msg = document.createElement("div");
+    msg.style.fontSize = "13px";
+    msg.textContent = t.ui.no_modules;
+    empty.appendChild(icon);
+    empty.appendChild(msg);
+    g.appendChild(empty);
+    $("sb-n").textContent = fmt(t.ui.n_modules, { count: 0 });
     $("sb-i").textContent = "";
     return;
   }
@@ -159,34 +193,66 @@ function renderGrid() {
     c.className = "card";
     c.style.animationDelay = `${Math.min(i, 16) * 14}ms`;
     const r = qualityToRarity(m.quality);
-    c.innerHTML = `
-      <div class="card-head">
-        ${moduleIconHtml(m.config_id)}
-        <span class="rbadge ${r}">${RARITY_LABEL[r]}</span>
-        <button class="card-edit-btn" data-uuid="${m.uuid}" title="編集">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
-        </button>
-      </div>
-      <div class="divider"></div>
-      <div class="stats">${m.stats.map((s) => `
-        <div class="srow">
-          ${statIcon(s.part_id)}<span class="sname">${statName(s.part_id)}</span>
-          <div class="sbar-w"><div class="sbar" style="width:${s.value * 10}%"></div></div>
-          <span class="sval">+${s.value}</span>
-        </div>`).join("")}
-      </div>`;
-    c.querySelector<HTMLButtonElement>(".card-edit-btn")!.onclick = (e) => {
-      e.stopPropagation();
-      openEditModal(m.uuid);
-    };
+
+    // card-head
+    const head = document.createElement("div");
+    head.className = "card-head";
+    const iconWrap = document.createElement("span");
+    iconWrap.innerHTML = moduleIconHtml(m.config_id);
+    head.appendChild(iconWrap.firstElementChild || document.createTextNode(""));
+    const badge = document.createElement("span");
+    badge.className = `rbadge ${r}`;
+    badge.textContent = t.rarity[r];
+    head.appendChild(badge);
+    const editBtn = document.createElement("button");
+    editBtn.className = "card-edit-btn";
+    editBtn.title = t.ui.modal_edit;
+    editBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
+    editBtn.onclick = (e) => { e.stopPropagation(); openEditModal(m.uuid); };
+    head.appendChild(editBtn);
+    c.appendChild(head);
+
+    const divider = document.createElement("div");
+    divider.className = "divider";
+    c.appendChild(divider);
+
+    const statsDiv = document.createElement("div");
+    statsDiv.className = "stats";
+    m.stats.forEach((s) => {
+      const srow = document.createElement("div");
+      srow.className = "srow";
+      const iconImg = statIcon(s.part_id);
+      if (iconImg) {
+        const tmp = document.createElement("span");
+        tmp.innerHTML = iconImg;
+        if (tmp.firstElementChild) srow.appendChild(tmp.firstElementChild);
+      }
+      const sname = document.createElement("span");
+      sname.className = "sname";
+      sname.textContent = statName(s.part_id);
+      srow.appendChild(sname);
+      const sbarW = document.createElement("div");
+      sbarW.className = "sbar-w";
+      const sbar = document.createElement("div");
+      sbar.className = "sbar";
+      sbar.style.width = `${s.value * 10}%`;
+      sbarW.appendChild(sbar);
+      srow.appendChild(sbarW);
+      const sval = document.createElement("span");
+      sval.className = "sval";
+      sval.textContent = `+${s.value}`;
+      srow.appendChild(sval);
+      statsDiv.appendChild(srow);
+    });
+    c.appendChild(statsDiv);
     g.appendChild(c);
   });
 
-  $("sb-n").textContent = `${ms.length} モジュール`;
+  $("sb-n").textContent = fmt(t.ui.n_modules, { count: ms.length });
   const info: string[] = [];
   const filterCount = filterRarities.length + filterTypes.length + filterStats.length;
-  if (filterCount) info.push(`絞込 ${filterCount}件(${filterMode.toUpperCase()})`);
-  $("sb-i").textContent = info.join("　");
+  if (filterCount) info.push(`${fmt(t.ui.filter_info, { count: filterCount })}(${filterMode.toUpperCase()})`);
+  $("sb-i").textContent = info.join("\u3000");
 }
 
 // ========== Filter flyout ==========
@@ -194,7 +260,7 @@ function renderGrid() {
 function updateFilterBtnLabel() {
   const count = filterRarities.length + filterTypes.length + filterStats.length;
   const btn = $("filter-btn");
-  btn.textContent = count > 0 ? `${count}件選択` : "未選択";
+  btn.textContent = count > 0 ? fmt(t.ui.filter_count, { count }) : t.ui.filter_none;
   btn.classList.toggle("has-items", count > 0);
 }
 
@@ -223,11 +289,7 @@ function addFlySection(
   });
 }
 
-const RARITY_FILTERS: { label: string; value: Rarity }[] = [
-  { label: "金", value: "gold" },
-  { label: "紫", value: "purple" },
-  { label: "青", value: "blue" },
-];
+const RARITY_FILTER_VALUES: Rarity[] = ["gold", "purple", "blue"];
 
 function openFilterMultiFly(anchor: HTMLElement) {
   const fl = $("fly-filter");
@@ -236,30 +298,31 @@ function openFilterMultiFly(anchor: HTMLElement) {
   fl.innerHTML = "";
   const refresh = () => { updateFilterBtnLabel(); renderGrid(); };
 
-  addFlySection(fl, "レアリティ",
-    RARITY_FILTERS.map((r) => ({ label: r.label, checked: filterRarities.includes(r.value) })),
+  addFlySection(fl, t.ui.fly_rarity,
+    RARITY_FILTER_VALUES.map((r) => ({ label: t.rarity[r], checked: filterRarities.includes(r) })),
     (i, checked) => {
-      const val = RARITY_FILTERS[i].value;
+      const val = RARITY_FILTER_VALUES[i];
       if (checked) filterRarities.push(val);
       else { const idx = filterRarities.indexOf(val); if (idx >= 0) filterRarities.splice(idx, 1); }
       refresh();
     },
   );
 
-  addFlySection(fl, "型",
-    MODULE_TYPES.map((t) => ({ label: t, checked: filterTypes.includes(t) })),
+  const typeEntries = MODULE_TYPE_PREFIXES.map((p) => ({ prefix: p, label: t.module_types[String(p)] ?? "" }));
+  addFlySection(fl, t.ui.fly_type,
+    typeEntries.map((te) => ({ label: te.label, checked: filterTypes.includes(te.prefix) })),
     (i, checked) => {
-      const val = MODULE_TYPES[i];
+      const val = typeEntries[i].prefix;
       if (checked) filterTypes.push(val);
       else { const idx = filterTypes.indexOf(val); if (idx >= 0) filterTypes.splice(idx, 1); }
       refresh();
     },
   );
 
-  addFlySection(fl, "ステータス",
-    ALL_STAT_NAMES.map((n) => ({ label: n, checked: filterStats.includes(n) })),
+  addFlySection(fl, t.ui.fly_stat,
+    ALL_STAT_IDS.map((id) => ({ label: statName(id), checked: filterStats.includes(id) })),
     (i, checked) => {
-      const val = ALL_STAT_NAMES[i];
+      const val = ALL_STAT_IDS[i];
       if (checked) filterStats.push(val);
       else { const idx = filterStats.indexOf(val); if (idx >= 0) filterStats.splice(idx, 1); }
       refresh();
@@ -275,26 +338,35 @@ function openFilterMultiFly(anchor: HTMLElement) {
 
 function renderSChips() {
   const c = $("schips");
-  c.innerHTML = "";
+  c.textContent = "";
   sortKeys.forEach((s) => {
-    const lbl = s.k === "rarity" ? "レアリティ" : s.k === "total" ? "合計値" : s.k;
+    const lbl = s.k === "rarity" ? t.ui.sort_rarity : s.k === "total" ? t.ui.sort_total : statName(Number(s.k));
     const el = document.createElement("div");
     el.className = "schip on";
-    el.innerHTML = `<span>${lbl}</span><span class="arr">${s.d === 1 ? "\u2193" : "\u2191"}</span><button class="schip-rm">\u00d7</button>`;
-    el.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).classList.contains("schip-rm")) return;
-      s.d *= -1;
-      renderSChips();
-      renderGrid();
-    });
-    const rm = el.querySelector<HTMLButtonElement>(".schip-rm");
-    if (rm) rm.onclick = (e) => {
+    const labelSpan = document.createElement("span");
+    labelSpan.textContent = lbl;
+    el.appendChild(labelSpan);
+    const arrSpan = document.createElement("span");
+    arrSpan.className = "arr";
+    arrSpan.textContent = s.d === 1 ? "\u2193" : "\u2191";
+    el.appendChild(arrSpan);
+    const rm = document.createElement("button");
+    rm.className = "schip-rm";
+    rm.textContent = "\u00d7";
+    rm.onclick = (e) => {
       e.stopPropagation();
       const idx = sortKeys.indexOf(s);
       if (idx >= 0) sortKeys.splice(idx, 1);
       renderSChips();
       renderGrid();
     };
+    el.appendChild(rm);
+    el.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).classList.contains("schip-rm")) return;
+      s.d *= -1;
+      renderSChips();
+      renderGrid();
+    });
     c.appendChild(el);
   });
 }
@@ -334,9 +406,9 @@ const OPT_RESULTS_KEY = "opt-last-results";
 
 interface OptPattern {
   name: string;
-  required: string[];
-  desired: string[];
-  excluded: string[];
+  required: number[];
+  desired: number[];
+  excluded: number[];
   quality: number;
 }
 
@@ -352,9 +424,9 @@ function restoreOptState() {
   if (!raw) return;
   try {
     const s = JSON.parse(raw);
-    if (Array.isArray(s.required)) optRequired = s.required.filter((n: string) => ALL_STAT_NAMES.includes(n));
-    if (Array.isArray(s.desired)) optDesired = s.desired.filter((n: string) => ALL_STAT_NAMES.includes(n));
-    if (Array.isArray(s.excluded)) optExcluded = s.excluded.filter((n: string) => ALL_STAT_NAMES.includes(n));
+    if (Array.isArray(s.required)) optRequired = migrateStatNamesToIds(s.required).filter((id) => ALL_STAT_IDS.includes(id));
+    if (Array.isArray(s.desired)) optDesired = migrateStatNamesToIds(s.desired).filter((id) => ALL_STAT_IDS.includes(id));
+    if (Array.isArray(s.excluded)) optExcluded = migrateStatNamesToIds(s.excluded).filter((id) => ALL_STAT_IDS.includes(id));
     if (s.quality) $<HTMLSelectElement>("opt-quality").value = String(s.quality);
   } catch { /* ignore */ }
 }
@@ -362,7 +434,15 @@ function restoreOptState() {
 function getPatterns(): OptPattern[] {
   const raw = localStorage.getItem(OPT_PATTERNS_KEY);
   if (!raw) return [];
-  try { return JSON.parse(raw); } catch { return []; }
+  try {
+    const patterns: OptPattern[] = JSON.parse(raw);
+    return patterns.map((p) => ({
+      ...p,
+      required: migrateStatNamesToIds(p.required),
+      desired: migrateStatNamesToIds(p.desired),
+      excluded: migrateStatNamesToIds(p.excluded),
+    }));
+  } catch { return []; }
 }
 
 function savePatterns(patterns: OptPattern[]) {
@@ -372,7 +452,11 @@ function savePatterns(patterns: OptPattern[]) {
 function renderPatternSelect() {
   const sel = $<HTMLSelectElement>("pattern-select");
   const patterns = getPatterns();
-  sel.innerHTML = '<option value="">-- 選択 --</option>';
+  sel.textContent = "";
+  const defaultOpt = document.createElement("option");
+  defaultOpt.value = "";
+  defaultOpt.textContent = t.ui.pattern_placeholder;
+  sel.appendChild(defaultOpt);
   patterns.forEach((p, i) => {
     const opt = document.createElement("option");
     opt.value = String(i);
@@ -393,9 +477,9 @@ function loadPattern(idx: number) {
   const patterns = getPatterns();
   const p = patterns[idx];
   if (!p) return;
-  optRequired = p.required.filter((n) => ALL_STAT_NAMES.includes(n));
-  optDesired = p.desired.filter((n) => ALL_STAT_NAMES.includes(n));
-  optExcluded = p.excluded.filter((n) => ALL_STAT_NAMES.includes(n));
+  optRequired = p.required.filter((id) => ALL_STAT_IDS.includes(id));
+  optDesired = p.desired.filter((id) => ALL_STAT_IDS.includes(id));
+  optExcluded = p.excluded.filter((id) => ALL_STAT_IDS.includes(id));
   if (p.quality) $<HTMLSelectElement>("opt-quality").value = String(p.quality);
   updateOptBtnLabel("req");
   updateOptBtnLabel("des");
@@ -408,7 +492,7 @@ function updateOptBtnLabel(category: "req" | "des" | "excl") {
   const btnId = { req: "opt-btn-req", des: "opt-btn-des", excl: "opt-btn-excl" }[category];
   const items = { req: optRequired, des: optDesired, excl: optExcluded }[category];
   const btn = $(btnId);
-  btn.textContent = items.length > 0 ? `${items.length}件選択` : "未選択";
+  btn.textContent = items.length > 0 ? fmt(t.ui.filter_count, { count: items.length }) : t.ui.filter_none;
   btn.classList.toggle("has-items", items.length > 0);
 }
 
@@ -424,9 +508,9 @@ function openOptMultiFly(anchor: HTMLElement, category: "req" | "des" | "excl") 
   const otherSet = new Set(others);
 
   fl.innerHTML = "";
-  ALL_STAT_NAMES.forEach((name) => {
-    const isSelected = current.includes(name);
-    const isOther = otherSet.has(name);
+  ALL_STAT_IDS.forEach((id) => {
+    const isSelected = current.includes(id);
+    const isOther = otherSet.has(id);
     const el = document.createElement("label");
     el.className = "fitem-check" + (isOther ? " dim" : "");
     const cb = document.createElement("input");
@@ -435,15 +519,15 @@ function openOptMultiFly(anchor: HTMLElement, category: "req" | "des" | "excl") 
     cb.disabled = isOther;
     if (!isOther) {
       cb.onchange = () => {
-        if (cb.checked) current.push(name);
-        else { const idx = current.indexOf(name); if (idx >= 0) current.splice(idx, 1); }
+        if (cb.checked) current.push(id);
+        else { const idx = current.indexOf(id); if (idx >= 0) current.splice(idx, 1); }
         updateOptBtnLabel(category);
         updateOptRunBtn();
         saveOptState();
       };
     }
     const span = document.createElement("span");
-    span.textContent = name;
+    span.textContent = statName(id);
     el.appendChild(cb);
     el.appendChild(span);
     fl.appendChild(el);
@@ -465,7 +549,7 @@ let optOverlay: HTMLElement | null = null;
 function runOptimize() {
   const btn = $<HTMLButtonElement>("opt-run");
   btn.classList.add("loading");
-  btn.textContent = "計算中...";
+  btn.textContent = t.ui.btn_running;
   $("opt-empty").style.display = "none";
   $("opt-results").style.display = "none";
 
@@ -482,9 +566,9 @@ function runOptimize() {
   for (let i = 0; i < numWorkers; i++) {
     const speedMode = $<HTMLSelectElement>("opt-speed").value;
     const req: OptimizeRequest = {
-      required_stats: optRequired.map((n) => STAT_NAME_TO_ID[n]).filter(Boolean),
-      desired_stats: optDesired.map((n) => STAT_NAME_TO_ID[n]).filter(Boolean),
-      excluded_stats: optExcluded.map((n) => STAT_NAME_TO_ID[n]).filter(Boolean),
+      required_stats: [...optRequired],
+      desired_stats: [...optDesired],
+      excluded_stats: [...optExcluded],
       min_quality: quality,
       speed_mode: speedMode as OptimizeRequest["speed_mode"],
       worker_id: i,
@@ -524,7 +608,7 @@ function finishOptimize() {
   optOverlay = null;
   const btn = $<HTMLButtonElement>("opt-run");
   btn.classList.remove("loading");
-  btn.textContent = "最適化実行";
+  btn.textContent = t.ui.btn_run;
 }
 
 // ========== Opt Results ==========
@@ -536,49 +620,82 @@ function renderOptResults(res: OptimizeResponse) {
   if (res.combinations.length === 0) {
     results.style.display = "none";
     empty.style.display = "flex";
-    empty.innerHTML = '<div style="font-size:28px;opacity:0.22">○</div><div>条件に合う組み合わせが見つかりませんでした</div>';
+    empty.textContent = "";
+    const emptyIcon = document.createElement("div");
+    emptyIcon.style.cssText = "font-size:28px;opacity:0.22";
+    emptyIcon.textContent = "\u25CB";
+    const emptyMsg = document.createElement("div");
+    emptyMsg.textContent = t.ui.no_result;
+    empty.appendChild(emptyIcon);
+    empty.appendChild(emptyMsg);
     try { localStorage.setItem(OPT_RESULTS_KEY, JSON.stringify(res)); } catch { /* quota */ }
     return;
   }
 
   empty.style.display = "none";
   results.style.display = "flex";
-  results.innerHTML = "";
+  results.textContent = "";
 
   const info = document.createElement("div");
   info.className = "opt-info";
-  info.textContent = `${res.total_modules}件中 ${res.filtered_count}件のモジュールから探索 — 上位${res.combinations.length}件`;
+  info.textContent = fmt(t.ui.result_info, { total: res.total_modules, filtered: res.filtered_count, count: res.combinations.length });
   results.appendChild(info);
-
 
   res.combinations.forEach((comb) => {
     const card = document.createElement("div");
     card.className = "opt-card";
     card.style.animationDelay = `${(comb.rank - 1) * 30}ms`;
     const rankClass = comb.rank === 1 ? "r1" : comb.rank === 2 ? "r2" : comb.rank === 3 ? "r3" : "";
-    const statTags = comb.stat_totals
+
+    const rankDiv = document.createElement("div");
+    rankDiv.className = `opt-rank ${rankClass}`;
+    rankDiv.textContent = `#${comb.rank}`;
+    card.appendChild(rankDiv);
+
+    const bodyDiv = document.createElement("div");
+    bodyDiv.className = "opt-card-body";
+    const statsDiv = document.createElement("div");
+    statsDiv.className = "opt-card-stats";
+
+    comb.stat_totals
       .slice()
       .sort((a, b) => {
         const aP = a.is_required ? 0 : a.is_desired ? 1 : 2;
         const bP = b.is_required ? 0 : b.is_desired ? 1 : 2;
         return aP !== bP ? aP - bP : b.total - a.total;
       })
-      .map((st) => {
+      .forEach((st) => {
         const cls = st.is_required ? "req" : st.is_desired ? "des" : "other";
-        return `<span class="opt-stat-tag ${cls}">${statIcon(st.part_id)}<span>${statName(st.part_id)}</span> <span class="bp">+${st.total}</span></span>`;
-      }).join("");
+        const tag = document.createElement("span");
+        tag.className = `opt-stat-tag ${cls}`;
+        const iconStr = statIcon(st.part_id);
+        if (iconStr) {
+          const tmp = document.createElement("span");
+          tmp.innerHTML = iconStr;
+          if (tmp.firstElementChild) tag.appendChild(tmp.firstElementChild);
+        }
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = statName(st.part_id);
+        tag.appendChild(nameSpan);
+        const bp = document.createElement("span");
+        bp.className = "bp";
+        bp.textContent = ` +${st.total}`;
+        tag.appendChild(bp);
+        statsDiv.appendChild(tag);
+      });
 
-    card.innerHTML = `
-      <div class="opt-rank ${rankClass}">#${comb.rank}</div>
-      <div class="opt-card-body">
-        <div class="opt-card-stats">${statTags}</div>
-      </div>
-      <div class="opt-card-plus">合計: ${comb.total_plus}</div>`;
+    bodyDiv.appendChild(statsDiv);
+    card.appendChild(bodyDiv);
+
+    const plusDiv = document.createElement("div");
+    plusDiv.className = "opt-card-plus";
+    plusDiv.textContent = fmt(t.ui.combo_total, { n: comb.total_plus });
+    card.appendChild(plusDiv);
+
     card.onclick = () => openModal(comb);
     results.appendChild(card);
   });
 
-  // Save results to localStorage
   try { localStorage.setItem(OPT_RESULTS_KEY, JSON.stringify(res)); } catch { /* quota */ }
 }
 
@@ -598,23 +715,64 @@ function restoreOptResults() {
 function openModal(comb: Combination) {
   const bd = $("modal-bd");
   const body = $("modal-body");
-  $("modal-title").textContent = `#${comb.rank} 組み合わせ詳細`;
+  $("modal-title").textContent = fmt(t.ui.modal_rank_title, { rank: comb.rank });
 
-  const modsHtml = comb.modules.map((m) => {
-    const statsHtml = m.stats.map((s) => `
-      <div class="srow">
-        ${statIcon(s.part_id)}<span class="sname">${statName(s.part_id)}</span>
-        <div class="sbar-w"><div class="sbar" style="width:${s.value * 10}%"></div></div>
-        <span class="sval">+${s.value}</span>
-      </div>`).join("");
+  body.textContent = "";
+
+  // Used modules section
+  const modsSection = document.createElement("div");
+  modsSection.className = "modal-section";
+  const modsTitle = document.createElement("div");
+  modsTitle.className = "modal-section-title";
+  modsTitle.textContent = t.ui.modal_used_modules;
+  modsSection.appendChild(modsTitle);
+
+  const modsWrap = document.createElement("div");
+  modsWrap.className = "modal-modules";
+  comb.modules.forEach((m) => {
+    const modDiv = document.createElement("div");
+    modDiv.className = "modal-mod";
+    const headDiv = document.createElement("div");
+    headDiv.className = "modal-mod-head";
     const origMod = modules.find((om) => om.uuid === m.uuid);
-    return `
-      <div class="modal-mod">
-        <div class="modal-mod-head">${moduleIconHtml(origMod?.config_id ?? null)}</div>
-        <div class="stats">${statsHtml}</div>
-      </div>`;
-  }).join("");
+    headDiv.innerHTML = moduleIconHtml(origMod?.config_id ?? null);
+    modDiv.appendChild(headDiv);
 
+    const statsDiv = document.createElement("div");
+    statsDiv.className = "stats";
+    m.stats.forEach((s) => {
+      const srow = document.createElement("div");
+      srow.className = "srow";
+      const iconStr = statIcon(s.part_id);
+      if (iconStr) {
+        const tmp = document.createElement("span");
+        tmp.innerHTML = iconStr;
+        if (tmp.firstElementChild) srow.appendChild(tmp.firstElementChild);
+      }
+      const sname = document.createElement("span");
+      sname.className = "sname";
+      sname.textContent = statName(s.part_id);
+      srow.appendChild(sname);
+      const sbarW = document.createElement("div");
+      sbarW.className = "sbar-w";
+      const sbar = document.createElement("div");
+      sbar.className = "sbar";
+      sbar.style.width = `${s.value * 10}%`;
+      sbarW.appendChild(sbar);
+      srow.appendChild(sbarW);
+      const sval = document.createElement("span");
+      sval.className = "sval";
+      sval.textContent = `+${s.value}`;
+      srow.appendChild(sval);
+      statsDiv.appendChild(srow);
+    });
+    modDiv.appendChild(statsDiv);
+    modsWrap.appendChild(modDiv);
+  });
+  modsSection.appendChild(modsWrap);
+  body.appendChild(modsSection);
+
+  // Stat totals section
   const statTotalsMap = new Map<number, number>();
   comb.modules.forEach((m) => m.stats.forEach((s) => {
     statTotalsMap.set(s.part_id, (statTotalsMap.get(s.part_id) ?? 0) + s.value);
@@ -622,29 +780,70 @@ function openModal(comb: Combination) {
   const reqIds = new Set(comb.stat_totals.filter((st) => st.is_required).map((st) => st.part_id));
   const desIds = new Set(comb.stat_totals.filter((st) => st.is_desired).map((st) => st.part_id));
 
-  const rowsHtml = Array.from(statTotalsMap.entries())
+  const totalSection = document.createElement("div");
+  totalSection.className = "modal-section";
+  const totalTitle = document.createElement("div");
+  totalTitle.className = "modal-section-title";
+  totalTitle.textContent = t.ui.modal_stat_total + " ";
+  const totalSpan = document.createElement("span");
+  totalSpan.style.cssText = "font-weight:400;font-size:11px;color:var(--tx2);text-transform:none;letter-spacing:0";
+  totalSpan.textContent = fmt(t.ui.modal_grand_total, { n: comb.total_plus });
+  totalTitle.appendChild(totalSpan);
+  totalSection.appendChild(totalTitle);
+
+  const table = document.createElement("table");
+  table.className = "modal-table";
+  const thead = document.createElement("thead");
+  const thRow = document.createElement("tr");
+  [t.ui.modal_stat, t.ui.modal_value, t.ui.modal_category].forEach((txt) => {
+    const th = document.createElement("th");
+    th.textContent = txt;
+    thRow.appendChild(th);
+  });
+  thead.appendChild(thRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  Array.from(statTotalsMap.entries())
     .sort((a, b) => {
       const aP = reqIds.has(a[0]) ? 0 : desIds.has(a[0]) ? 1 : 2;
       const bP = reqIds.has(b[0]) ? 0 : desIds.has(b[0]) ? 1 : 2;
       return aP !== bP ? aP - bP : b[1] - a[1];
     })
-    .map(([pid, total]) => {
-      const typeTag = reqIds.has(pid) ? `<span class="type-req">メイン</span>` : desIds.has(pid) ? `<span class="type-des">サブ</span>` : "";
-      return `<tr><td>${statIcon(pid)} ${statName(pid)}</td><td class="val">+${total}</td><td>${typeTag}</td></tr>`;
-    }).join("");
+    .forEach(([pid, total]) => {
+      const tr = document.createElement("tr");
+      const tdName = document.createElement("td");
+      const iconStr = statIcon(pid);
+      if (iconStr) {
+        const tmp = document.createElement("span");
+        tmp.innerHTML = iconStr;
+        if (tmp.firstElementChild) tdName.appendChild(tmp.firstElementChild);
+      }
+      tdName.appendChild(document.createTextNode(" " + statName(pid)));
+      tr.appendChild(tdName);
+      const tdVal = document.createElement("td");
+      tdVal.className = "val";
+      tdVal.textContent = `+${total}`;
+      tr.appendChild(tdVal);
+      const tdCat = document.createElement("td");
+      if (reqIds.has(pid)) {
+        const tag = document.createElement("span");
+        tag.className = "type-req";
+        tag.textContent = t.ui.modal_main;
+        tdCat.appendChild(tag);
+      } else if (desIds.has(pid)) {
+        const tag = document.createElement("span");
+        tag.className = "type-des";
+        tag.textContent = t.ui.modal_sub;
+        tdCat.appendChild(tag);
+      }
+      tr.appendChild(tdCat);
+      tbody.appendChild(tr);
+    });
+  table.appendChild(tbody);
+  totalSection.appendChild(table);
+  body.appendChild(totalSection);
 
-  body.innerHTML = `
-    <div class="modal-section">
-      <div class="modal-section-title">使用モジュール</div>
-      <div class="modal-modules">${modsHtml}</div>
-    </div>
-    <div class="modal-section">
-      <div class="modal-section-title">ステータス合計 <span style="font-weight:400;font-size:11px;color:var(--tx2);text-transform:none;letter-spacing:0">合計 ${comb.total_plus}</span></div>
-      <table class="modal-table">
-        <thead><tr><th>ステータス</th><th>合計値</th><th>分類</th></tr></thead>
-        <tbody>${rowsHtml}</tbody>
-      </table>
-    </div>`;
   bd.classList.add("on");
 }
 
@@ -674,7 +873,6 @@ function openOcrConfirmationModal(groups: OcrGroup[]) {
 
 function closeOcrModal() {
   $("ocr-modal-bd").classList.remove("on");
-  // imageUrlはData URL（サムネイル）なのでrevokeは不要、参照を切るだけ
   pendingOcrGroups = [];
   ocrImageZoomStates = [];
   ocrCurrentPage = 0;
@@ -690,7 +888,6 @@ function updateOcrPager() {
   const info = $("ocr-pager-info");
   const prev = $("ocr-prev") as HTMLButtonElement;
   const next = $("ocr-next") as HTMLButtonElement;
-  // ページが1つだけならページャー非表示
   pager.style.display = total <= 1 ? "none" : "";
   info.textContent = `${ocrCurrentPage + 1} / ${total}`;
   prev.disabled = ocrCurrentPage <= 0;
@@ -702,45 +899,42 @@ function renderOcrModalBody() {
   const allMods = allPendingModules();
 
   if (allMods.length === 0) {
-    body.innerHTML = '<div class="ocr-empty">検出されたモジュールがありません</div>';
+    body.textContent = "";
+    const emptyDiv = document.createElement("div");
+    emptyDiv.className = "ocr-empty";
+    emptyDiv.textContent = t.ui.ocr_no_modules;
+    body.appendChild(emptyDiv);
     updateOcrPager();
     return;
   }
 
-  // ページ範囲を補正
-  if (ocrCurrentPage >= pendingOcrGroups.length) {
-    ocrCurrentPage = pendingOcrGroups.length - 1;
-  }
+  if (ocrCurrentPage >= pendingOcrGroups.length) ocrCurrentPage = pendingOcrGroups.length - 1;
   if (ocrCurrentPage < 0) ocrCurrentPage = 0;
 
   const gi = ocrCurrentPage;
   const group = pendingOcrGroups[gi];
 
-  // スクロール位置を保存
   const listEl = body.querySelector<HTMLElement>(".ocr-group-list");
   const listScrollTop = listEl ? listEl.scrollTop : 0;
 
-  body.innerHTML = "";
+  body.textContent = "";
 
   const section = document.createElement("div");
   section.className = "ocr-group";
 
-  // 画像プレビュー（ピンチ拡大可能）
   const imgWrap = document.createElement("div");
   imgWrap.className = "ocr-group-img";
   const img = document.createElement("img");
   img.src = group.imageUrl;
-  img.alt = `スクリーンショット ${gi + 1}`;
+  img.alt = fmt(t.ui.ocr_screenshot, { n: gi + 1 });
   imgWrap.appendChild(img);
   section.appendChild(imgWrap);
 
-  // ヒントテキスト
   const hint = document.createElement("div");
   hint.className = "ocr-group-hint";
-  hint.textContent = "\u203B \u30B9\u30DE\u30DB\u306F\u753B\u50CF\u3092\u30D4\u30F3\u30C1\u3067\u62E1\u5927\u8868\u793A\u3067\u304D\u307E\u3059";
+  hint.textContent = t.ui.ocr_hint;
   section.appendChild(hint);
 
-  // モジュール一覧（個別スクロール）
   const listWrap = document.createElement("div");
   listWrap.className = "ocr-group-list";
 
@@ -755,20 +949,17 @@ function renderOcrModalBody() {
     row.dataset.mi = String(mi);
 
     const statsHtml = m.stats.map((s, si) => {
-      const statOptions = ALL_STAT_IDS.map((id) =>
-        `<option value="${id}"${id === s.part_id ? " selected" : ""}>${statName(id)}</option>`
-      ).join("");
       const valueOptions = Array.from({ length: 10 }, (_, i) => i + 1)
         .map((v) => `<option value="${v}"${v === s.value ? " selected" : ""}>${v}</option>`)
         .join("");
       return `<div class="ocr-stat-row">
-        <select class="opt-select ocr-stat-name" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${statOptions}</select>
+        <select class="opt-select ocr-stat-name" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${statSelectOptions(s.part_id)}</select>
         <select class="opt-select ocr-stat-value" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${valueOptions}</select>
         <button class="ocr-stat-remove" data-gi="${gi}" data-mi="${mi}" data-si="${si}">&times;</button>
       </div>`;
     }).join("");
     const addStatHtml = m.stats.length < 3
-      ? `<button class="addbtn ocr-add-stat" data-gi="${gi}" data-mi="${mi}">+ ステータス追加</button>`
+      ? `<button class="addbtn ocr-add-stat" data-gi="${gi}" data-mi="${mi}">${t.ui.add_stat}</button>`
       : "";
 
     row.innerHTML = `
@@ -777,21 +968,12 @@ function renderOcrModalBody() {
       <div class="ocr-row-body">
         <div class="ocr-row-fields">
           <label class="form-field">
-            <span class="cmd-lbl">型</span>
-            <select class="opt-select ocr-type" data-gi="${gi}" data-mi="${mi}">
-              <option value="1"${typeDigit === 1 ? " selected" : ""}>攻撃</option>
-              <option value="2"${typeDigit === 2 ? " selected" : ""}>支援</option>
-              <option value="3"${typeDigit === 3 ? " selected" : ""}>防御</option>
-            </select>
+            <span class="cmd-lbl">${t.ui.type_label}</span>
+            <select class="opt-select ocr-type" data-gi="${gi}" data-mi="${mi}">${typeSelectOptions(typeDigit)}</select>
           </label>
           <label class="form-field">
-            <span class="cmd-lbl">レア種別</span>
-            <select class="opt-select ocr-rarity-sub" data-gi="${gi}" data-mi="${mi}">
-              <option value="1"${raritySub === 1 ? " selected" : ""}>青</option>
-              <option value="2"${raritySub === 2 ? " selected" : ""}>紫</option>
-              <option value="3"${raritySub === 3 ? " selected" : ""}>金A</option>
-              <option value="4"${raritySub === 4 ? " selected" : ""}>金B</option>
-            </select>
+            <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
+            <select class="opt-select ocr-rarity-sub" data-gi="${gi}" data-mi="${mi}">${raritySubSelectOptions(raritySub)}</select>
           </label>
         </div>
         <div class="ocr-row-stats">${statsHtml}${addStatHtml}</div>
@@ -801,20 +983,17 @@ function renderOcrModalBody() {
     listWrap.appendChild(row);
   });
 
-  // モジュール追加ボタン
   const addBtn = document.createElement("button");
   addBtn.className = "addbtn ocr-group-add";
-  addBtn.textContent = "+ モジュール追加";
+  addBtn.textContent = t.ui.add_module;
   addBtn.dataset.gi = String(gi);
   listWrap.appendChild(addBtn);
 
   section.appendChild(listWrap);
   body.appendChild(section);
 
-  // 画像ピンチズームを有効化
   setupImagePinchZoom(imgWrap, gi);
 
-  // モジュール追加
   body.querySelectorAll<HTMLButtonElement>(".ocr-group-add").forEach((btn) => {
     btn.onclick = () => {
       const g = Number(btn.dataset.gi);
@@ -828,11 +1007,9 @@ function renderOcrModalBody() {
     };
   });
 
-  // スクロール位置を復元
   const newListEl = body.querySelector<HTMLElement>(".ocr-group-list");
   if (newListEl) newListEl.scrollTop = listScrollTop;
 
-  // Bind events
   body.querySelectorAll<HTMLSelectElement>(".ocr-type, .ocr-rarity-sub").forEach((sel) => {
     sel.onchange = () => onOcrFieldChange(Number(sel.dataset.gi), Number(sel.dataset.mi));
   });
@@ -846,7 +1023,6 @@ function renderOcrModalBody() {
       pendingOcrGroups[Number(sel.dataset.gi)].modules[Number(sel.dataset.mi)].stats[Number(sel.dataset.si)].value = Number(sel.value);
     };
   });
-  // モジュール行削除
   body.querySelectorAll<HTMLButtonElement>(".ocr-row-remove").forEach((btn) => {
     btn.onclick = () => {
       const g = Number(btn.dataset.gi);
@@ -855,14 +1031,11 @@ function renderOcrModalBody() {
       if (pendingOcrGroups[g].modules.length === 0) {
         ocrImageZoomStates.splice(g, 1);
         pendingOcrGroups.splice(g, 1);
-        if (ocrCurrentPage >= pendingOcrGroups.length && ocrCurrentPage > 0) {
-          ocrCurrentPage--;
-        }
+        if (ocrCurrentPage >= pendingOcrGroups.length && ocrCurrentPage > 0) ocrCurrentPage--;
       }
       renderOcrModalBody();
     };
   });
-  // ステータス削除
   body.querySelectorAll<HTMLButtonElement>(".ocr-stat-remove").forEach((btn) => {
     btn.onclick = () => {
       const g = Number(btn.dataset.gi);
@@ -872,7 +1045,6 @@ function renderOcrModalBody() {
       renderOcrModalBody();
     };
   });
-  // ステータス追加
   body.querySelectorAll<HTMLButtonElement>(".ocr-add-stat").forEach((btn) => {
     btn.onclick = () => {
       const g = Number(btn.dataset.gi);
@@ -882,7 +1054,6 @@ function renderOcrModalBody() {
     };
   });
 
-  // ページャー更新
   updateOcrPager();
 }
 
@@ -890,13 +1061,10 @@ function onOcrFieldChange(gi: number, mi: number) {
   const m = pendingOcrGroups[gi]?.modules[mi];
   const row = document.querySelector(`.ocr-row[data-gi="${gi}"][data-mi="${mi}"]`);
   if (!row || !m) return;
-
   const typeDigit = Number((row.querySelector(".ocr-type") as HTMLSelectElement).value);
   const raritySub = Number((row.querySelector(".ocr-rarity-sub") as HTMLSelectElement).value);
-
   m.config_id = buildConfigId(typeDigit, raritySub);
   m.quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
-
   const iconEl = document.getElementById(`ocr-icon-${gi}-${mi}`);
   if (iconEl) iconEl.innerHTML = moduleIconHtml(m.config_id);
 }
@@ -942,14 +1110,11 @@ function renderEditModalBody() {
   const statRows: string[] = [];
   for (let i = 0; i < editStatCount; i++) {
     const curStat = m.stats[i];
-    const options = ALL_STAT_IDS.map((id) =>
-      `<option value="${id}"${curStat && id === curStat.part_id ? " selected" : ""}>${statName(id)}</option>`
-    ).join("");
     const valueOpts = Array.from({ length: 10 }, (_, v) => v + 1)
-      .map((v) => `<option value="${v}"${curStat && v === curStat.value ? " selected" : ""}>　${v}</option>`)
+      .map((v) => `<option value="${v}"${curStat && v === curStat.value ? " selected" : ""}>\u3000${v}</option>`)
       .join("");
     statRows.push(`<div class="stat-input-group" data-si="${i}">
-      <select class="opt-select edit-stat-name">${curStat ? "" : '<option value="">-- 選択 --</option>'}${options}</select>
+      <select class="opt-select edit-stat-name">${curStat ? "" : `<option value="">${t.ui.select_placeholder}</option>`}${statSelectOptions(curStat?.part_id)}</select>
       <select class="opt-select edit-stat-value">${valueOpts}</select>
       ${i > 0 ? `<button class="ocr-stat-remove edit-remove-stat" data-si="${i}">&times;</button>` : ""}
     </div>`);
@@ -961,33 +1126,23 @@ function renderEditModalBody() {
       <div class="ocr-row-body">
         <div class="ocr-row-fields">
           <label class="form-field">
-            <span class="cmd-lbl">型</span>
-            <select class="opt-select" id="edit-type">
-              <option value="1"${typeDigit === 1 ? " selected" : ""}>攻撃</option>
-              <option value="2"${typeDigit === 2 ? " selected" : ""}>支援</option>
-              <option value="3"${typeDigit === 3 ? " selected" : ""}>防御</option>
-            </select>
+            <span class="cmd-lbl">${t.ui.type_label}</span>
+            <select class="opt-select" id="edit-type">${typeSelectOptions(typeDigit)}</select>
           </label>
           <label class="form-field">
-            <span class="cmd-lbl">レア種別</span>
-            <select class="opt-select" id="edit-rarity-sub">
-              <option value="1"${raritySub === 1 ? " selected" : ""}>青</option>
-              <option value="2"${raritySub === 2 ? " selected" : ""}>紫</option>
-              <option value="3"${raritySub === 3 ? " selected" : ""}>金A</option>
-              <option value="4"${raritySub === 4 ? " selected" : ""}>金B</option>
-            </select>
+            <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
+            <select class="opt-select" id="edit-rarity-sub">${raritySubSelectOptions(raritySub)}</select>
           </label>
         </div>
         <div class="manual-stats-section">
-          <div class="cmd-lbl">ステータス</div>
+          <div class="cmd-lbl">${t.ui.stat_label}</div>
           <div id="edit-stat-rows">${statRows.join("")}</div>
-          ${editStatCount < 3 ? `<button class="addbtn" id="edit-add-stat">+ ステータス追加</button>` : ""}
+          ${editStatCount < 3 ? `<button class="addbtn" id="edit-add-stat">${t.ui.add_stat}</button>` : ""}
         </div>
       </div>
     </div>
   </div>`;
 
-  // Icon preview update on type/rarity change
   const updateIconPreview = () => {
     const td = Number($<HTMLSelectElement>("edit-type").value);
     const rs = Number($<HTMLSelectElement>("edit-rarity-sub").value);
@@ -997,7 +1152,6 @@ function renderEditModalBody() {
   $<HTMLSelectElement>("edit-type").onchange = updateIconPreview;
   $<HTMLSelectElement>("edit-rarity-sub").onchange = updateIconPreview;
 
-  // Add stat
   const addBtn = document.getElementById("edit-add-stat");
   if (addBtn) addBtn.onclick = () => {
     syncEditStatsToModule();
@@ -1009,7 +1163,6 @@ function renderEditModalBody() {
     renderEditModalBody();
   };
 
-  // Remove stat
   body.querySelectorAll<HTMLButtonElement>(".edit-remove-stat").forEach((btn) => {
     btn.onclick = () => {
       syncEditStatsToModule();
@@ -1041,7 +1194,6 @@ function syncEditStatsToModule() {
 function saveEditModule() {
   const m = modules.find((mod) => mod.uuid === editingUuid);
   if (!m) return;
-
   const typeDigit = Number($<HTMLSelectElement>("edit-type").value);
   const raritySub = Number($<HTMLSelectElement>("edit-rarity-sub").value);
   m.config_id = buildConfigId(typeDigit, raritySub);
@@ -1060,9 +1212,7 @@ function saveEditModule() {
     usedIds.add(partId);
     stats.push({ part_id: partId, value: Number(valueSelect.value) });
   }
-
   if (stats.length === 0) return;
-
   m.stats = stats;
   saveModulesToStorage();
   renderGrid();
@@ -1099,14 +1249,11 @@ function renderManualModalBody() {
 
   const statRows: string[] = [];
   for (let i = 0; i < manualStatCount; i++) {
-    const options = ALL_STAT_IDS.map((id) =>
-      `<option value="${id}">${statName(id)}</option>`
-    ).join("");
     const valueOpts = Array.from({ length: 10 }, (_, v) => v + 1)
-      .map((v) => `<option value="${v}">　${v}</option>`)
+      .map((v) => `<option value="${v}">\u3000${v}</option>`)
       .join("");
     statRows.push(`<div class="stat-input-group" data-si="${i}">
-      <select class="opt-select manual-stat-name">${i === 0 ? "" : ""}<option value="">-- 選択 --</option>${options}</select>
+      <select class="opt-select manual-stat-name"><option value="">${t.ui.select_placeholder}</option>${statSelectOptions()}</select>
       <select class="opt-select manual-stat-value">${valueOpts}</select>
       ${i > 0 ? `<button class="ocr-stat-remove manual-remove-stat" data-si="${i}">&times;</button>` : ""}
     </div>`);
@@ -1119,33 +1266,23 @@ function renderManualModalBody() {
       <div class="ocr-row-body">
         <div class="ocr-row-fields">
           <label class="form-field">
-            <span class="cmd-lbl">型</span>
-            <select class="opt-select" id="manual-type">
-              <option value="1">攻撃</option>
-              <option value="2">支援</option>
-              <option value="3">防御</option>
-            </select>
+            <span class="cmd-lbl">${t.ui.type_label}</span>
+            <select class="opt-select" id="manual-type">${typeSelectOptions(1)}</select>
           </label>
           <label class="form-field">
-            <span class="cmd-lbl">レア種別</span>
-            <select class="opt-select" id="manual-rarity-sub">
-              <option value="1">青</option>
-              <option value="2">紫</option>
-              <option value="3">金A</option>
-              <option value="4">金B</option>
-            </select>
+            <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
+            <select class="opt-select" id="manual-rarity-sub">${raritySubSelectOptions(1)}</select>
           </label>
         </div>
         <div class="manual-stats-section">
-          <div class="cmd-lbl">ステータス</div>
+          <div class="cmd-lbl">${t.ui.stat_label}</div>
           <div id="manual-stat-rows">${statRows.join("")}</div>
-          ${manualStatCount < 3 ? `<button class="addbtn" id="manual-add-stat">+ ステータス追加</button>` : ""}
+          ${manualStatCount < 3 ? `<button class="addbtn" id="manual-add-stat">${t.ui.add_stat}</button>` : ""}
         </div>
       </div>
     </div>
   </div>`;
 
-  // Icon preview update on type/rarity change
   const updateManualIconPreview = () => {
     const td = Number($<HTMLSelectElement>("manual-type").value);
     const rs = Number($<HTMLSelectElement>("manual-rarity-sub").value);
@@ -1155,11 +1292,9 @@ function renderManualModalBody() {
   $<HTMLSelectElement>("manual-type").onchange = updateManualIconPreview;
   $<HTMLSelectElement>("manual-rarity-sub").onchange = updateManualIconPreview;
 
-  // Bind add stat
   const addBtn = document.getElementById("manual-add-stat");
   if (addBtn) addBtn.onclick = () => { manualStatCount++; renderManualModalBody(); };
 
-  // Bind remove stat
   body.querySelectorAll<HTMLButtonElement>(".manual-remove-stat").forEach((btn) => {
     btn.onclick = () => { manualStatCount--; renderManualModalBody(); };
   });
@@ -1179,20 +1314,18 @@ function addManualModule() {
     const nameSelect = row.querySelector<HTMLSelectElement>(".manual-stat-name");
     const valueSelect = row.querySelector<HTMLSelectElement>(".manual-stat-value");
     if (!nameSelect || !valueSelect) continue;
-
     const partId = Number(nameSelect.value);
     if (!partId) continue;
     if (usedIds.has(partId)) {
-      showToast("ステータスが重複しています", "error");
+      showToast(t.ui.stat_duplicate, "error");
       return;
     }
     usedIds.add(partId);
-
     stats.push({ part_id: partId, value: Number(valueSelect.value) });
   }
 
   if (stats.length === 0) {
-    showToast("ステータスを1つ以上入力してください", "error");
+    showToast(t.ui.stat_required, "error");
     return;
   }
 
@@ -1207,9 +1340,7 @@ function addManualModule() {
   saveModulesToStorage();
   renderGrid();
   updateOptRunBtn();
-  showToast("モジュールを追加しました", "success");
-
-  // Reset form for next input
+  showToast(t.ui.module_added, "success");
   manualStatCount = 1;
   renderManualModalBody();
 }
@@ -1226,7 +1357,6 @@ function createThumbnailDataUrl(img: HTMLImageElement, maxWidth = 1920): string 
   const ctx = c.getContext("2d")!;
   ctx.drawImage(img, 0, 0, w, h);
   const dataUrl = c.toDataURL("image/webp", 0.8);
-  // Canvas即時解放
   c.width = 0;
   c.height = 0;
   return dataUrl;
@@ -1241,23 +1371,20 @@ function importScreenshot() {
     const files = input.files;
     if (!files || files.length === 0) return;
 
-    // ファイル選択直後にローディング表示（タブ+コンテンツ全体を覆う）
     const btn = $<HTMLButtonElement>("screenshot-btn");
     btn.classList.add("loading");
-    btn.textContent = "読み取り中...";
+    btn.textContent = t.ui.ocr_reading;
     const overlay = createLoadingOverlay();
     const appEl = document.querySelector(".app")!;
     const statusbar = appEl.querySelector(".statusbar")!;
     appEl.insertBefore(overlay, statusbar);
 
     const groups: OcrGroup[] = [];
-
     const progress = $("sb-progress");
     const total = files.length;
-    progress.textContent = `取り込み中（0/${total}）`;
+    progress.textContent = fmt(t.ui.ocr_progress, { current: 0, total });
     progress.style.display = "";
 
-    // Tesseractワーカーを全画像で使い回す
     const { createWorker } = await import("tesseract.js");
     const ocrWorker = await createWorker("eng");
     await ocrWorker.setParameters({
@@ -1275,35 +1402,33 @@ function importScreenshot() {
         try {
           const detected = await processScreenshot(img, undefined, ocrWorker);
           if (detected.length > 0) {
-            // サムネイルを生成して元画像のBlob URLは即解放
             const thumbnailUrl = createThumbnailDataUrl(img);
             groups.push({ imageUrl: thumbnailUrl, modules: detected });
           }
         } catch {
-          throw new Error("スクショの読み取りに失敗しました");
+          throw new Error(t.ui.ocr_failed);
         } finally {
-          // 元画像を即時解放
           URL.revokeObjectURL(imageUrl);
           img.src = "";
         }
-        progress.textContent = `取り込み中（${fi + 1}/${total}）`;
+        progress.textContent = fmt(t.ui.ocr_progress, { current: fi + 1, total });
       }
 
       overlay.remove();
       btn.classList.remove("loading");
-      btn.textContent = "スクショ取込";
+      btn.textContent = t.ui.btn_screenshot;
       progress.style.display = "none";
       if (groups.length === 0) {
-        showToast("モジュールを検出できませんでした", "error");
+        showToast(t.ui.ocr_no_detect, "error");
       } else {
         openOcrConfirmationModal(groups);
       }
     } catch (err) {
       overlay.remove();
       btn.classList.remove("loading");
-      btn.textContent = "スクショ取込";
+      btn.textContent = t.ui.btn_screenshot;
       progress.style.display = "none";
-      showToast(err instanceof Error ? err.message : "スクショの読み取りに失敗しました", "error");
+      showToast(err instanceof Error ? err.message : t.ui.ocr_failed, "error");
     } finally {
       await ocrWorker.terminate();
     }
@@ -1332,11 +1457,11 @@ function clearModules() {
   if (modules.length === 0) return;
   if (!clearPending) {
     clearPending = true;
-    $("clear-btn").textContent = "本当に削除？";
+    $("clear-btn").textContent = t.ui.clear_confirm;
     $("clear-btn").classList.add("has-items");
     setTimeout(() => {
       clearPending = false;
-      $("clear-btn").textContent = "クリア";
+      $("clear-btn").textContent = t.ui.btn_clear;
       $("clear-btn").classList.remove("has-items");
     }, 3000);
     return;
@@ -1344,11 +1469,11 @@ function clearModules() {
   clearPending = false;
   modules = [];
   localStorage.removeItem("modules");
-  $("clear-btn").textContent = "クリア";
+  $("clear-btn").textContent = t.ui.btn_clear;
   $("clear-btn").classList.remove("has-items");
   renderGrid();
   updateOptRunBtn();
-  showToast("モジュールをクリアしました", "success");
+  showToast(t.ui.clear_done, "success");
 }
 
 // ========== Toast ==========
@@ -1361,16 +1486,58 @@ function showToast(msg: string, type: "success" | "error" = "success") {
   setTimeout(() => (el.style.display = "none"), 4000);
 }
 
-// ========== Init ==========
+// ========== Sidebar ==========
 
-// ========== ページ全体のピンチズーム禁止（iOS WebKit対策） ==========
+function openSidebar() {
+  const current = getSavedLang();
+  const radio = document.querySelector<HTMLInputElement>(`#lang-options input[value="${current}"]`);
+  if (radio) radio.checked = true;
+  $("sidebar").classList.add("on");
+  $("sidebar-bd").classList.add("on");
+}
+
+function closeSidebar() {
+  $("sidebar").classList.remove("on");
+  $("sidebar-bd").classList.remove("on");
+}
+
+function switchLanguage(code: string) {
+  saveLang(code);
+  applyI18n();
+  renderGrid();
+  renderSChips();
+  renderPatternSelect();
+  updateFilterBtnLabel();
+  updateOptBtnLabel("req");
+  updateOptBtnLabel("des");
+  updateOptBtnLabel("excl");
+  // Re-render opt results if visible
+  const resultsEl = $("opt-results");
+  if (resultsEl.style.display !== "none") {
+    restoreOptResults();
+  }
+  // Update opt-empty
+  const emptyEl = $("opt-empty");
+  if (emptyEl.style.display !== "none") {
+    emptyEl.textContent = "";
+    const icon = document.createElement("div");
+    icon.style.cssText = "font-size:28px;opacity:0.22";
+    icon.textContent = "\u25C8";
+    const msg = document.createElement("div");
+    msg.textContent = t.ui.opt_empty;
+    emptyEl.appendChild(icon);
+    emptyEl.appendChild(msg);
+  }
+  document.documentElement.lang = code === "ko" ? "ko" : code === "en" ? "en" : "ja";
+}
+
+// ========== Init ==========
 
 document.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false } as any);
 document.addEventListener("gesturechange", (e) => e.preventDefault(), { passive: false } as any);
 document.addEventListener("gestureend", (e) => e.preventDefault(), { passive: false } as any);
 document.addEventListener("dblclick", (e) => e.preventDefault());
 
-// ダブルタップズーム防止（iOS WebKit は touchend の間隔で判定する）
 let lastTouchEnd = 0;
 document.addEventListener("touchend", (e) => {
   const now = Date.now();
@@ -1382,13 +1549,12 @@ document.addEventListener("touchmove", (e) => {
   if (e.touches.length > 1) e.preventDefault();
 }, { passive: false });
 
-// ========== 画像ピンチズーム（要素単位） ==========
+// ========== Image pinch zoom ==========
 
 function setupImagePinchZoom(container: HTMLElement, gi: number) {
   const img = container.querySelector("img");
   if (!img) return;
 
-  // 保存済みのズーム状態を復元
   const saved = ocrImageZoomStates[gi];
   let scale = saved?.scale ?? 1;
   let translateX = saved?.translateX ?? 0;
@@ -1403,8 +1569,6 @@ function setupImagePinchZoom(container: HTMLElement, gi: number) {
   let startMidY = 0;
   let startTranslateX = 0;
   let startTranslateY = 0;
-
-  // 1本指パン用
   let isPanning = false;
   let panStartX = 0;
   let panStartY = 0;
@@ -1419,20 +1583,12 @@ function setupImagePinchZoom(container: HTMLElement, gi: number) {
   }
 
   function clampTranslate() {
-    if (scale <= 1) {
-      translateX = 0;
-      translateY = 0;
-      return;
-    }
+    if (scale <= 1) { translateX = 0; translateY = 0; return; }
     const rect = container.getBoundingClientRect();
     const imgW = img!.naturalWidth * (rect.width / img!.naturalWidth) * scale;
     const imgH = img!.naturalHeight * (rect.width / img!.naturalWidth) * scale;
-    const maxX = 0;
-    const minX = rect.width - imgW;
-    const maxY = 0;
-    const minY = rect.height - imgH;
-    translateX = Math.min(maxX, Math.max(minX, translateX));
-    translateY = Math.min(maxY, Math.max(minY, translateY));
+    translateX = Math.min(0, Math.max(rect.width - imgW, translateX));
+    translateY = Math.min(0, Math.max(rect.height - imgH, translateY));
   }
 
   function getTouchDistance(t1: Touch, t2: Touch) {
@@ -1440,106 +1596,80 @@ function setupImagePinchZoom(container: HTMLElement, gi: number) {
   }
 
   function getTouchMid(t1: Touch, t2: Touch, rect: DOMRect) {
-    return {
-      x: (t1.clientX + t2.clientX) / 2 - rect.left,
-      y: (t1.clientY + t2.clientY) / 2 - rect.top,
-    };
+    return { x: (t1.clientX + t2.clientX) / 2 - rect.left, y: (t1.clientY + t2.clientY) / 2 - rect.top };
   }
 
   container.addEventListener("touchstart", (e) => {
     if (e.touches.length === 2) {
-      e.preventDefault();
-      e.stopPropagation();
-      isPanning = false;
+      e.preventDefault(); e.stopPropagation(); isPanning = false;
       startDistance = getTouchDistance(e.touches[0], e.touches[1]);
       startScale = scale;
       const rect = container.getBoundingClientRect();
       const mid = getTouchMid(e.touches[0], e.touches[1], rect);
-      startMidX = mid.x;
-      startMidY = mid.y;
-      startTranslateX = translateX;
-      startTranslateY = translateY;
+      startMidX = mid.x; startMidY = mid.y;
+      startTranslateX = translateX; startTranslateY = translateY;
     } else if (e.touches.length === 1 && scale > 1) {
-      // 拡大中のみ1本指パンを有効にする
       isPanning = true;
-      panStartX = e.touches[0].clientX;
-      panStartY = e.touches[0].clientY;
-      panStartTranslateX = translateX;
-      panStartTranslateY = translateY;
+      panStartX = e.touches[0].clientX; panStartY = e.touches[0].clientY;
+      panStartTranslateX = translateX; panStartTranslateY = translateY;
     }
   }, { passive: false });
 
   container.addEventListener("touchmove", (e) => {
     if (e.touches.length === 2) {
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault(); e.stopPropagation();
       const currentDistance = getTouchDistance(e.touches[0], e.touches[1]);
       const newScale = Math.min(5, Math.max(1, startScale * (currentDistance / startDistance)));
-
-      // ピンチ中心を基準にズーム
       const rect = container.getBoundingClientRect();
       const mid = getTouchMid(e.touches[0], e.touches[1], rect);
       const scaleRatio = newScale / startScale;
       translateX = mid.x - (startMidX - startTranslateX) * scaleRatio;
       translateY = mid.y - (startMidY - startTranslateY) * scaleRatio;
       scale = newScale;
-
-      clampTranslate();
-      applyTransform();
+      clampTranslate(); applyTransform();
     } else if (e.touches.length === 1 && isPanning && scale > 1) {
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault(); e.stopPropagation();
       translateX = panStartTranslateX + (e.touches[0].clientX - panStartX);
       translateY = panStartTranslateY + (e.touches[0].clientY - panStartY);
-      clampTranslate();
-      applyTransform();
+      clampTranslate(); applyTransform();
     }
   }, { passive: false });
 
   container.addEventListener("touchend", (e) => {
     if (e.touches.length === 0) {
       isPanning = false;
-      if (scale < 1.05) {
-        scale = 1;
-        translateX = 0;
-        translateY = 0;
-        applyTransform();
-      }
+      if (scale < 1.05) { scale = 1; translateX = 0; translateY = 0; applyTransform(); }
     }
   });
 
-  // ダブルタップでリセット
   let lastTap = 0;
   container.addEventListener("touchend", (e) => {
     if (e.touches.length !== 0) return;
     const now = Date.now();
-    if (now - lastTap < 300) {
-      scale = 1;
-      translateX = 0;
-      translateY = 0;
-      applyTransform();
-    }
+    if (now - lastTap < 300) { scale = 1; translateX = 0; translateY = 0; applyTransform(); }
     lastTap = now;
   });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  initLang();
+  applyI18n();
+  document.documentElement.lang = getSavedLang() === "ko" ? "ko" : getSavedLang() === "en" ? "en" : "ja";
+
   loadModulesFromStorage();
 
   // Tabs
-  document.querySelectorAll<HTMLElement>(".tab").forEach((t) => {
-    t.onclick = () => {
+  document.querySelectorAll<HTMLElement>(".tab").forEach((tab) => {
+    tab.onclick = () => {
       document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
       document.querySelectorAll(".panel").forEach((x) => x.classList.remove("active"));
-      t.classList.add("active");
-      $("panel-" + t.dataset.tab!).classList.add("active");
+      tab.classList.add("active");
+      $("panel-" + tab.dataset.tab!).classList.add("active");
     };
   });
 
-  // Filter
   $("filter-btn").onclick = (e) => openFilterMultiFly(e.currentTarget as HTMLElement);
 
-  // AND/OR toggle
   const modeBtn = $("filter-mode");
   modeBtn.onclick = () => {
     filterMode = filterMode === "and" ? "or" : "and";
@@ -1548,14 +1678,13 @@ document.addEventListener("DOMContentLoaded", () => {
     renderGrid();
   };
 
-  // Sort add
   $("add-s").onclick = (e) => {
     const ex = new Set(sortKeys.map((s) => s.k));
     const extraItems: { label: string; val: string; disabled: boolean }[] = [
-      { label: "レアリティ", val: "rarity", disabled: ex.has("rarity") },
-      { label: "合計値", val: "total", disabled: ex.has("total") },
+      { label: t.ui.sort_rarity, val: "rarity", disabled: ex.has("rarity") },
+      { label: t.ui.sort_total, val: "total", disabled: ex.has("total") },
     ];
-    const statItems = ALL_STAT_NAMES.map((s) => ({ label: s, val: s, disabled: ex.has(s) }));
+    const statItems = ALL_STAT_IDS.map((id) => ({ label: statName(id), val: String(id), disabled: ex.has(String(id)) }));
     openFly("fly-s", e.currentTarget as HTMLElement, [...extraItems, ...statItems], (it) => {
       sortKeys.push({ k: it.val, d: 1 });
       renderSChips();
@@ -1563,49 +1692,35 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   };
 
-  // Backdrop
   $("bd").onclick = closeFly;
 
-  // Optimizer panel
   $("opt-btn-req").onclick = (e) => openOptMultiFly(e.currentTarget as HTMLElement, "req");
   $("opt-btn-des").onclick = (e) => openOptMultiFly(e.currentTarget as HTMLElement, "des");
   $("opt-btn-excl").onclick = (e) => openOptMultiFly(e.currentTarget as HTMLElement, "excl");
   $("opt-quality").onchange = () => { minQuality = Number($<HTMLSelectElement>("opt-quality").value); saveOptState(); };
   $("opt-run").onclick = () => runOptimize();
 
-  // 探索速度インフォモーダル
   $("speed-info-btn").onclick = () => {
     const body = $("speed-info-body");
     while (body.firstChild) body.removeChild(body.firstChild);
     const desc = document.createElement("p");
-    desc.textContent = "最適化は手持ちモジュールから貢献度の高い順に候補を絞り込み、その中から最適な4つの組み合わせを探索します。精度の設定により、この候補数が変わります。";
+    desc.textContent = t.ui.speed_info_desc;
     desc.style.cssText = "margin:0 0 12px;font-size:13px;line-height:1.6";
     body.appendChild(desc);
-    const items = [
-      "標準 — 上位200件から探索。多くの場合、十分な精度で高速に結果が得られます。",
-      "高精度 — 上位300件から探索。より広い範囲を探索するため精度が上がりますが、時間がかかります。",
-      "最高精度 — 上位600件から探索。最も精度が高い結果が得られますが、最も時間がかかります。",
-    ];
+    const items = [t.ui.speed_info_standard, t.ui.speed_info_precise, t.ui.speed_info_most_precise];
     const ul = document.createElement("ul");
     ul.style.cssText = "margin:0 0 12px;padding-left:20px;font-size:13px;line-height:1.8";
-    items.forEach((text) => {
-      const li = document.createElement("li");
-      li.textContent = text;
-      ul.appendChild(li);
-    });
+    items.forEach((text) => { const li = document.createElement("li"); li.textContent = text; ul.appendChild(li); });
     body.appendChild(ul);
     const note = document.createElement("p");
-    note.textContent = "高精度・最高精度モードでは探索範囲が広がるため、処理に時間がかかります。通常は標準で十分な結果が得られます。";
+    note.textContent = t.ui.speed_info_note;
     note.style.cssText = "margin:0;font-size:12px;color:#e8a735;line-height:1.6";
     body.appendChild(note);
     $("speed-info-bd").classList.add("on");
   };
   $("speed-info-close").onclick = () => $("speed-info-bd").classList.remove("on");
-  $("speed-info-bd").onclick = (e) => {
-    if (e.target === $("speed-info-bd")) $("speed-info-bd").classList.remove("on");
-  };
+  $("speed-info-bd").onclick = (e) => { if (e.target === $("speed-info-bd")) $("speed-info-bd").classList.remove("on"); };
 
-  // Pattern management
   renderPatternSelect();
   $("pattern-select").onchange = () => updatePatternButtons();
   $("pattern-load").onclick = () => {
@@ -1636,6 +1751,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("patsave-ok").onclick = confirmPatsave;
   patsaveInput.addEventListener("keydown", (e) => { if (e.key === "Enter") confirmPatsave(); });
   patsaveBd.addEventListener("click", (e) => { if (e.target === patsaveBd) closePatsaveModal(); });
+
   const patdelBd = $("patdel-modal-bd");
   const closePatdelModal = () => { patdelBd.classList.remove("on"); };
   let patdelIdx = -1;
@@ -1647,7 +1763,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const p = patterns[idx];
     if (!p) return;
     patdelIdx = idx;
-    $("patdel-msg").textContent = `パターン「${p.name}」を削除しますか？`;
+    $("patdel-msg").textContent = fmt(t.ui.pattern_delete_confirm, { name: p.name });
     patdelBd.classList.add("on");
   };
   $("patdel-ok").onclick = () => {
@@ -1664,35 +1780,38 @@ document.addEventListener("DOMContentLoaded", () => {
   $("patdel-cancel").onclick = closePatdelModal;
   patdelBd.addEventListener("click", (e) => { if (e.target === patdelBd) closePatdelModal(); });
 
-  // Result modal
   $("modal-close").onclick = closeModal;
   $("modal-bd").onclick = (e) => { if (e.target === $("modal-bd")) closeModal(); };
 
-  // OCR modal (backdrop click does NOT close)
   $("ocr-register").onclick = registerOcrModules;
   $("ocr-cancel").onclick = closeOcrModal;
   $("ocr-modal-close").onclick = closeOcrModal;
   $("ocr-prev").onclick = () => { ocrCurrentPage--; renderOcrModalBody(); };
   $("ocr-next").onclick = () => { ocrCurrentPage++; renderOcrModalBody(); };
-  // Manual input modal
+
   $("manual-btn").onclick = () => openManualInputModal();
   $("manual-modal-close").onclick = closeManualModal;
   $("manual-cancel").onclick = closeManualModal;
   $("manual-add").onclick = addManualModule;
   $("manual-modal-bd").onclick = (e) => { if (e.target === $("manual-modal-bd")) closeManualModal(); };
 
-  // Edit module modal
   $("edit-modal-close").onclick = closeEditModal;
   $("edit-cancel").onclick = closeEditModal;
   $("edit-save").onclick = saveEditModule;
   $("edit-delete").onclick = deleteEditModule;
   $("edit-modal-bd").onclick = (e) => { if (e.target === $("edit-modal-bd")) closeEditModal(); };
 
-  // Header buttons
   $("screenshot-btn").onclick = () => importScreenshot();
   $("clear-btn").onclick = () => clearModules();
 
-  // Restore optimizer state
+  // Sidebar
+  $("hamburger-btn").onclick = () => openSidebar();
+  $("sidebar-close").onclick = () => closeSidebar();
+  $("sidebar-bd").onclick = () => closeSidebar();
+  document.querySelectorAll<HTMLInputElement>('#lang-options input[name="lang"]').forEach((radio) => {
+    radio.onchange = () => { if (radio.checked) switchLanguage(radio.value); };
+  });
+
   restoreOptState();
   restoreOptResults();
   updateOptBtnLabel("req");

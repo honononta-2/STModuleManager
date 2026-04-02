@@ -20,8 +20,31 @@
 
   <!-- Web header -->
   <div class="web-header">
-    <div class="tab active" data-tab="list">モジュール一覧</div>
-    <div class="tab" data-tab="opt">最適化</div>
+    <div class="tab active" data-tab="list" data-i18n="tab_modules">モジュール一覧</div>
+    <div class="tab" data-tab="opt" data-i18n="tab_optimize">最適化</div>
+    <div style="flex:1"></div>
+    <button class="hamburger-btn" id="hamburger-btn" aria-label="メニュー">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+  </div>
+
+  <!-- Settings sidebar -->
+  <div class="sidebar-bd" id="sidebar-bd"></div>
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <span class="sidebar-title" data-i18n="settings_title">設定</span>
+      <button class="modal-close" id="sidebar-close">&times;</button>
+    </div>
+    <div class="sidebar-body">
+      <div class="sidebar-section">
+        <div class="sidebar-section-title" data-i18n="menu_language">言語</div>
+        <div class="lang-options" id="lang-options">
+          <label class="lang-option"><input type="radio" name="lang" value="ja"><span>日本語</span></label>
+          <label class="lang-option"><input type="radio" name="lang" value="ko"><span>한국어</span></label>
+          <label class="lang-option"><input type="radio" name="lang" value="en"><span>English</span></label>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="content">
@@ -29,19 +52,19 @@
     <!-- List panel -->
     <div class="panel active" id="panel-list">
       <div class="action-bar">
-        <button class="addbtn" id="screenshot-btn">スクショ取込</button>
-        <button class="addbtn" id="manual-btn">手動入力</button>
-        <button class="addbtn" id="clear-btn">クリア</button>
+        <button class="addbtn" id="screenshot-btn" data-i18n="btn_screenshot">スクショ取込</button>
+        <button class="addbtn" id="manual-btn" data-i18n="btn_manual">手動入力</button>
+        <button class="addbtn" id="clear-btn" data-i18n="btn_clear">クリア</button>
       </div>
       <div class="cmdbar">
         <div class="cmd-grp">
-          <span class="cmd-lbl">絞込</span>
+          <span class="cmd-lbl" data-i18n="filter_label">絞込</span>
           <button class="opt-multi-btn" id="filter-btn">未選択</button>
           <button class="filter-mode-btn" id="filter-mode">AND</button>
         </div>
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
-          <span class="cmd-lbl">並び替え</span>
+          <span class="cmd-lbl" data-i18n="sort_label">並び替え</span>
           <div id="schips" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
           <button class="addbtn" id="add-s">+ Add</button>
         </div>
@@ -55,35 +78,35 @@
     <div class="panel" id="panel-opt">
       <div class="cmdbar opt-cmdbar">
         <div class="cmd-grp">
-          <span class="cmd-lbl">レアリティ</span>
+          <span class="cmd-lbl" data-i18n="rarity_label">レアリティ</span>
           <select id="opt-quality" class="opt-select">
-            <option value="3">紫以上</option>
-            <option value="4">金以上</option>
-            <option value="5">橙のみ</option>
+            <option value="3" data-i18n="rarity_purple_up">紫以上</option>
+            <option value="4" data-i18n="rarity_gold_up">金以上</option>
+            <option value="5" data-i18n="rarity_orange_only">橙のみ</option>
           </select>
         </div>
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
-          <span class="cmd-lbl">メインステータス</span>
+          <span class="cmd-lbl" data-i18n="main_stat">メインステータス</span>
           <button class="opt-multi-btn" id="opt-btn-req">未選択</button>
         </div>
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
-          <span class="cmd-lbl">サブステータス</span>
+          <span class="cmd-lbl" data-i18n="sub_stat">サブステータス</span>
           <button class="opt-multi-btn" id="opt-btn-des">未選択</button>
         </div>
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
-          <span class="cmd-lbl">対象外</span>
+          <span class="cmd-lbl" data-i18n="exclude_stat">対象外</span>
           <button class="opt-multi-btn" id="opt-btn-excl">未選択</button>
         </div>
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
-          <span class="cmd-lbl">探索速度</span>
+          <span class="cmd-lbl" data-i18n="speed_label">探索速度</span>
           <select id="opt-speed" class="opt-select">
-            <option value="standard">標準</option>
-            <option value="precise">高精度</option>
-            <option value="most_precise">最高精度</option>
+            <option value="standard" data-i18n="speed_standard">標準</option>
+            <option value="precise" data-i18n="speed_precise">高精度</option>
+            <option value="most_precise" data-i18n="speed_most_precise">最高精度</option>
           </select>
           <button class="speed-info-btn" id="speed-info-btn" title="探索速度について">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
@@ -92,15 +115,15 @@
       </div>
 
       <div class="opt-pattern-bar">
-        <span class="cmd-lbl">パターン</span>
+        <span class="cmd-lbl" data-i18n="pattern_label">パターン</span>
         <select id="pattern-select" class="opt-select pattern-select">
           <option value="">-- 選択 --</option>
         </select>
-        <button class="addbtn" id="pattern-load">読込</button>
-        <button class="addbtn" id="pattern-save">保存</button>
-        <button class="addbtn pattern-del-btn" id="pattern-delete">削除</button>
+        <button class="addbtn" id="pattern-load" data-i18n="btn_load">読込</button>
+        <button class="addbtn" id="pattern-save" data-i18n="btn_save">保存</button>
+        <button class="addbtn pattern-del-btn" id="pattern-delete" data-i18n="btn_delete">削除</button>
         <div style="flex:1"></div>
-        <button class="opt-run-btn" id="opt-run" disabled>最適化実行</button>
+        <button class="opt-run-btn" id="opt-run" disabled data-i18n="btn_run">最適化実行</button>
       </div>
 
       <div class="scroll" id="opt-scroll">
@@ -116,7 +139,7 @@
     <div class="modal-bd" id="speed-info-bd">
       <div class="modal speed-info-modal">
         <div class="modal-head">
-          <span class="modal-title">探索速度について</span>
+          <span class="modal-title" data-i18n="speed_info_title">探索速度について</span>
           <button class="modal-close" id="speed-info-close">&times;</button>
         </div>
         <div class="modal-body" id="speed-info-body"></div>
@@ -127,7 +150,7 @@
     <div class="modal-bd" id="modal-bd">
       <div class="modal" id="modal">
         <div class="modal-head">
-          <span class="modal-title" id="modal-title">組み合わせ詳細</span>
+          <span class="modal-title" id="modal-title" data-i18n="combo_detail">組み合わせ詳細</span>
           <button class="modal-close" id="modal-close">&times;</button>
         </div>
         <div class="modal-body" id="modal-body"></div>
@@ -138,7 +161,7 @@
     <div class="modal-bd" id="ocr-modal-bd">
       <div class="modal ocr-modal">
         <div class="modal-head">
-          <span class="modal-title">OCR結果確認</span>
+          <span class="modal-title" data-i18n="ocr_title">OCR結果確認</span>
           <button class="modal-close" id="ocr-modal-close">&times;</button>
         </div>
         <div class="modal-body" id="ocr-modal-body"></div>
@@ -149,8 +172,8 @@
             <button class="ocr-pager-btn" id="ocr-next" disabled>&rsaquo;</button>
           </div>
           <span style="flex:1"></span>
-          <button class="addbtn" id="ocr-cancel">キャンセル</button>
-          <button class="opt-run-btn" id="ocr-register">登録</button>
+          <button class="addbtn" id="ocr-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="opt-run-btn" id="ocr-register" data-i18n="btn_register">登録</button>
         </div>
       </div>
     </div>
@@ -159,15 +182,15 @@
     <div class="modal-bd" id="patdel-modal-bd">
       <div class="modal" style="width:400px">
         <div class="modal-head">
-          <span class="modal-title">パターン削除</span>
+          <span class="modal-title" data-i18n="modal_pattern_delete">パターン削除</span>
           <button class="modal-close" id="patdel-modal-close">&times;</button>
         </div>
         <div class="modal-body">
           <p id="patdel-msg"></p>
         </div>
         <div class="modal-footer">
-          <button class="addbtn" id="patdel-cancel">キャンセル</button>
-          <button class="pattern-del-btn addbtn" id="patdel-ok">削除</button>
+          <button class="addbtn" id="patdel-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="pattern-del-btn addbtn" id="patdel-ok" data-i18n="btn_delete">削除</button>
         </div>
       </div>
     </div>
@@ -176,16 +199,16 @@
     <div class="modal-bd" id="patsave-modal-bd">
       <div class="modal" style="width:400px">
         <div class="modal-head">
-          <span class="modal-title">パターン保存</span>
+          <span class="modal-title" data-i18n="modal_pattern_save">パターン保存</span>
           <button class="modal-close" id="patsave-modal-close">&times;</button>
         </div>
         <div class="modal-body">
-          <label style="display:block;font-size:13px;color:var(--tx2);margin-bottom:6px">パターン名</label>
-          <input type="text" id="patsave-name" class="patsave-input" placeholder="パターン名を入力してください" autocomplete="off">
+          <label style="display:block;font-size:13px;color:var(--tx2);margin-bottom:6px" data-i18n="pattern_name_label">パターン名</label>
+          <input type="text" id="patsave-name" class="patsave-input" placeholder="パターン名を入力してください" data-i18n-placeholder="pattern_prompt" autocomplete="off">
         </div>
         <div class="modal-footer">
-          <button class="addbtn" id="patsave-cancel">キャンセル</button>
-          <button class="opt-run-btn" id="patsave-ok">保存</button>
+          <button class="addbtn" id="patsave-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="opt-run-btn" id="patsave-ok" data-i18n="btn_save">保存</button>
         </div>
       </div>
     </div>
@@ -194,13 +217,13 @@
     <div class="modal-bd" id="manual-modal-bd">
       <div class="modal">
         <div class="modal-head">
-          <span class="modal-title">モジュール手動入力</span>
+          <span class="modal-title" data-i18n="modal_manual">モジュール手動入力</span>
           <button class="modal-close" id="manual-modal-close">&times;</button>
         </div>
         <div class="modal-body" id="manual-modal-body"></div>
         <div class="modal-footer">
-          <button class="addbtn" id="manual-cancel">キャンセル</button>
-          <button class="opt-run-btn" id="manual-add">追加</button>
+          <button class="addbtn" id="manual-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="opt-run-btn" id="manual-add" data-i18n="btn_add">追加</button>
         </div>
       </div>
     </div>
@@ -209,15 +232,15 @@
     <div class="modal-bd" id="edit-modal-bd">
       <div class="modal">
         <div class="modal-head">
-          <span class="modal-title">モジュール編集</span>
+          <span class="modal-title" data-i18n="modal_edit">モジュール編集</span>
           <button class="modal-close" id="edit-modal-close">&times;</button>
         </div>
         <div class="modal-body" id="edit-modal-body"></div>
         <div class="modal-footer">
-          <button class="addbtn pattern-del-btn" id="edit-delete">削除</button>
+          <button class="addbtn pattern-del-btn" id="edit-delete" data-i18n="btn_delete">削除</button>
           <span style="flex:1"></span>
-          <button class="addbtn" id="edit-cancel">キャンセル</button>
-          <button class="opt-run-btn" id="edit-save">保存</button>
+          <button class="addbtn" id="edit-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="opt-run-btn" id="edit-save" data-i18n="btn_save">保存</button>
         </div>
       </div>
     </div>
