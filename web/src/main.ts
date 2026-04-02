@@ -672,7 +672,7 @@ function openOcrConfirmationModal(groups: OcrGroup[]) {
 
 function closeOcrModal() {
   $("ocr-modal-bd").classList.remove("on");
-  pendingOcrGroups.forEach((g) => URL.revokeObjectURL(g.imageUrl));
+  // imageUrlはData URL（サムネイル）なのでrevokeは不要、参照を切るだけ
   pendingOcrGroups = [];
   ocrImageZoomStates = [];
 }
@@ -831,7 +831,6 @@ function renderOcrModalBody() {
       const mi = Number(btn.dataset.mi);
       pendingOcrGroups[gi].modules.splice(mi, 1);
       if (pendingOcrGroups[gi].modules.length === 0) {
-        URL.revokeObjectURL(pendingOcrGroups[gi].imageUrl);
         pendingOcrGroups.splice(gi, 1);
       }
       renderOcrModalBody();
@@ -1188,6 +1187,22 @@ function addManualModule() {
 
 // ========== Screenshot Import ==========
 
+function createThumbnailDataUrl(img: HTMLImageElement, maxWidth = 480): string {
+  const scale = Math.min(1, maxWidth / img.naturalWidth);
+  const w = Math.round(img.naturalWidth * scale);
+  const h = Math.round(img.naturalHeight * scale);
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d")!;
+  ctx.drawImage(img, 0, 0, w, h);
+  const dataUrl = c.toDataURL("image/jpeg", 0.7);
+  // Canvas即時解放
+  c.width = 0;
+  c.height = 0;
+  return dataUrl;
+}
+
 function importScreenshot() {
   const input = document.createElement("input");
   input.type = "file";
@@ -1213,6 +1228,14 @@ function importScreenshot() {
     progress.textContent = `取り込み中（0/${total}）`;
     progress.style.display = "";
 
+    // Tesseractワーカーを全画像で使い回す
+    const { createWorker } = await import("tesseract.js");
+    const ocrWorker = await createWorker("eng");
+    await ocrWorker.setParameters({
+      tessedit_char_whitelist: "+0123456789",
+      tessedit_pageseg_mode: "7" as any,
+    });
+
     try {
       for (let fi = 0; fi < files.length; fi++) {
         const file = files[fi];
@@ -1221,15 +1244,18 @@ function importScreenshot() {
         img.src = imageUrl;
         await new Promise((resolve) => (img.onload = resolve));
         try {
-          const detected = await processScreenshot(img);
+          const detected = await processScreenshot(img, undefined, ocrWorker);
           if (detected.length > 0) {
-            groups.push({ imageUrl, modules: detected });
-          } else {
-            URL.revokeObjectURL(imageUrl);
+            // サムネイルを生成して元画像のBlob URLは即解放
+            const thumbnailUrl = createThumbnailDataUrl(img);
+            groups.push({ imageUrl: thumbnailUrl, modules: detected });
           }
         } catch {
-          URL.revokeObjectURL(imageUrl);
           throw new Error("スクショの読み取りに失敗しました");
+        } finally {
+          // 元画像を即時解放
+          URL.revokeObjectURL(imageUrl);
+          img.src = "";
         }
         progress.textContent = `取り込み中（${fi + 1}/${total}）`;
       }
@@ -1249,6 +1275,8 @@ function importScreenshot() {
       btn.textContent = "スクショ取込";
       progress.style.display = "none";
       showToast(err instanceof Error ? err.message : "スクショの読み取りに失敗しました", "error");
+    } finally {
+      await ocrWorker.terminate();
     }
   });
   input.click();

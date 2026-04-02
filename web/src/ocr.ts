@@ -1264,132 +1264,134 @@ function classifyAllSlots(
   let lowConfidenceCount = 0;
   let marginSum = 0;
 
-  for (const slot of slots) {
-    const pad = slot.synthetic ? basePad + 3 : basePad;
-    const roiX = Math.round(slot.cx - iconSide / 2 - pad);
-    const roiY = Math.round(slot.cy - iconSide / 2 - pad);
-    const roiSide = iconSide + pad * 2;
+  try {
+    for (const slot of slots) {
+      const pad = slot.synthetic ? basePad + 3 : basePad;
+      const roiX = Math.round(slot.cx - iconSide / 2 - pad);
+      const roiY = Math.round(slot.cy - iconSide / 2 - pad);
+      const roiSide = iconSide + pad * 2;
 
-    // 境界チェック
-    if (
-      roiX < 0 ||
-      roiY < 0 ||
-      roiX + roiSide > grayEq.cols ||
-      roiY + roiSide > grayEq.rows
-    ) {
-      continue;
-    }
+      // 境界チェック
+      if (
+        roiX < 0 ||
+        roiY < 0 ||
+        roiX + roiSide > grayEq.cols ||
+        roiY + roiSide > grayEq.rows
+      ) {
+        continue;
+      }
 
-    attemptedSlots++;
+      attemptedSlots++;
 
-    const localRect = new cv.Rect(roiX, roiY, roiSide, roiSide);
-    const localGrayRoi = grayEq.roi(localRect);
-    const localEdgeRoi = edgeMat.roi(localRect);
+      const localRect = new cv.Rect(roiX, roiY, roiSide, roiSide);
+      const localGrayRoi = grayEq.roi(localRect);
+      const localEdgeRoi = edgeMat.roi(localRect);
 
-    let bestPartId = -1;
-    let bestVariantName = "";
-    let bestScore = -Infinity;
-    let secondBestScore = -Infinity;
+      let bestPartId = -1;
+      let bestVariantName = "";
+      let bestScore = -Infinity;
+      let secondBestScore = -Infinity;
 
-    for (const tmpl of preppedTemplates) {
-      let partBestScore = -Infinity;
-      let partBestVariantName = "";
+      for (const tmpl of preppedTemplates) {
+        let partBestScore = -Infinity;
+        let partBestVariantName = "";
 
-      for (const variant of tmpl.variants) {
-        const edgeResult = new cv.Mat();
-        cv.matchTemplate(
-          localEdgeRoi,
-          variant.edgeSymbol,
-          edgeResult,
-          cv.TM_CCORR_NORMED,
-          variant.edgeMask,
-        );
-        let edgeScore = cv.minMaxLoc(edgeResult).maxVal;
-        if (isNaN(edgeScore)) edgeScore = 0;
-        edgeResult.delete();
+        for (const variant of tmpl.variants) {
+          const edgeResult = new cv.Mat();
+          cv.matchTemplate(
+            localEdgeRoi,
+            variant.edgeSymbol,
+            edgeResult,
+            cv.TM_CCORR_NORMED,
+            variant.edgeMask,
+          );
+          let edgeScore = cv.minMaxLoc(edgeResult).maxVal;
+          if (isNaN(edgeScore)) edgeScore = 0;
+          edgeResult.delete();
 
-        const graySymbolResult = new cv.Mat();
-        cv.matchTemplate(
-          localGrayRoi,
-          variant.graySymbol,
-          graySymbolResult,
-          cv.TM_CCORR_NORMED,
-          variant.edgeMask,
-        );
-        let graySymbolScore = cv.minMaxLoc(graySymbolResult).maxVal;
-        if (isNaN(graySymbolScore)) graySymbolScore = 0;
-        graySymbolResult.delete();
+          const graySymbolResult = new cv.Mat();
+          cv.matchTemplate(
+            localGrayRoi,
+            variant.graySymbol,
+            graySymbolResult,
+            cv.TM_CCORR_NORMED,
+            variant.edgeMask,
+          );
+          let graySymbolScore = cv.minMaxLoc(graySymbolResult).maxVal;
+          if (isNaN(graySymbolScore)) graySymbolScore = 0;
+          graySymbolResult.delete();
 
-        const grayIconResult = new cv.Mat();
-        cv.matchTemplate(
-          localGrayRoi,
-          variant.grayIcon,
-          grayIconResult,
-          cv.TM_CCOEFF_NORMED,
-        );
-        let grayIconScore = cv.minMaxLoc(grayIconResult).maxVal;
-        if (isNaN(grayIconScore)) grayIconScore = 0;
-        grayIconResult.delete();
+          const grayIconResult = new cv.Mat();
+          cv.matchTemplate(
+            localGrayRoi,
+            variant.grayIcon,
+            grayIconResult,
+            cv.TM_CCOEFF_NORMED,
+          );
+          let grayIconScore = cv.minMaxLoc(grayIconResult).maxVal;
+          if (isNaN(grayIconScore)) grayIconScore = 0;
+          grayIconResult.delete();
 
-        const combined =
-          edgeScore * 0.5 + graySymbolScore * 0.15 + grayIconScore * 0.35;
+          const combined =
+            edgeScore * 0.5 + graySymbolScore * 0.15 + grayIconScore * 0.35;
 
-        if (combined > partBestScore) {
-          partBestScore = combined;
-          partBestVariantName = variant.name;
+          if (combined > partBestScore) {
+            partBestScore = combined;
+            partBestVariantName = variant.name;
+          }
+        }
+
+        if (partBestScore > bestScore) {
+          secondBestScore = bestScore;
+          bestScore = partBestScore;
+          bestPartId = tmpl.partId;
+          bestVariantName = partBestVariantName;
+        } else if (partBestScore > secondBestScore) {
+          secondBestScore = partBestScore;
         }
       }
 
-      if (partBestScore > bestScore) {
-        secondBestScore = bestScore;
-        bestScore = partBestScore;
-        bestPartId = tmpl.partId;
-        bestVariantName = partBestVariantName;
-      } else if (partBestScore > secondBestScore) {
-        secondBestScore = partBestScore;
+      localGrayRoi.delete();
+      localEdgeRoi.delete();
+
+      const margin = bestScore - secondBestScore;
+      marginSum += margin;
+      console.log(
+        `[OCR] slot (${Math.round(slot.cx)}, ${Math.round(slot.cy)}): ` +
+          `partId=${bestPartId} bg=${bestVariantName} score=${bestScore.toFixed(3)} margin=${margin.toFixed(3)}`,
+      );
+
+      const confident =
+        bestPartId >= 0 &&
+        (bestScore >= strongScoreThreshold ||
+          (bestScore >= scoreThreshold && margin >= marginThreshold));
+
+      if (!confident) {
+        lowConfidenceCount++;
+      }
+
+      if (confident) {
+        const side = Math.round(2 * slot.r);
+        detections.push({
+          partId: bestPartId,
+          x: Math.round(slot.cx - slot.r),
+          y: Math.round(slot.cy - slot.r),
+          w: side,
+          h: side,
+          score: bestScore,
+          margin,
+        });
       }
     }
-
-    localGrayRoi.delete();
-    localEdgeRoi.delete();
-
-    const margin = bestScore - secondBestScore;
-    marginSum += margin;
-    console.log(
-      `[OCR] slot (${Math.round(slot.cx)}, ${Math.round(slot.cy)}): ` +
-        `partId=${bestPartId} bg=${bestVariantName} score=${bestScore.toFixed(3)} margin=${margin.toFixed(3)}`,
-    );
-
-    const confident =
-      bestPartId >= 0 &&
-      (bestScore >= strongScoreThreshold ||
-        (bestScore >= scoreThreshold && margin >= marginThreshold));
-
-    if (!confident) {
-      lowConfidenceCount++;
-    }
-
-    if (confident) {
-      const side = Math.round(2 * slot.r);
-      detections.push({
-        partId: bestPartId,
-        x: Math.round(slot.cx - slot.r),
-        y: Math.round(slot.cy - slot.r),
-        w: side,
-        h: side,
-        score: bestScore,
-        margin,
-      });
-    }
-  }
-
-  // テンプレート前処理のクリーンアップ
-  for (const tmpl of preppedTemplates) {
-    for (const variant of tmpl.variants) {
-      variant.grayIcon.delete();
-      variant.graySymbol.delete();
-      variant.edgeSymbol.delete();
-      variant.edgeMask.delete();
+  } finally {
+    // テンプレート前処理のクリーンアップ（エラー時も確実に解放）
+    for (const tmpl of preppedTemplates) {
+      for (const variant of tmpl.variants) {
+        variant.grayIcon.delete();
+        variant.graySymbol.delete();
+        variant.edgeSymbol.delete();
+        variant.edgeMask.delete();
+      }
     }
   }
 
@@ -1505,6 +1507,10 @@ async function ocrNumbersForRow(
     };
   };
 
+  // OCR用Canvas（再利用）
+  const ocrCanvas = document.createElement("canvas");
+  const ocrCtx = ocrCanvas.getContext("2d")!;
+
   const buildOcrCanvas = (
     cropX: number,
     cropY: number,
@@ -1514,12 +1520,10 @@ async function ocrNumbersForRow(
     upscale: number,
     mode: "binary-invert" | "binary-normal" | "gray" | "adaptive" | "color-distance",
   ): HTMLCanvasElement => {
-    const numCanvas = document.createElement("canvas");
-    numCanvas.width = cropW * upscale;
-    numCanvas.height = cropH * upscale;
-    const ctx = numCanvas.getContext("2d")!;
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(
+    ocrCanvas.width = cropW * upscale;
+    ocrCanvas.height = cropH * upscale;
+    ocrCtx.imageSmoothingEnabled = false;
+    ocrCtx.drawImage(
       sourceCanvas,
       cropX,
       cropY,
@@ -1527,13 +1531,13 @@ async function ocrNumbersForRow(
       cropH,
       0,
       0,
-      numCanvas.width,
-      numCanvas.height,
+      ocrCanvas.width,
+      ocrCanvas.height,
     );
 
-    const imageData = ctx.getImageData(0, 0, numCanvas.width, numCanvas.height);
-    const w = numCanvas.width;
-    const h = numCanvas.height;
+    const imageData = ocrCtx.getImageData(0, 0, ocrCanvas.width, ocrCanvas.height);
+    const w = ocrCanvas.width;
+    const h = ocrCanvas.height;
 
     if (mode === "adaptive") {
       // 適応的二値化: ローカル平均との差分で文字を抽出
@@ -1621,8 +1625,8 @@ async function ocrNumbersForRow(
         imageData.data[i + 3] = 255;
       }
     }
-    ctx.putImageData(imageData, 0, 0);
-    return numCanvas;
+    ocrCtx.putImageData(imageData, 0, 0);
+    return ocrCanvas;
   };
 
   for (const stat of row.stats) {
@@ -1699,7 +1703,7 @@ async function ocrNumbersForRow(
       for (let cropIndex = 0; cropIndex < cropVariants.length; cropIndex++) {
         const crop = cropVariants[cropIndex];
         for (const attempt of attempts) {
-          const canvas = buildOcrCanvas(
+          const ocrInput = buildOcrCanvas(
             crop.cropX,
             crop.cropY,
             crop.cropW,
@@ -1708,8 +1712,7 @@ async function ocrNumbersForRow(
             attempt.upscale,
             attempt.mode,
           );
-          const { data } = await worker.recognize(canvas);
-          canvas.remove();
+          const { data } = await worker.recognize(ocrInput);
           const extracted = extractValue(data.text);
           if (extracted.value > 0) {
             stat.value = extracted.value;
@@ -1743,6 +1746,10 @@ async function ocrNumbersForRow(
     }
     delete (stat as any)._ocrCrops;
   }
+
+  // OCR用Canvas即時解放
+  ocrCanvas.width = 0;
+  ocrCanvas.height = 0;
 
   return stats.filter((s) => s.value > 0);
 }
@@ -2220,6 +2227,7 @@ function pruneStatsUsingModuleAnchor(
 export async function processScreenshot(
   imageSource: HTMLImageElement | HTMLCanvasElement,
   onProgress?: (p: OcrProgress) => void,
+  externalWorker?: any,
 ): Promise<ModuleInput[]> {
   onProgress?.({ stage: "OpenCV.js 読み込み中...", percent: 0 });
   await loadOpenCV();
@@ -2344,6 +2352,10 @@ export async function processScreenshot(
   if (detections.length === 0) {
     grayEq.delete();
     edgeMat.delete();
+    colorMat.delete();
+    // Canvas即時解放
+    canvas.width = 0;
+    canvas.height = 0;
     return [];
   }
 
@@ -2496,12 +2508,18 @@ export async function processScreenshot(
 
   // 数値OCR
   onProgress?.({ stage: "数値読み取り中...", percent: 60 });
-  const { createWorker } = await import("tesseract.js");
-  const worker = await createWorker("eng");
-  await worker.setParameters({
-    tessedit_char_whitelist: "+0123456789",
-    tessedit_pageseg_mode: "7" as any,
-  });
+  const ownsWorker = !externalWorker;
+  let worker: any;
+  if (externalWorker) {
+    worker = externalWorker;
+  } else {
+    const { createWorker } = await import("tesseract.js");
+    worker = await createWorker("eng");
+    await worker.setParameters({
+      tessedit_char_whitelist: "+0123456789",
+      tessedit_pageseg_mode: "7" as any,
+    });
+  }
 
   const modules: ModuleInput[] = [];
   let uuidCounter = Date.now();
@@ -2541,7 +2559,12 @@ export async function processScreenshot(
       }
     }
   } finally {
-    await worker.terminate();
+    // OCR用Canvas即時解放
+    canvas.width = 0;
+    canvas.height = 0;
+    if (ownsWorker) {
+      await worker.terminate();
+    }
   }
 
   onProgress?.({ stage: "完了", percent: 100 });
