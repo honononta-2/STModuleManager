@@ -7,7 +7,7 @@ let cvReady: Promise<void> | null = null;
 
 function loadOpenCV(): Promise<void> {
   if (cvReady) return cvReady;
-  cvReady = new Promise((resolve, reject) => {
+  const p = new Promise<void>((resolve, reject) => {
     const win = window as any;
     if (win.cv && typeof win.cv.Mat === "function") {
       resolve();
@@ -40,6 +40,7 @@ function loadOpenCV(): Promise<void> {
     };
     poll();
   });
+  cvReady = p.catch((err) => { cvReady = null; throw err; });
   return cvReady;
 }
 
@@ -140,6 +141,20 @@ function buildColorMat(canvas: HTMLCanvasElement, cv: any): any {
 async function loadTemplates(): Promise<void> {
   if (templatesLoaded) return;
   const cv = (window as any).cv;
+
+  // リトライ時の重複防止: 既存データを解放してからリセット
+  for (const t of statTemplates) {
+    t.grayMat.delete(); t.edgeMat.delete();
+    for (const v of t.classifyVariants) { v.grayMat.delete(); v.edgeMat.delete(); }
+  }
+  for (const t of moduleIconTemplates) {
+    t.grayMat.delete(); t.edgeMat.delete();
+    for (const v of t.classifyVariants) { v.grayMat.delete(); v.edgeMat.delete(); }
+  }
+  for (const t of userModuleOcrTemplates) { t.colorMat.delete(); t.grayEqMat.delete(); }
+  statTemplates = [];
+  moduleIconTemplates = [];
+  userModuleOcrTemplates = [];
 
   for (const [partIdStr, iconFile] of Object.entries(STAT_ICONS)) {
     const partId = Number(partIdStr);

@@ -346,10 +346,6 @@ function renderGrid() {
     const iconWrap = document.createElement("span");
     iconWrap.innerHTML = moduleIconHtml(m.config_id);
     head.appendChild(iconWrap.firstElementChild || document.createTextNode(""));
-    const badge = document.createElement("span");
-    badge.className = `rbadge ${r}`;
-    badge.textContent = t.rarity[r];
-    head.appendChild(badge);
     const editBtn = document.createElement("button");
     editBtn.className = "card-edit-btn";
     editBtn.title = t.ui.modal_edit;
@@ -1582,20 +1578,24 @@ function importScreenshot() {
     progress.textContent = fmt(t.ui.ocr_progress, { current: 0, total });
     progress.style.display = "";
 
-    const { createWorker } = await import("tesseract.js");
-    const ocrWorker = await createWorker("eng");
-    await ocrWorker.setParameters({
-      tessedit_char_whitelist: "+0123456789",
-      tessedit_pageseg_mode: "7" as any,
-    });
-
+    let ocrWorker: any = null;
     try {
+      const { createWorker } = await import("tesseract.js");
+      ocrWorker = await createWorker("eng");
+      await ocrWorker.setParameters({
+        tessedit_char_whitelist: "+0123456789",
+        tessedit_pageseg_mode: "7" as any,
+      });
+
       for (let fi = 0; fi < files.length; fi++) {
         const file = files[fi];
         const imageUrl = URL.createObjectURL(file);
         const img = new Image();
         img.src = imageUrl;
-        await new Promise((resolve) => (img.onload = resolve));
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
+        });
         try {
           const detected = await processScreenshot(img, undefined, ocrWorker);
           if (detected.length > 0) {
@@ -1627,7 +1627,7 @@ function importScreenshot() {
       progress.style.display = "none";
       showToast(err instanceof Error ? err.message : t.ui.ocr_failed, "error");
     } finally {
-      await ocrWorker.terminate();
+      if (ocrWorker) await ocrWorker.terminate();
     }
   });
   input.click();
