@@ -13,6 +13,7 @@
   <meta property="og:image" content="/icon-512.png">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary">
+  <style>.sidebar,.sidebar-bd{visibility:hidden}</style>
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
@@ -37,7 +38,7 @@
     </div>
     <div class="sidebar-body">
       <div class="sidebar-section">
-        <div class="sidebar-section-title" data-i18n="menu_language">言語</div>
+        <div class="sidebar-section-title">Language</div>
         <div class="lang-options" id="lang-options">
           <label class="lang-option"><input type="radio" name="lang" value="ja"><span>日本語</span></label>
           <label class="lang-option"><input type="radio" name="lang" value="ko"><span>한국어</span></label>
@@ -81,8 +82,7 @@
           <span class="cmd-lbl" data-i18n="rarity_label">レアリティ</span>
           <select id="opt-quality" class="opt-select">
             <option value="3" data-i18n="rarity_purple_up">紫以上</option>
-            <option value="4" data-i18n="rarity_gold_up">金以上</option>
-            <option value="5" data-i18n="rarity_orange_only">橙のみ</option>
+            <option value="4" data-i18n="rarity_gold_only">金のみ</option>
           </select>
         </div>
         <div class="cmd-sep"></div>
@@ -197,14 +197,17 @@
 
     <!-- Pattern save modal -->
     <div class="modal-bd" id="patsave-modal-bd">
-      <div class="modal" style="width:400px">
+      <div class="modal" style="width:400px;max-height:none">
         <div class="modal-head">
           <span class="modal-title" data-i18n="modal_pattern_save">パターン保存</span>
           <button class="modal-close" id="patsave-modal-close">&times;</button>
         </div>
         <div class="modal-body">
-          <label style="display:block;font-size:13px;color:var(--tx2);margin-bottom:6px" data-i18n="pattern_name_label">パターン名</label>
-          <input type="text" id="patsave-name" class="patsave-input" placeholder="パターン名を入力してください" data-i18n-placeholder="pattern_prompt" autocomplete="off">
+          <select id="patsave-mode" class="opt-select patsave-mode-select"></select>
+          <div id="patsave-name-row" style="margin-top:8px;display:none">
+            <label style="display:block;font-size:13px;color:var(--tx2);margin-bottom:6px" data-i18n="pattern_name_label">パターン名</label>
+            <input type="text" id="patsave-name" class="patsave-input" placeholder="パターン名を入力してください" data-i18n-placeholder="pattern_prompt" autocomplete="off">
+          </div>
         </div>
         <div class="modal-footer">
           <button class="addbtn" id="patsave-cancel" data-i18n="btn_cancel">キャンセル</button>
@@ -255,7 +258,6 @@
 </div>
 
 <!-- Flyout containers -->
-<div class="bd" id="bd"></div>
 <div class="flyout" id="fly-filter"></div>
 <div class="flyout" id="fly-s"></div>
 <div class="flyout" id="fly-multi"></div>

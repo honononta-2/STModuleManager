@@ -14,21 +14,30 @@ import {
 // --- Helpers ---
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
+let activeFlyout: HTMLElement | null = null;
+let activeFlyAnchor: HTMLElement | null = null;
+
 function positionFlyout(fl: HTMLElement, anchor: HTMLElement) {
-  const r = anchor.getBoundingClientRect();
-  const vw = window.innerWidth;
-  let left = r.left;
-  fl.style.top = r.bottom + 4 + "px";
-  if (vw <= 600) {
-    fl.style.left = "8px";
-    fl.style.right = "8px";
-    fl.style.maxWidth = "";
+  const rect = anchor.getBoundingClientRect();
+  const menuH = fl.scrollHeight;
+  const flyW = fl.offsetWidth || 176;
+  const spaceBelow = window.innerHeight - rect.bottom - 4;
+  const spaceAbove = rect.top - 4;
+
+  let left = rect.left;
+  if (left + flyW > window.innerWidth - 8) left = window.innerWidth - flyW - 8;
+  if (left < 8) left = 8;
+  fl.style.left = left + "px";
+  fl.style.minWidth = rect.width + "px";
+
+  if (spaceBelow >= menuH || spaceBelow >= spaceAbove) {
+    fl.style.top = rect.bottom + 2 + "px";
+    fl.style.bottom = "";
+    fl.style.maxHeight = Math.min(240, spaceBelow) + "px";
   } else {
-    const flyW = fl.offsetWidth || 176;
-    if (left + flyW > vw - 8) left = vw - flyW - 8;
-    if (left < 8) left = 8;
-    fl.style.left = left + "px";
-    fl.style.right = "";
+    fl.style.top = "";
+    fl.style.bottom = (window.innerHeight - rect.top + 2) + "px";
+    fl.style.maxHeight = Math.min(240, spaceAbove) + "px";
   }
 }
 
@@ -126,6 +135,143 @@ function statSelectOptions(selectedId?: number): string {
     `<option value="${id}"${id === selectedId ? " selected" : ""}>${statName(id)}</option>`
   ).join("");
 }
+
+function statDropdownHtml(
+  className: string,
+  selectedId?: number,
+  dataAttrs?: Record<string, string>,
+  placeholder?: string,
+): string {
+  const dataStr = dataAttrs
+    ? Object.entries(dataAttrs).map(([k, v]) => `data-${k}="${v}"`).join(" ")
+    : "";
+  const hasSelection = selectedId != null && selectedId !== 0;
+  const selectedIcon = hasSelection ? STAT_ICONS[selectedId] : undefined;
+  const selectedName = hasSelection ? statName(selectedId) : (placeholder || "");
+
+  const triggerContent = hasSelection
+    ? `<img class="sicon" src="/icons/${selectedIcon}" alt=""><span>${selectedName}</span>`
+    : `<span class="stat-dd-placeholder">${placeholder || ""}</span>`;
+
+  const placeholderItem = placeholder
+    ? `<div class="stat-dd-item${!hasSelection ? " selected" : ""}" data-value="">${placeholder}</div>`
+    : "";
+  const items = ALL_STAT_IDS.map((id) => {
+    const icon = STAT_ICONS[id];
+    const name = statName(id);
+    return `<div class="stat-dd-item${id === selectedId ? " selected" : ""}" data-value="${id}">
+      <img class="sicon" src="/icons/${icon}" alt=""><span>${name}</span>
+    </div>`;
+  }).join("");
+
+  return `<div class="stat-dd ${className}" ${dataStr} data-value="${hasSelection ? selectedId : ""}">
+    <button type="button" class="stat-dd-trigger">${triggerContent}</button>
+    <div class="stat-dd-menu">${placeholderItem}${items}</div>
+  </div>`;
+}
+
+let activeStatDdMenu: HTMLElement | null = null;
+let activeStatDd: HTMLElement | null = null;
+
+function positionStatDdMenu(dd: HTMLElement, menu: HTMLElement) {
+  const rect = dd.getBoundingClientRect();
+  const menuH = menu.scrollHeight;
+  const spaceBelow = window.innerHeight - rect.bottom - 4;
+  const spaceAbove = rect.top - 4;
+
+  menu.style.left = rect.left + "px";
+  menu.style.minWidth = rect.width + "px";
+
+  if (spaceBelow >= menuH || spaceBelow >= spaceAbove) {
+    menu.style.top = rect.bottom + 2 + "px";
+    menu.style.bottom = "";
+    menu.style.maxHeight = Math.min(240, spaceBelow) + "px";
+  } else {
+    menu.style.top = "";
+    menu.style.bottom = (window.innerHeight - rect.top + 2) + "px";
+    menu.style.maxHeight = Math.min(240, spaceAbove) + "px";
+  }
+}
+
+function closeAllStatDropdowns() {
+  if (activeStatDdMenu) {
+    activeStatDdMenu.remove();
+    activeStatDdMenu = null;
+  }
+  if (activeStatDd) {
+    activeStatDd.classList.remove("open");
+    activeStatDd = null;
+  }
+}
+
+function initStatDropdowns(container: HTMLElement) {
+  container.querySelectorAll<HTMLElement>(".stat-dd").forEach((dd) => {
+    const trigger = dd.querySelector<HTMLButtonElement>(".stat-dd-trigger")!;
+    const menuTemplate = dd.querySelector<HTMLElement>(".stat-dd-menu")!;
+    menuTemplate.remove();
+
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasOpen = activeStatDd === dd;
+      closeAllStatDropdowns();
+      if (wasOpen) return;
+
+      const menu = menuTemplate.cloneNode(true) as HTMLElement;
+      document.body.appendChild(menu);
+      menu.classList.add("stat-dd-menu-portal");
+      dd.classList.add("open");
+      activeStatDdMenu = menu;
+      activeStatDd = dd;
+
+      positionStatDdMenu(dd, menu);
+
+      const sel = menu.querySelector<HTMLElement>(".stat-dd-item.selected");
+      if (sel) sel.scrollIntoView({ block: "nearest" });
+
+      menu.querySelectorAll<HTMLElement>(".stat-dd-item").forEach((item) => {
+        item.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const val = item.dataset.value || "";
+          dd.dataset.value = val;
+
+          menuTemplate.querySelectorAll(".stat-dd-item.selected").forEach((s) => s.classList.remove("selected"));
+          const origItem = menuTemplate.querySelector<HTMLElement>(`.stat-dd-item[data-value="${val}"]`);
+          if (origItem) origItem.classList.add("selected");
+
+          if (val) {
+            const id = Number(val);
+            const icon = STAT_ICONS[id];
+            trigger.innerHTML = `<img class="sicon" src="/icons/${icon}" alt=""><span>${statName(id)}</span>`;
+          } else {
+            trigger.innerHTML = `<span class="stat-dd-placeholder">${trigger.textContent || ""}</span>`;
+          }
+          closeAllStatDropdowns();
+          dd.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+      });
+    });
+  });
+}
+
+document.addEventListener("click", (e) => {
+  closeAllStatDropdowns();
+  if (activeFlyout && !activeFlyout.contains(e.target as Node) &&
+      (!activeFlyAnchor || !activeFlyAnchor.contains(e.target as Node))) {
+    closeFly();
+  }
+});
+window.addEventListener("resize", () => {
+  closeAllStatDropdowns();
+  closeFly();
+});
+document.addEventListener("scroll", (e) => {
+  if (activeStatDdMenu && !activeStatDdMenu.contains(e.target as Node)) {
+    closeAllStatDropdowns();
+  }
+  if (activeFlyout && !activeFlyout.contains(e.target as Node)) {
+    closeFly();
+  }
+}, true);
 
 // ========== Grid rendering ==========
 
@@ -266,7 +412,7 @@ function updateFilterBtnLabel() {
 
 function addFlySection(
   fl: HTMLElement, title: string,
-  items: { label: string; checked: boolean }[],
+  items: { label: string; checked: boolean; iconSrc?: string }[],
   onChange: (index: number, checked: boolean) => void,
 ) {
   const header = document.createElement("div");
@@ -281,9 +427,16 @@ function addFlySection(
     cb.type = "checkbox";
     cb.checked = item.checked;
     cb.onchange = () => onChange(i, cb.checked);
+    el.appendChild(cb);
+    if (item.iconSrc) {
+      const img = document.createElement("img");
+      img.className = "sicon";
+      img.src = item.iconSrc;
+      img.alt = "";
+      el.appendChild(img);
+    }
     const span = document.createElement("span");
     span.textContent = item.label;
-    el.appendChild(cb);
     el.appendChild(span);
     fl.appendChild(el);
   });
@@ -293,9 +446,9 @@ const RARITY_FILTER_VALUES: Rarity[] = ["gold", "purple", "blue"];
 
 function openFilterMultiFly(anchor: HTMLElement) {
   const fl = $("fly-filter");
-  if (fl.classList.contains("on")) { closeFly(); return; }
+  if (activeFlyout === fl) { closeFly(); return; }
   closeFly();
-  fl.innerHTML = "";
+  fl.textContent = "";
   const refresh = () => { updateFilterBtnLabel(); renderGrid(); };
 
   addFlySection(fl, t.ui.fly_rarity,
@@ -320,7 +473,10 @@ function openFilterMultiFly(anchor: HTMLElement) {
   );
 
   addFlySection(fl, t.ui.fly_stat,
-    ALL_STAT_IDS.map((id) => ({ label: statName(id), checked: filterStats.includes(id) })),
+    ALL_STAT_IDS.map((id) => {
+      const icon = STAT_ICONS[id];
+      return { label: statName(id), checked: filterStats.includes(id), iconSrc: icon ? `/icons/${icon}` : undefined };
+    }),
     (i, checked) => {
       const val = ALL_STAT_IDS[i];
       if (checked) filterStats.push(val);
@@ -329,9 +485,10 @@ function openFilterMultiFly(anchor: HTMLElement) {
     },
   );
 
-  positionFlyout(fl, anchor);
   fl.classList.add("on");
-  $("bd").classList.add("on");
+  positionFlyout(fl, anchor);
+  activeFlyout = fl;
+  activeFlyAnchor = anchor;
 }
 
 // ========== Sort chips ==========
@@ -375,27 +532,46 @@ function renderSChips() {
 
 function openFly(
   flyId: string, anchor: HTMLElement,
-  items: { label: string; val: string; disabled: boolean }[],
+  items: { label: string; val: string; disabled: boolean; iconSrc?: string }[],
   onPick: (item: { label: string; val: string }) => void,
 ) {
   closeFly();
   const fl = $(flyId);
-  fl.innerHTML = "";
+  fl.textContent = "";
   items.forEach((it) => {
     const el = document.createElement("div");
     el.className = "fitem" + (it.disabled ? " dim" : "");
-    el.textContent = it.label;
+    if (it.iconSrc) {
+      const img = document.createElement("img");
+      img.className = "sicon";
+      img.src = it.iconSrc;
+      img.alt = "";
+      el.appendChild(img);
+      const span = document.createElement("span");
+      span.textContent = it.label;
+      el.appendChild(span);
+    } else {
+      el.textContent = it.label;
+    }
     if (!it.disabled) el.onclick = () => { closeFly(); onPick(it); };
     fl.appendChild(el);
   });
-  positionFlyout(fl, anchor);
   fl.classList.add("on");
-  $("bd").classList.add("on");
+  positionFlyout(fl, anchor);
+  activeFlyout = fl;
+  activeFlyAnchor = anchor;
 }
 
 function closeFly() {
-  document.querySelectorAll(".flyout").forEach((f) => f.classList.remove("on"));
-  $("bd").classList.remove("on");
+  if (activeFlyout) {
+    activeFlyout.classList.remove("on");
+    activeFlyout.style.top = "";
+    activeFlyout.style.bottom = "";
+    activeFlyout.style.maxHeight = "";
+    activeFlyout.style.minWidth = "";
+    activeFlyout = null;
+    activeFlyAnchor = null;
+  }
 }
 
 // ========== Optimizer UI ==========
@@ -498,7 +674,7 @@ function updateOptBtnLabel(category: "req" | "des" | "excl") {
 
 function openOptMultiFly(anchor: HTMLElement, category: "req" | "des" | "excl") {
   const fl = $("fly-multi");
-  if (fl.classList.contains("on") && fl.dataset.category === category) { closeFly(); return; }
+  if (activeFlyout === fl && fl.dataset.category === category) { closeFly(); return; }
   closeFly();
   fl.dataset.category = category;
   const current = { req: optRequired, des: optDesired, excl: optExcluded }[category];
@@ -507,7 +683,7 @@ function openOptMultiFly(anchor: HTMLElement, category: "req" | "des" | "excl") 
     .flatMap((k) => ({ req: optRequired, des: optDesired, excl: optExcluded }[k]));
   const otherSet = new Set(others);
 
-  fl.innerHTML = "";
+  fl.textContent = "";
   ALL_STAT_IDS.forEach((id) => {
     const isSelected = current.includes(id);
     const isOther = otherSet.has(id);
@@ -526,16 +702,25 @@ function openOptMultiFly(anchor: HTMLElement, category: "req" | "des" | "excl") 
         saveOptState();
       };
     }
+    el.appendChild(cb);
+    const icon = STAT_ICONS[id];
+    if (icon) {
+      const img = document.createElement("img");
+      img.className = "sicon";
+      img.src = `/icons/${icon}`;
+      img.alt = "";
+      el.appendChild(img);
+    }
     const span = document.createElement("span");
     span.textContent = statName(id);
-    el.appendChild(cb);
     el.appendChild(span);
     fl.appendChild(el);
   });
 
-  positionFlyout(fl, anchor);
   fl.classList.add("on");
-  $("bd").classList.add("on");
+  positionFlyout(fl, anchor);
+  activeFlyout = fl;
+  activeFlyAnchor = anchor;
 }
 
 function updateOptRunBtn() {
@@ -922,18 +1107,23 @@ function renderOcrModalBody() {
   const section = document.createElement("div");
   section.className = "ocr-group";
 
+  const header = document.createElement("div");
+  header.className = "ocr-group-header";
+
   const imgWrap = document.createElement("div");
   imgWrap.className = "ocr-group-img";
   const img = document.createElement("img");
   img.src = group.imageUrl;
   img.alt = fmt(t.ui.ocr_screenshot, { n: gi + 1 });
   imgWrap.appendChild(img);
-  section.appendChild(imgWrap);
+  header.appendChild(imgWrap);
 
   const hint = document.createElement("div");
   hint.className = "ocr-group-hint";
   hint.textContent = t.ui.ocr_hint;
-  section.appendChild(hint);
+  header.appendChild(hint);
+
+  section.appendChild(header);
 
   const listWrap = document.createElement("div");
   listWrap.className = "ocr-group-list";
@@ -953,7 +1143,7 @@ function renderOcrModalBody() {
         .map((v) => `<option value="${v}"${v === s.value ? " selected" : ""}>${v}</option>`)
         .join("");
       return `<div class="ocr-stat-row">
-        <select class="opt-select ocr-stat-name" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${statSelectOptions(s.part_id)}</select>
+        ${statDropdownHtml("ocr-stat-name", s.part_id, { gi: String(gi), mi: String(mi), si: String(si) })}
         <select class="opt-select ocr-stat-value" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${valueOptions}</select>
         <button class="ocr-stat-remove" data-gi="${gi}" data-mi="${mi}" data-si="${si}">&times;</button>
       </div>`;
@@ -962,23 +1152,29 @@ function renderOcrModalBody() {
       ? `<button class="addbtn ocr-add-stat" data-gi="${gi}" data-mi="${mi}">${t.ui.add_stat}</button>`
       : "";
 
-    row.innerHTML = `
-      <span class="ocr-row-index">${mi + 1}</span>
-      <div class="ocr-row-icon" id="ocr-icon-${gi}-${mi}">${moduleIconHtml(m.config_id)}</div>
-      <div class="ocr-row-body">
-        <div class="ocr-row-fields">
-          <label class="form-field">
-            <span class="cmd-lbl">${t.ui.type_label}</span>
-            <select class="opt-select ocr-type" data-gi="${gi}" data-mi="${mi}">${typeSelectOptions(typeDigit)}</select>
-          </label>
-          <label class="form-field">
-            <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
-            <select class="opt-select ocr-rarity-sub" data-gi="${gi}" data-mi="${mi}">${raritySubSelectOptions(raritySub)}</select>
-          </label>
-        </div>
-        <div class="ocr-row-stats">${statsHtml}${addStatHtml}</div>
-      </div>
-      <button class="ocr-row-remove" data-gi="${gi}" data-mi="${mi}">&times;</button>`;
+    row.innerHTML = [
+      `<span class="ocr-row-index">${mi + 1}</span>`,
+      `<div class="ocr-row-content">`,
+        `<div class="ocr-row-header">`,
+          `<div class="ocr-row-icon" id="ocr-icon-${gi}-${mi}">${moduleIconHtml(m.config_id)}</div>`,
+          `<div class="ocr-row-fields">`,
+            `<label class="form-field">`,
+              `<span class="cmd-lbl">${t.ui.type_label}</span>`,
+              `<select class="opt-select ocr-type" data-gi="${gi}" data-mi="${mi}">${typeSelectOptions(typeDigit)}</select>`,
+            `</label>`,
+            `<label class="form-field">`,
+              `<span class="cmd-lbl">${t.ui.rarity_sub_label}</span>`,
+              `<select class="opt-select ocr-rarity-sub" data-gi="${gi}" data-mi="${mi}">${raritySubSelectOptions(raritySub)}</select>`,
+            `</label>`,
+          `</div>`,
+          `<button class="ocr-row-remove" data-gi="${gi}" data-mi="${mi}">&times;</button>`,
+        `</div>`,
+        `<div class="ocr-row-stats">`,
+          `<div class="ocr-stat-divider"></div>`,
+          `${statsHtml}${addStatHtml}`,
+        `</div>`,
+      `</div>`,
+    ].join("");
 
     listWrap.appendChild(row);
   });
@@ -1013,10 +1209,10 @@ function renderOcrModalBody() {
   body.querySelectorAll<HTMLSelectElement>(".ocr-type, .ocr-rarity-sub").forEach((sel) => {
     sel.onchange = () => onOcrFieldChange(Number(sel.dataset.gi), Number(sel.dataset.mi));
   });
-  body.querySelectorAll<HTMLSelectElement>(".ocr-stat-name").forEach((sel) => {
-    sel.onchange = () => {
-      pendingOcrGroups[Number(sel.dataset.gi)].modules[Number(sel.dataset.mi)].stats[Number(sel.dataset.si)].part_id = Number(sel.value);
-    };
+  body.querySelectorAll<HTMLElement>(".ocr-stat-name").forEach((dd) => {
+    dd.addEventListener("change", () => {
+      pendingOcrGroups[Number(dd.dataset.gi)].modules[Number(dd.dataset.mi)].stats[Number(dd.dataset.si)].part_id = Number(dd.dataset.value);
+    });
   });
   body.querySelectorAll<HTMLSelectElement>(".ocr-stat-value").forEach((sel) => {
     sel.onchange = () => {
@@ -1054,6 +1250,7 @@ function renderOcrModalBody() {
     };
   });
 
+  initStatDropdowns(body);
   updateOcrPager();
 }
 
@@ -1111,35 +1308,33 @@ function renderEditModalBody() {
   for (let i = 0; i < editStatCount; i++) {
     const curStat = m.stats[i];
     const valueOpts = Array.from({ length: 10 }, (_, v) => v + 1)
-      .map((v) => `<option value="${v}"${curStat && v === curStat.value ? " selected" : ""}>\u3000${v}</option>`)
+      .map((v) => `<option value="${v}"${curStat && v === curStat.value ? " selected" : ""}>${v}</option>`)
       .join("");
-    statRows.push(`<div class="stat-input-group" data-si="${i}">
-      <select class="opt-select edit-stat-name">${curStat ? "" : `<option value="">${t.ui.select_placeholder}</option>`}${statSelectOptions(curStat?.part_id)}</select>
-      <select class="opt-select edit-stat-value">${valueOpts}</select>
-      ${i > 0 ? `<button class="ocr-stat-remove edit-remove-stat" data-si="${i}">&times;</button>` : ""}
+    statRows.push(`<div class="ocr-stat-row" data-si="${i}">
+      ${statDropdownHtml("edit-stat-name", curStat?.part_id, undefined, curStat ? undefined : t.ui.select_placeholder)}
+      <select class="opt-select ocr-stat-value edit-stat-value">${valueOpts}</select>
+      <button class="ocr-stat-remove edit-remove-stat" data-si="${i}">&times;</button>
     </div>`);
   }
 
-  body.innerHTML = `<div class="manual-form">
-    <div class="manual-row">
+  body.innerHTML = `<div class="ocr-row-content">
+    <div class="ocr-row-header">
       <div class="ocr-row-icon" id="edit-icon-preview">${moduleIconHtml(m.config_id)}</div>
-      <div class="ocr-row-body">
-        <div class="ocr-row-fields">
-          <label class="form-field">
-            <span class="cmd-lbl">${t.ui.type_label}</span>
-            <select class="opt-select" id="edit-type">${typeSelectOptions(typeDigit)}</select>
-          </label>
-          <label class="form-field">
-            <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
-            <select class="opt-select" id="edit-rarity-sub">${raritySubSelectOptions(raritySub)}</select>
-          </label>
-        </div>
-        <div class="manual-stats-section">
-          <div class="cmd-lbl">${t.ui.stat_label}</div>
-          <div id="edit-stat-rows">${statRows.join("")}</div>
-          ${editStatCount < 3 ? `<button class="addbtn" id="edit-add-stat">${t.ui.add_stat}</button>` : ""}
-        </div>
+      <div class="ocr-row-fields">
+        <label class="form-field">
+          <span class="cmd-lbl">${t.ui.type_label}</span>
+          <select class="opt-select" id="edit-type">${typeSelectOptions(typeDigit)}</select>
+        </label>
+        <label class="form-field">
+          <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
+          <select class="opt-select" id="edit-rarity-sub">${raritySubSelectOptions(raritySub)}</select>
+        </label>
       </div>
+    </div>
+    <div class="ocr-row-stats">
+      <div class="ocr-stat-divider"></div>
+      <div id="edit-stat-rows">${statRows.join("")}</div>
+      ${editStatCount < 3 ? `<button class="addbtn" id="edit-add-stat">${t.ui.add_stat}</button>` : ""}
     </div>
   </div>`;
 
@@ -1151,6 +1346,8 @@ function renderEditModalBody() {
   };
   $<HTMLSelectElement>("edit-type").onchange = updateIconPreview;
   $<HTMLSelectElement>("edit-rarity-sub").onchange = updateIconPreview;
+
+  initStatDropdowns(body);
 
   const addBtn = document.getElementById("edit-add-stat");
   if (addBtn) addBtn.onclick = () => {
@@ -1178,13 +1375,13 @@ function renderEditModalBody() {
 function syncEditStatsToModule() {
   const m = modules.find((mod) => mod.uuid === editingUuid);
   if (!m) return;
-  const rows = document.querySelectorAll<HTMLElement>("#edit-stat-rows .stat-input-group");
+  const rows = document.querySelectorAll<HTMLElement>("#edit-stat-rows .ocr-stat-row");
   const newStats: StatEntry[] = [];
   rows.forEach((row) => {
-    const nameSelect = row.querySelector<HTMLSelectElement>(".edit-stat-name");
+    const nameDd = row.querySelector<HTMLElement>(".edit-stat-name");
     const valueSelect = row.querySelector<HTMLSelectElement>(".edit-stat-value");
-    if (!nameSelect || !valueSelect) return;
-    const partId = Number(nameSelect.value);
+    if (!nameDd || !valueSelect) return;
+    const partId = Number(nameDd.dataset.value);
     if (!partId) return;
     newStats.push({ part_id: partId, value: Number(valueSelect.value) });
   });
@@ -1201,12 +1398,12 @@ function saveEditModule() {
 
   const stats: StatEntry[] = [];
   const usedIds = new Set<number>();
-  const rows = document.querySelectorAll<HTMLElement>("#edit-stat-rows .stat-input-group");
+  const rows = document.querySelectorAll<HTMLElement>("#edit-stat-rows .ocr-stat-row");
   for (const row of rows) {
-    const nameSelect = row.querySelector<HTMLSelectElement>(".edit-stat-name");
+    const nameDd = row.querySelector<HTMLElement>(".edit-stat-name");
     const valueSelect = row.querySelector<HTMLSelectElement>(".edit-stat-value");
-    if (!nameSelect || !valueSelect) continue;
-    const partId = Number(nameSelect.value);
+    if (!nameDd || !valueSelect) continue;
+    const partId = Number(nameDd.dataset.value);
     if (!partId) continue;
     if (usedIds.has(partId)) return;
     usedIds.add(partId);
@@ -1250,36 +1447,34 @@ function renderManualModalBody() {
   const statRows: string[] = [];
   for (let i = 0; i < manualStatCount; i++) {
     const valueOpts = Array.from({ length: 10 }, (_, v) => v + 1)
-      .map((v) => `<option value="${v}">\u3000${v}</option>`)
+      .map((v) => `<option value="${v}">${v}</option>`)
       .join("");
-    statRows.push(`<div class="stat-input-group" data-si="${i}">
-      <select class="opt-select manual-stat-name"><option value="">${t.ui.select_placeholder}</option>${statSelectOptions()}</select>
-      <select class="opt-select manual-stat-value">${valueOpts}</select>
-      ${i > 0 ? `<button class="ocr-stat-remove manual-remove-stat" data-si="${i}">&times;</button>` : ""}
+    statRows.push(`<div class="ocr-stat-row" data-si="${i}">
+      ${statDropdownHtml("manual-stat-name", undefined, undefined, t.ui.select_placeholder)}
+      <select class="opt-select ocr-stat-value manual-stat-value">${valueOpts}</select>
+      <button class="ocr-stat-remove manual-remove-stat" data-si="${i}">&times;</button>
     </div>`);
   }
 
   const defaultConfigId = buildConfigId(1, 1);
-  body.innerHTML = `<div class="manual-form">
-    <div class="manual-row">
+  body.innerHTML = `<div class="ocr-row-content">
+    <div class="ocr-row-header">
       <div class="ocr-row-icon" id="manual-icon-preview">${moduleIconHtml(defaultConfigId)}</div>
-      <div class="ocr-row-body">
-        <div class="ocr-row-fields">
-          <label class="form-field">
-            <span class="cmd-lbl">${t.ui.type_label}</span>
-            <select class="opt-select" id="manual-type">${typeSelectOptions(1)}</select>
-          </label>
-          <label class="form-field">
-            <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
-            <select class="opt-select" id="manual-rarity-sub">${raritySubSelectOptions(1)}</select>
-          </label>
-        </div>
-        <div class="manual-stats-section">
-          <div class="cmd-lbl">${t.ui.stat_label}</div>
-          <div id="manual-stat-rows">${statRows.join("")}</div>
-          ${manualStatCount < 3 ? `<button class="addbtn" id="manual-add-stat">${t.ui.add_stat}</button>` : ""}
-        </div>
+      <div class="ocr-row-fields">
+        <label class="form-field">
+          <span class="cmd-lbl">${t.ui.type_label}</span>
+          <select class="opt-select" id="manual-type">${typeSelectOptions(1)}</select>
+        </label>
+        <label class="form-field">
+          <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
+          <select class="opt-select" id="manual-rarity-sub">${raritySubSelectOptions(1)}</select>
+        </label>
       </div>
+    </div>
+    <div class="ocr-row-stats">
+      <div class="ocr-stat-divider"></div>
+      <div id="manual-stat-rows">${statRows.join("")}</div>
+      ${manualStatCount < 3 ? `<button class="addbtn" id="manual-add-stat">${t.ui.add_stat}</button>` : ""}
     </div>
   </div>`;
 
@@ -1291,6 +1486,8 @@ function renderManualModalBody() {
   };
   $<HTMLSelectElement>("manual-type").onchange = updateManualIconPreview;
   $<HTMLSelectElement>("manual-rarity-sub").onchange = updateManualIconPreview;
+
+  initStatDropdowns(body);
 
   const addBtn = document.getElementById("manual-add-stat");
   if (addBtn) addBtn.onclick = () => { manualStatCount++; renderManualModalBody(); };
@@ -1307,14 +1504,14 @@ function addManualModule() {
   const quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
 
   const stats: StatEntry[] = [];
-  const rows = document.querySelectorAll<HTMLElement>(".stat-input-group");
+  const rows = document.querySelectorAll<HTMLElement>("#manual-stat-rows .ocr-stat-row");
   const usedIds = new Set<number>();
 
   for (const row of rows) {
-    const nameSelect = row.querySelector<HTMLSelectElement>(".manual-stat-name");
+    const nameDd = row.querySelector<HTMLElement>(".manual-stat-name");
     const valueSelect = row.querySelector<HTMLSelectElement>(".manual-stat-value");
-    if (!nameSelect || !valueSelect) continue;
-    const partId = Number(nameSelect.value);
+    if (!nameDd || !valueSelect) continue;
+    const partId = Number(nameDd.dataset.value);
     if (!partId) continue;
     if (usedIds.has(partId)) {
       showToast(t.ui.stat_duplicate, "error");
@@ -1684,15 +1881,16 @@ document.addEventListener("DOMContentLoaded", () => {
       { label: t.ui.sort_rarity, val: "rarity", disabled: ex.has("rarity") },
       { label: t.ui.sort_total, val: "total", disabled: ex.has("total") },
     ];
-    const statItems = ALL_STAT_IDS.map((id) => ({ label: statName(id), val: String(id), disabled: ex.has(String(id)) }));
+    const statItems = ALL_STAT_IDS.map((id) => {
+      const icon = STAT_ICONS[id];
+      return { label: statName(id), val: String(id), disabled: ex.has(String(id)), iconSrc: icon ? `/icons/${icon}` : undefined };
+    });
     openFly("fly-s", e.currentTarget as HTMLElement, [...extraItems, ...statItems], (it) => {
       sortKeys.push({ k: it.val, d: 1 });
       renderSChips();
       renderGrid();
     });
   };
-
-  $("bd").onclick = closeFly;
 
   $("opt-btn-req").onclick = (e) => openOptMultiFly(e.currentTarget as HTMLElement, "req");
   $("opt-btn-des").onclick = (e) => openOptMultiFly(e.currentTarget as HTMLElement, "des");
@@ -1729,22 +1927,71 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const patsaveBd = $("patsave-modal-bd");
   const patsaveInput = $<HTMLInputElement>("patsave-name");
-  const openPatsaveModal = () => { patsaveInput.value = ""; patsaveBd.classList.add("on"); setTimeout(() => patsaveInput.focus(), 50); };
+  const patsaveMode = $<HTMLSelectElement>("patsave-mode");
+  const patsaveNameRow = $("patsave-name-row");
+
+  const updatePatsaveNameRow = () => {
+    const isNew = patsaveMode.value === "new";
+    patsaveNameRow.style.display = isNew ? "block" : "none";
+  };
+  patsaveMode.onchange = updatePatsaveNameRow;
+
+  const openPatsaveModal = () => {
+    const patSel = $<HTMLSelectElement>("pattern-select");
+    const selectedIdx = patSel.value;
+    const patterns = getPatterns();
+    patsaveMode.textContent = "";
+
+    if (selectedIdx !== "" && patterns[Number(selectedIdx)]) {
+      const p = patterns[Number(selectedIdx)];
+      const overwriteOpt = document.createElement("option");
+      overwriteOpt.value = "overwrite";
+      overwriteOpt.textContent = fmt(t.ui.pattern_overwrite, { name: p.name });
+      patsaveMode.appendChild(overwriteOpt);
+    }
+    const newOpt = document.createElement("option");
+    newOpt.value = "new";
+    newOpt.textContent = t.ui.pattern_new;
+    patsaveMode.appendChild(newOpt);
+
+    patsaveInput.value = "";
+    updatePatsaveNameRow();
+    patsaveBd.classList.add("on");
+  };
+
   const closePatsaveModal = () => { patsaveBd.classList.remove("on"); };
+
   const confirmPatsave = () => {
-    const name = patsaveInput.value.trim();
-    if (!name) return;
-    closePatsaveModal();
+    const mode = patsaveMode.value;
     const quality = Number($<HTMLSelectElement>("opt-quality").value);
     const patterns = getPatterns();
-    const existing = patterns.findIndex((p) => p.name === name);
-    const entry: OptPattern = { name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality };
-    if (existing >= 0) patterns[existing] = entry;
-    else patterns.push(entry);
-    savePatterns(patterns);
-    renderPatternSelect();
-    $<HTMLSelectElement>("pattern-select").value = String(existing >= 0 ? existing : patterns.length - 1);
+
+    if (mode === "overwrite") {
+      const idx = Number($<HTMLSelectElement>("pattern-select").value);
+      const existing = patterns[idx];
+      if (!existing) return;
+      const entry: OptPattern = { name: existing.name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality };
+      patterns[idx] = entry;
+      savePatterns(patterns);
+      closePatsaveModal();
+      renderPatternSelect();
+      $<HTMLSelectElement>("pattern-select").value = String(idx);
+      updatePatternButtons();
+    } else {
+      const name = patsaveInput.value.trim();
+      if (!name) return;
+      const duplicateIdx = patterns.findIndex((p) => p.name === name);
+      const entry: OptPattern = { name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality };
+      if (duplicateIdx >= 0) patterns[duplicateIdx] = entry;
+      else patterns.push(entry);
+      savePatterns(patterns);
+      closePatsaveModal();
+      renderPatternSelect();
+      $<HTMLSelectElement>("pattern-select").value = String(duplicateIdx >= 0 ? duplicateIdx : patterns.length - 1);
+      updatePatternButtons();
+    }
   };
+
   $("pattern-save").onclick = openPatsaveModal;
   $("patsave-modal-close").onclick = closePatsaveModal;
   $("patsave-cancel").onclick = closePatsaveModal;
