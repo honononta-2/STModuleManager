@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://st-module-manager.pages.dev/sitemap.xml
