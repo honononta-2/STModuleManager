@@ -7,6 +7,10 @@ import type {
 } from "@shared/types";
 import { processScreenshot } from "./ocr";
 import {
+  saveOcrGroups, loadOcrGroups, deleteOcrGroups, hasOcrGroups,
+  type OcrGroup,
+} from "./ocr-store";
+import {
   t, fmt, statName, applyI18n, initLang, saveLang, getSavedLang,
   JA, migrateStatNamesToIds,
 } from "./i18n";
@@ -1032,31 +1036,60 @@ function closeModal() { $("modal-bd").classList.remove("on"); }
 
 // ========== OCR Confirmation Modal ==========
 
-interface OcrGroup {
-  imageUrl: string;
-  modules: ModuleInput[];
-}
-
 let pendingOcrGroups: OcrGroup[] = [];
 let ocrImageZoomStates: { scale: number; translateX: number; translateY: number }[] = [];
 let ocrCurrentPage = 0;
+let hasStoredOcrData = false;
 
-function openOcrConfirmationModal(groups: OcrGroup[]) {
+function openOcrConfirmationModal(groups: OcrGroup[], startPage = 0) {
   pendingOcrGroups = groups.map((g) => ({
     imageUrl: g.imageUrl,
     modules: g.modules.map((m) => ({ ...m, stats: m.stats.map((s) => ({ ...s })) })),
   }));
   ocrImageZoomStates = groups.map(() => ({ scale: 1, translateX: 0, translateY: 0 }));
-  ocrCurrentPage = 0;
+  ocrCurrentPage = Math.min(startPage, groups.length - 1);
+  hasStoredOcrData = true;
+  saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
   renderOcrModalBody();
   $("ocr-modal-bd").classList.add("on");
 }
 
+/** ×ボタン: IndexedDBに保存したまま閉じる */
 function closeOcrModal() {
+  hasStoredOcrData = true;
+  saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
   $("ocr-modal-bd").classList.remove("on");
   pendingOcrGroups = [];
   ocrImageZoomStates = [];
   ocrCurrentPage = 0;
+}
+
+/** 削除確認モーダルのOK後に実行するコールバック */
+let ocrCancelCallback: (() => void) | null = null;
+
+function showOcrDeleteConfirm(onConfirm: () => void) {
+  ocrCancelCallback = onConfirm;
+  $("ocr-cancel-modal-bd").classList.add("on");
+}
+
+/** キャンセルボタン: 確認後にIndexedDBから削除して閉じる */
+function cancelOcrModal() {
+  showOcrDeleteConfirm(() => {
+    $("ocr-modal-bd").classList.remove("on");
+    pendingOcrGroups = [];
+    ocrImageZoomStates = [];
+    ocrCurrentPage = 0;
+  });
+}
+
+function confirmCancelOcr() {
+  $("ocr-cancel-modal-bd").classList.remove("on");
+  hasStoredOcrData = false;
+  deleteOcrGroups().catch(() => {});
+  if (ocrCancelCallback) {
+    ocrCancelCallback();
+    ocrCancelCallback = null;
+  }
 }
 
 function allPendingModules(): ModuleInput[] {
@@ -1195,6 +1228,7 @@ function renderOcrModalBody() {
         quality: 3,
         stats: [{ part_id: ALL_STAT_IDS[0], value: 1 }],
       });
+      saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
       renderOcrModalBody();
     };
   });
@@ -1203,16 +1237,21 @@ function renderOcrModalBody() {
   if (newListEl) newListEl.scrollTop = listScrollTop;
 
   body.querySelectorAll<HTMLSelectElement>(".ocr-type, .ocr-rarity-sub").forEach((sel) => {
-    sel.onchange = () => onOcrFieldChange(Number(sel.dataset.gi), Number(sel.dataset.mi));
+    sel.onchange = () => {
+      onOcrFieldChange(Number(sel.dataset.gi), Number(sel.dataset.mi));
+      saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+    };
   });
   body.querySelectorAll<HTMLElement>(".ocr-stat-name").forEach((dd) => {
     dd.addEventListener("change", () => {
       pendingOcrGroups[Number(dd.dataset.gi)].modules[Number(dd.dataset.mi)].stats[Number(dd.dataset.si)].part_id = Number(dd.dataset.value);
+      saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
     });
   });
   body.querySelectorAll<HTMLSelectElement>(".ocr-stat-value").forEach((sel) => {
     sel.onchange = () => {
       pendingOcrGroups[Number(sel.dataset.gi)].modules[Number(sel.dataset.mi)].stats[Number(sel.dataset.si)].value = Number(sel.value);
+      saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
     };
   });
   body.querySelectorAll<HTMLButtonElement>(".ocr-row-remove").forEach((btn) => {
@@ -1225,6 +1264,7 @@ function renderOcrModalBody() {
         pendingOcrGroups.splice(g, 1);
         if (ocrCurrentPage >= pendingOcrGroups.length && ocrCurrentPage > 0) ocrCurrentPage--;
       }
+      saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
       renderOcrModalBody();
     };
   });
@@ -1234,6 +1274,7 @@ function renderOcrModalBody() {
       const mi = Number(btn.dataset.mi);
       const si = Number(btn.dataset.si);
       pendingOcrGroups[g].modules[mi].stats.splice(si, 1);
+      saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
       renderOcrModalBody();
     };
   });
@@ -1242,6 +1283,7 @@ function renderOcrModalBody() {
       const g = Number(btn.dataset.gi);
       const mi = Number(btn.dataset.mi);
       pendingOcrGroups[g].modules[mi].stats.push({ part_id: ALL_STAT_IDS[0], value: 1 });
+      saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
       renderOcrModalBody();
     };
   });
@@ -1264,12 +1306,25 @@ function onOcrFieldChange(gi: number, mi: number) {
 
 function registerOcrModules() {
   const all = allPendingModules();
-  if (all.length === 0) { closeOcrModal(); return; }
+  if (all.length === 0) {
+    hasStoredOcrData = false;
+    deleteOcrGroups().catch(() => {});
+    $("ocr-modal-bd").classList.remove("on");
+    pendingOcrGroups = [];
+    ocrImageZoomStates = [];
+    ocrCurrentPage = 0;
+    return;
+  }
   modules.push(...all);
   saveModulesToStorage();
   renderGrid();
   updateOptRunBtn();
-  closeOcrModal();
+  hasStoredOcrData = false;
+  deleteOcrGroups().catch(() => {});
+  $("ocr-modal-bd").classList.remove("on");
+  pendingOcrGroups = [];
+  ocrImageZoomStates = [];
+  ocrCurrentPage = 0;
 }
 
 // ========== Edit Module Modal ==========
@@ -1555,7 +1610,60 @@ function createThumbnailDataUrl(img: HTMLImageElement, maxWidth = 1920): string 
   return dataUrl;
 }
 
+const SCREENSHOT_INFO_SEEN_KEY = "screenshot-info-seen";
+
+function showScreenshotInfo(onClose?: () => void) {
+  const body = $("screenshot-info-body");
+  while (body.firstChild) body.removeChild(body.firstChild);
+  const items = [
+    { text: t.ui.screenshot_info_overview, style: "margin:0 0 10px;font-size:13px;line-height:1.6" },
+    { text: t.ui.screenshot_info_edit, style: "margin:0 0 10px;font-size:13px;line-height:1.6" },
+    { text: t.ui.screenshot_info_resume, style: "margin:0 0 4px;font-size:13px;line-height:1.6" },
+    { text: t.ui.screenshot_info_resume_warn, style: "margin:0 0 10px;font-size:12px;color:#e8a735;line-height:1.6" },
+    { text: t.ui.screenshot_info_delete, style: "margin:0 0 10px;font-size:13px;line-height:1.6" },
+    { text: t.ui.screenshot_info_download, style: "margin:0 0 10px;font-size:13px;line-height:1.6" },
+    { text: t.ui.screenshot_info_privacy, style: "margin:0;font-size:13px;line-height:1.6" },
+  ];
+  items.forEach(({ text, style }) => { const p = document.createElement("p"); p.textContent = text; p.style.cssText = style; body.appendChild(p); });
+  screenshotInfoOnClose = onClose ?? null;
+  $("screenshot-info-bd").classList.add("on");
+}
+
+let screenshotInfoOnClose: (() => void) | null = null;
+
+function closeScreenshotInfo() {
+  $("screenshot-info-bd").classList.remove("on");
+  const cb = screenshotInfoOnClose;
+  screenshotInfoOnClose = null;
+  if (cb) cb();
+}
+
 function importScreenshot() {
+  if (!localStorage.getItem(SCREENSHOT_INFO_SEEN_KEY)) {
+    localStorage.setItem(SCREENSHOT_INFO_SEEN_KEY, "1");
+    showScreenshotInfo(() => importScreenshot());
+    return;
+  }
+  if (hasStoredOcrData) {
+    $("ocr-prev-modal-bd").classList.add("on");
+    return;
+  }
+  startNewImport();
+}
+
+function restoreOcrGroups() {
+  $("ocr-prev-modal-bd").classList.remove("on");
+  loadOcrGroups().then((data) => {
+    if (data && data.groups.length > 0) {
+      openOcrConfirmationModal(data.groups, data.currentPage);
+    }
+  }).catch(() => {});
+}
+
+function startNewImport() {
+  $("ocr-prev-modal-bd").classList.remove("on");
+  hasStoredOcrData = false;
+  deleteOcrGroups().catch(() => {});
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "image/*";
@@ -1854,6 +1962,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.documentElement.lang = getSavedLang() === "ko" ? "ko" : getSavedLang() === "en" ? "en" : "ja";
 
   loadModulesFromStorage();
+  hasOcrGroups().then((v) => { hasStoredOcrData = v; }).catch(() => {});
 
   // Tabs
   document.querySelectorAll<HTMLElement>(".tab").forEach((tab) => {
@@ -2031,10 +2140,25 @@ document.addEventListener("DOMContentLoaded", () => {
   $("modal-bd").onclick = (e) => { if (e.target === $("modal-bd")) closeModal(); };
 
   $("ocr-register").onclick = registerOcrModules;
-  $("ocr-cancel").onclick = closeOcrModal;
+  $("ocr-cancel").onclick = cancelOcrModal;
   $("ocr-modal-close").onclick = closeOcrModal;
   $("ocr-prev").onclick = () => { ocrCurrentPage--; renderOcrModalBody(); };
   $("ocr-next").onclick = () => { ocrCurrentPage++; renderOcrModalBody(); };
+
+  // OCR cancel confirm modal
+  $("ocr-cancel-ok").onclick = confirmCancelOcr;
+  $("ocr-cancel-back").onclick = () => $("ocr-cancel-modal-bd").classList.remove("on");
+  $("ocr-cancel-modal-close").onclick = () => $("ocr-cancel-modal-bd").classList.remove("on");
+  $("ocr-cancel-modal-bd").onclick = (e) => { if (e.target === $("ocr-cancel-modal-bd")) $("ocr-cancel-modal-bd").classList.remove("on"); };
+
+  // OCR previous data modal
+  $("ocr-prev-restore").onclick = restoreOcrGroups;
+  $("ocr-prev-new").onclick = () => {
+    $("ocr-prev-modal-bd").classList.remove("on");
+    showOcrDeleteConfirm(() => { startNewImport(); });
+  };
+  $("ocr-prev-modal-close").onclick = () => $("ocr-prev-modal-bd").classList.remove("on");
+  $("ocr-prev-modal-bd").onclick = (e) => { if (e.target === $("ocr-prev-modal-bd")) $("ocr-prev-modal-bd").classList.remove("on"); };
 
   $("manual-btn").onclick = () => openManualInputModal();
   $("manual-modal-close").onclick = closeManualModal;
@@ -2049,6 +2173,9 @@ document.addEventListener("DOMContentLoaded", () => {
   $("edit-modal-bd").onclick = (e) => { if (e.target === $("edit-modal-bd")) closeEditModal(); };
 
   $("screenshot-btn").onclick = () => importScreenshot();
+  $("screenshot-info-btn").onclick = () => showScreenshotInfo();
+  $("screenshot-info-close").onclick = () => closeScreenshotInfo();
+  $("screenshot-info-bd").onclick = (e) => { if (e.target === $("screenshot-info-bd")) closeScreenshotInfo(); };
   $("clear-btn").onclick = () => clearModules();
 
   // Sidebar

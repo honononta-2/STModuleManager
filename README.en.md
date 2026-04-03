@@ -8,25 +8,12 @@
 [日本語](README.md) | [한국어](README.ko.md)
 
 > [!NOTE]
-> The desktop app (Tauri version) supports English. You can switch the language from the menu button in the top-left → **Language**.
-> The Web version does not currently support English.
+> Both the desktop app (Tauri version) and the Web version support English. You can switch the language from the menu button → **Language**.
 
 > [!WARNING]
 > This tool has no affiliation with the game's official operators.
 > The developer assumes no responsibility for any issues arising from its use.
 > **Use entirely at your own risk.**
-
-## Web Version
-
-**[Open Web Version](https://st-module-manager.pages.dev/)** (mobile-friendly)
-
-You can import modules via OCR from screenshots and run optimization — no packet capture required, usable from any device.
-
-> [!WARNING]
-> The Web version does not currently support English. The interface is displayed in Japanese.
-
-> [!TIP]
-> Importing too many screenshots at once may crash the browser. Import a few at a time.
 
 ## Features
 
@@ -35,6 +22,11 @@ You can import modules via OCR from screenshots and run optimization — no pack
 - Optimization to automatically find the best 4-module combination
 - JSON / CSV export
 
+## Web Version
+
+**[Open Web Version](https://st-module-manager.pages.dev/)** (mobile-friendly)
+
+Instead of the desktop app's automatic data retrieval via packet capture, the Web version uses OCR to analyze screenshots and read module types and stats, making it easy to register your modules. No packet capture required, usable from any device.
 ## Download
 
 Download the latest `StarResonanceModuleTool-vX.X.X.zip` from the [Releases](../../releases) page and extract it to any folder. No installation required.

@@ -1508,7 +1508,7 @@ async function ocrNumbersForRow(
 
   // OCR用Canvas（再利用）
   const ocrCanvas = document.createElement("canvas");
-  const ocrCtx = ocrCanvas.getContext("2d")!;
+  const ocrCtx = ocrCanvas.getContext("2d", { willReadFrequently: true })!;
 
   const buildOcrCanvas = (
     cropX: number,

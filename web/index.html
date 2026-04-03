@@ -54,6 +54,9 @@
     <div class="panel active" id="panel-list">
       <div class="action-bar">
         <button class="addbtn" id="screenshot-btn" data-i18n="btn_screenshot">スクショ取込</button>
+        <button class="speed-info-btn" id="screenshot-info-btn" title="スクショ取込について">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        </button>
         <button class="addbtn" id="manual-btn" data-i18n="btn_manual">手動入力</button>
         <button class="addbtn" id="clear-btn" data-i18n="btn_clear">クリア</button>
       </div>
@@ -146,6 +149,17 @@
       </div>
     </div>
 
+    <!-- スクショ取込説明モーダル -->
+    <div class="modal-bd" id="screenshot-info-bd">
+      <div class="modal speed-info-modal">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="screenshot_info_title">スクショ取込について</span>
+          <button class="modal-close" id="screenshot-info-close">&times;</button>
+        </div>
+        <div class="modal-body" id="screenshot-info-body"></div>
+      </div>
+    </div>
+
     <!-- Result detail modal -->
     <div class="modal-bd" id="modal-bd">
       <div class="modal" id="modal">
@@ -174,6 +188,40 @@
           <span style="flex:1"></span>
           <button class="addbtn" id="ocr-cancel" data-i18n="btn_cancel">キャンセル</button>
           <button class="opt-run-btn" id="ocr-register" data-i18n="btn_register">登録</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- OCR previous data modal -->
+    <div class="modal-bd" id="ocr-prev-modal-bd">
+      <div class="modal" style="width:400px">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="ocr_prev_data_title">前回の取込データ</span>
+          <button class="modal-close" id="ocr-prev-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p data-i18n="ocr_prev_data_msg">前回の取込データが残っています。復元しますか？</p>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="ocr-prev-new" data-i18n="ocr_new_import">新規取込</button>
+          <button class="opt-run-btn" id="ocr-prev-restore" data-i18n="ocr_restore">復元</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- OCR cancel confirm modal -->
+    <div class="modal-bd" id="ocr-cancel-modal-bd">
+      <div class="modal" style="width:400px">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="ocr_cancel_title">取込データの削除</span>
+          <button class="modal-close" id="ocr-cancel-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p data-i18n="ocr_cancel_msg">取込データを削除します。この操作は元に戻せません。</p>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="ocr-cancel-back" data-i18n="btn_cancel">キャンセル</button>
+          <button class="pattern-del-btn addbtn" id="ocr-cancel-ok" data-i18n="ocr_cancel_confirm">削除</button>
         </div>
       </div>
     </div>
