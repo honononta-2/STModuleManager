@@ -53,6 +53,12 @@ pub struct OptimizeRequest {
     /// Web Worker分割用: 総Worker数
     #[serde(default)]
     pub num_workers: Option<usize>,
+    /// ステータス最低値制約: part_id → 最低合計値
+    #[serde(default)]
+    pub min_thresholds: Option<std::collections::HashMap<i64, i64>>,
+    /// カウントのみモード: Stage1&2フィルタ後の候補数だけ返す（探索は行わない）
+    #[serde(default)]
+    pub count_only: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,6 +128,15 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
     // --- Stage 2: レアリティフィルタ ---
     candidates.retain(|(_, m)| m.quality.unwrap_or(0) >= req.min_quality);
 
+    // --- count_only モード: Stage1&2後の候補数だけ返す ---
+    if req.count_only.unwrap_or(false) {
+        return OptimizeResponse {
+            combinations: vec![],
+            filtered_count: candidates.len(),
+            total_modules,
+        };
+    }
+
     // --- Stage 3: 貢献度スコア Top N ---
     let mut flats: Vec<ModuleFlat> = candidates
         .iter()
@@ -158,13 +173,16 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
 
     flats.sort_by(|a, b| b.contribution.partial_cmp(&a.contribution).unwrap());
 
-    let top_n: usize = match req.speed_mode.as_deref() {
-        Some("precise") => 300,
-        Some("most_precise") => 600,
-        _ => 200, // "standard" またはデフォルト
-    };
-    if flats.len() > top_n {
-        flats.truncate(top_n);
+    let is_exhaustive = req.speed_mode.as_deref() == Some("exhaustive");
+    if !is_exhaustive {
+        let top_n: usize = match req.speed_mode.as_deref() {
+            Some("precise") => 300,
+            Some("most_precise") => 600,
+            _ => 200, // "standard" またはデフォルト
+        };
+        if flats.len() > top_n {
+            flats.truncate(top_n);
+        }
     }
 
     let filtered_count = flats.len();
@@ -197,7 +215,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
             let mut arr = vec![0u8; stat_count];
             for &(pid, val) in &f.stats {
                 if let Some(&idx) = pid_to_idx.get(&pid) {
-                    arr[idx] = val as u8;
+                    arr[idx] = val.clamp(0, 20) as u8;
                 }
             }
             arr
@@ -245,16 +263,25 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
     let n = filtered_count;
     let top_k = 10usize;
 
-    // Worker分割: 外側ループの担当範囲を決定
-    let (range_start, range_end) = match (req.worker_id, req.num_workers) {
-        (Some(id), Some(total)) if total > 0 => {
-            let chunk = n / total;
-            let start = id * chunk;
-            let end = if id == total - 1 { n } else { start + chunk };
-            (start, end)
-        }
-        _ => (0, n),
+    // Worker分割: インターリーブ方式で担当する i を決定
+    let (worker_id, num_workers) = match (req.worker_id, req.num_workers) {
+        (Some(id), Some(total)) if total > 1 => (id, total),
+        _ => (0, 1),
     };
+
+    // min_thresholds を探索用に変換: (stat_index, min_value) のペア
+    let threshold_constraints: Vec<(usize, u8)> = req
+        .min_thresholds
+        .as_ref()
+        .map(|thresholds| {
+            thresholds
+                .iter()
+                .filter_map(|(pid, min_val)| {
+                    pid_to_idx.get(pid).map(|&si| (si, *min_val as u8))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     let global_best = Mutex::new(BoundedHeap::new(top_k));
 
@@ -307,6 +334,14 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
                     for s in 0..stat_count {
                         totals_buf[s] = partial3[s] + sl[s];
                     }
+                    // min_thresholds を満たさない組み合わせはスキップ
+                    if !threshold_constraints.is_empty()
+                        && !threshold_constraints
+                            .iter()
+                            .all(|&(si, min_val)| totals_buf[si] >= min_val)
+                    {
+                        continue;
+                    }
                     let sc = score_stats(&totals_buf);
                     local_best.push(sc, [i, j, k, l]);
                 }
@@ -329,14 +364,16 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
             .build()
             .unwrap();
         pool.install(|| {
-            (range_start..range_end).into_par_iter().for_each(|i| search_from_i(i));
+            (worker_id..n).into_par_iter().step_by(num_workers).for_each(|i| search_from_i(i));
         });
     }
 
     #[cfg(not(feature = "parallel"))]
     {
-        for i in range_start..range_end {
+        let mut i = worker_id;
+        while i < n {
             search_from_i(i);
+            i += num_workers;
         }
     }
 
@@ -420,6 +457,38 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
                 score: *score,
                 total_plus,
             }
+        })
+        .collect();
+
+    // --- 最低値制約フィルタリング ---
+    let combinations = if let Some(ref thresholds) = req.min_thresholds {
+        if !thresholds.is_empty() {
+            combinations
+                .into_iter()
+                .filter(|comb| {
+                    thresholds.iter().all(|(pid, min_val)| {
+                        comb.stat_totals
+                            .iter()
+                            .find(|st| st.part_id == *pid)
+                            .map(|st| st.total >= *min_val)
+                            .unwrap_or(false)
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            combinations
+        }
+    } else {
+        combinations
+    };
+
+    // フィルタ後の rank 振り直し
+    let combinations: Vec<Combination> = combinations
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut c)| {
+            c.rank = i + 1;
+            c
         })
         .collect();
 

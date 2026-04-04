@@ -115,6 +115,10 @@ pub struct OptPattern {
     pub desired: Vec<serde_json::Value>,
     pub excluded: Vec<serde_json::Value>,
     pub quality: u32,
+    #[serde(default)]
+    pub min_required: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    pub min_desired: Option<Vec<serde_json::Value>>,
 }
 
 /// 保存済みの最適化パターン一覧を返す
@@ -185,6 +189,9 @@ pub fn get_custom_language(app: tauri::AppHandle) -> Result<String, String> {
 /// カスタム言語ファイル (custom_lang.json) を保存する
 #[tauri::command]
 pub fn save_custom_language(app: tauri::AppHandle, content: String) -> Result<(), String> {
+    // JSON構文検証（任意文字列の無検証書込みを防止）
+    serde_json::from_str::<serde_json::Value>(&content)
+        .map_err(|e| format!("Invalid JSON: {}", e))?;
     let path = app
         .path()
         .app_data_dir()

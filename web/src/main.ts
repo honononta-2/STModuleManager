@@ -95,14 +95,19 @@ let sortKeys: { k: string; d: number }[] = [];
 let optRequired: number[] = [];
 let optDesired: number[] = [];
 let optExcluded: number[] = [];
+let optMinRequired: number[] = [];
+let optMinDesired: number[] = [];
 let minQuality = 3;
 
 // --- Multi Web Worker ---
-const numWorkers = Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) / 2));
+const numWorkers = Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) * 0.9));
 const workers: Worker[] = [];
 for (let i = 0; i < numWorkers; i++) {
   workers.push(new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" }));
 }
+// WASMモジュールを1回だけコンパイルし、全Workerに転送
+WebAssembly.compileStreaming(fetch(new URL("../pkg/star_optimizer_wasm_bg.wasm", import.meta.url)))
+  .then((mod) => { for (const w of workers) w.postMessage({ type: "init", module: mod }); });
 
 // ========== Storage ==========
 function saveModulesToStorage() {
@@ -263,10 +268,18 @@ document.addEventListener("click", (e) => {
       (!activeFlyAnchor || !activeFlyAnchor.contains(e.target as Node))) {
     closeFly();
   }
+  if (detailFlyActive) {
+    const fl = $("fly-detail");
+    if (!fl.contains(e.target as Node) &&
+        (!detailFlyAnchor || !detailFlyAnchor.contains(e.target as Node))) {
+      closeDetailFly();
+    }
+  }
 });
 window.addEventListener("resize", () => {
   closeAllStatDropdowns();
   closeFly();
+  closeDetailFly();
 });
 document.addEventListener("scroll", (e) => {
   if (activeStatDdMenu && !activeStatDdMenu.contains(e.target as Node)) {
@@ -274,6 +287,12 @@ document.addEventListener("scroll", (e) => {
   }
   if (activeFlyout && !activeFlyout.contains(e.target as Node)) {
     closeFly();
+  }
+  if (detailFlyActive) {
+    const fl = $("fly-detail");
+    if (!fl.contains(e.target as Node)) {
+      closeDetailFly();
+    }
   }
 }, true);
 
@@ -586,12 +605,15 @@ interface OptPattern {
   desired: number[];
   excluded: number[];
   quality: number;
+  min_required?: number[];
+  min_desired?: number[];
 }
 
 function saveOptState() {
   const quality = Number($<HTMLSelectElement>("opt-quality").value);
   localStorage.setItem(OPT_STATE_KEY, JSON.stringify({
     required: optRequired, desired: optDesired, excluded: optExcluded, quality,
+    min_required: optMinRequired, min_desired: optMinDesired,
   }));
 }
 
@@ -604,6 +626,8 @@ function restoreOptState() {
     if (Array.isArray(s.desired)) optDesired = migrateStatNamesToIds(s.desired).filter((id) => ALL_STAT_IDS.includes(id));
     if (Array.isArray(s.excluded)) optExcluded = migrateStatNamesToIds(s.excluded).filter((id) => ALL_STAT_IDS.includes(id));
     if (s.quality) $<HTMLSelectElement>("opt-quality").value = String(s.quality);
+    if (Array.isArray(s.min_required)) optMinRequired = (s.min_required as number[]).filter((id) => ALL_STAT_IDS.includes(id) && optRequired.includes(id));
+    if (Array.isArray(s.min_desired)) optMinDesired = (s.min_desired as number[]).filter((id) => ALL_STAT_IDS.includes(id) && optDesired.includes(id));
   } catch { /* ignore */ }
 }
 
@@ -656,6 +680,8 @@ function loadPattern(idx: number) {
   optRequired = p.required.filter((id) => ALL_STAT_IDS.includes(id));
   optDesired = p.desired.filter((id) => ALL_STAT_IDS.includes(id));
   optExcluded = p.excluded.filter((id) => ALL_STAT_IDS.includes(id));
+  optMinRequired = Array.isArray(p.min_required) ? p.min_required.filter((id) => ALL_STAT_IDS.includes(id) && optRequired.includes(id)) : [];
+  optMinDesired = Array.isArray(p.min_desired) ? p.min_desired.filter((id) => ALL_STAT_IDS.includes(id) && optDesired.includes(id)) : [];
   if (p.quality) $<HTMLSelectElement>("opt-quality").value = String(p.quality);
   updateOptBtnLabel("req");
   updateOptBtnLabel("des");
@@ -666,8 +692,9 @@ function loadPattern(idx: number) {
 
 function updateOptBtnLabel(category: "req" | "des" | "excl") {
   const btnId = { req: "opt-btn-req", des: "opt-btn-des", excl: "opt-btn-excl" }[category];
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
   const items = { req: optRequired, des: optDesired, excl: optExcluded }[category];
-  const btn = $(btnId);
   btn.textContent = items.length > 0 ? fmt(t.ui.filter_count, { count: items.length }) : t.ui.filter_none;
   btn.classList.toggle("has-items", items.length > 0);
 }
@@ -727,11 +754,187 @@ function updateOptRunBtn() {
   $<HTMLButtonElement>("opt-run").disabled = optRequired.length === 0 || modules.length < 4;
 }
 
+// --- 詳細設定モーダル ---
+
+function updateDetailBtnLabels() {
+  const setBtn = (id: string, items: number[]) => {
+    const btn = $(id);
+    btn.textContent = items.length > 0 ? fmt(t.ui.filter_count, { count: items.length }) : t.ui.filter_none;
+    btn.classList.toggle("has-items", items.length > 0);
+  };
+  setBtn("detail-btn-req", optRequired);
+  setBtn("detail-btn-des", optDesired);
+  setBtn("detail-btn-excl", optExcluded);
+  setBtn("detail-btn-min-req", optMinRequired);
+  setBtn("detail-btn-min-des", optMinDesired);
+}
+
+let detailFlyActive = false;
+let detailFlyCategory = "";
+let detailFlyAnchor: HTMLElement | null = null;
+
+function closeDetailFly() {
+  const fl = $("fly-detail");
+  fl.classList.remove("on");
+  fl.style.top = "";
+  fl.style.bottom = "";
+  fl.style.maxHeight = "";
+  detailFlyActive = false;
+  detailFlyCategory = "";
+  detailFlyAnchor = null;
+}
+
+function openDetailModal() {
+  closeFly();
+  updateDetailBtnLabels();
+  $("detail-modal-bd").classList.add("on");
+}
+
+function closeDetailModal() {
+  closeDetailFly();
+  $("detail-modal-bd").classList.remove("on");
+  updateOptBtnLabel("req");
+  updateOptRunBtn();
+  saveOptState();
+}
+
+function openDetailFly(
+  anchor: HTMLElement,
+  category: "req" | "des" | "excl" | "min-req" | "min-des",
+) {
+  const fl = $("fly-detail");
+  if (detailFlyActive && detailFlyCategory === category) {
+    closeDetailFly();
+    return;
+  }
+  closeDetailFly();
+  detailFlyCategory = category;
+  detailFlyActive = true;
+  detailFlyAnchor = anchor;
+  fl.textContent = "";
+
+  if (category === "min-req" || category === "min-des") {
+    let sourceArr: number[];
+    const minArr = category === "min-req" ? optMinRequired : optMinDesired;
+
+    if (category === "min-req") {
+      sourceArr = optRequired;
+    } else {
+      // +16以上: メインステータス＋サブステータスから、+20選択済みを除外
+      const minReqSet = new Set(optMinRequired);
+      const seen = new Set<number>();
+      sourceArr = [...optRequired, ...optDesired].filter((pid) => {
+        if (seen.has(pid) || minReqSet.has(pid)) return false;
+        seen.add(pid);
+        return true;
+      });
+    }
+
+    if (sourceArr.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "fitem";
+      empty.style.opacity = "0.5";
+      empty.textContent = t.ui.filter_none;
+      fl.appendChild(empty);
+    } else {
+      sourceArr.forEach((pid) => {
+        const isSelected = minArr.includes(pid);
+        const el = document.createElement("label");
+        el.className = "fitem-check";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = isSelected;
+        cb.onchange = () => {
+          if (cb.checked) {
+            if (!minArr.includes(pid)) minArr.push(pid);
+            // +20に追加時、+16から除去
+            if (category === "min-req") {
+              const idx16 = optMinDesired.indexOf(pid);
+              if (idx16 >= 0) optMinDesired.splice(idx16, 1);
+            }
+          } else {
+            const idx = minArr.indexOf(pid);
+            if (idx >= 0) minArr.splice(idx, 1);
+          }
+          updateDetailBtnLabels();
+        };
+        el.appendChild(cb);
+        const icon = STAT_ICONS[pid];
+        if (icon) {
+          const img = document.createElement("img");
+          img.className = "sicon";
+          img.src = `/icons/${icon}`;
+          img.alt = "";
+          el.appendChild(img);
+        }
+        const span = document.createElement("span");
+        span.textContent = statName(pid);
+        el.appendChild(span);
+        fl.appendChild(el);
+      });
+    }
+  } else {
+    const current = { req: optRequired, des: optDesired, excl: optExcluded }[category];
+    const others = (["req", "des", "excl"] as const)
+      .filter((k) => k !== category)
+      .flatMap((k) => ({ req: optRequired, des: optDesired, excl: optExcluded }[k]));
+    const otherSet = new Set(others);
+
+    ALL_STAT_IDS.forEach((pid) => {
+      const isSelected = current.includes(pid);
+      const isOther = otherSet.has(pid);
+      const el = document.createElement("label");
+      el.className = "fitem-check" + (isOther ? " dim" : "");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = isSelected;
+      cb.disabled = isOther;
+      if (!isOther) {
+        cb.onchange = () => {
+          if (cb.checked) {
+            current.push(pid);
+          } else {
+            const idx = current.indexOf(pid);
+            if (idx >= 0) current.splice(idx, 1);
+            if (category === "req") {
+              const mi = optMinRequired.indexOf(pid);
+              if (mi >= 0) optMinRequired.splice(mi, 1);
+            }
+            if (category === "des") {
+              const mi = optMinDesired.indexOf(pid);
+              if (mi >= 0) optMinDesired.splice(mi, 1);
+            }
+          }
+          updateDetailBtnLabels();
+          updateOptBtnLabel("req");
+          updateOptRunBtn();
+        };
+      }
+      el.appendChild(cb);
+      const icon = STAT_ICONS[pid];
+      if (icon) {
+        const img = document.createElement("img");
+        img.className = "sicon";
+        img.src = `/icons/${icon}`;
+        img.alt = "";
+        el.appendChild(img);
+      }
+      const span = document.createElement("span");
+      span.textContent = statName(pid);
+      el.appendChild(span);
+      fl.appendChild(el);
+    });
+  }
+
+  fl.classList.add("on");
+  positionFlyout(fl, anchor);
+}
+
 // ========== Optimize (Web Workers) ==========
 
 let optOverlay: HTMLElement | null = null;
 
-function runOptimize() {
+async function runOptimize() {
   const btn = $<HTMLButtonElement>("opt-run");
   btn.classList.add("loading");
   btn.textContent = t.ui.btn_running;
@@ -742,6 +945,40 @@ function runOptimize() {
   $("opt-scroll").appendChild(optOverlay);
 
   const quality = Number($<HTMLSelectElement>("opt-quality").value);
+  const speedMode = $<HTMLSelectElement>("opt-speed").value;
+  const minThresholds: Record<number, number> = {};
+  optMinRequired.forEach((pid) => { minThresholds[pid] = 20; });
+  optMinDesired.forEach((pid) => { minThresholds[pid] = 16; });
+
+  // 総当たりモード: 候補数を事前チェックし、600件超なら警告
+  if (speedMode === "exhaustive") {
+    const countRes = await new Promise<OptimizeResponse>((resolve, reject) => {
+      workers[0].onmessage = (e: MessageEvent) => {
+        const { type, data, error } = e.data;
+        if (type === "error") reject(new Error(error));
+        else if (type === "result") resolve(data as OptimizeResponse);
+      };
+      workers[0].postMessage({
+        type: "optimize", modules,
+        request: {
+          required_stats: [...optRequired],
+          desired_stats: [...optDesired],
+          excluded_stats: [...optExcluded],
+          min_quality: quality,
+          speed_mode: speedMode,
+          count_only: true,
+        } satisfies OptimizeRequest,
+      });
+    });
+    if (countRes.filtered_count > 600) {
+      const msg = fmt(t.ui.exhaustive_warn_msg, { count: countRes.filtered_count });
+      if (!confirm(msg)) {
+        finishOptimize();
+        return;
+      }
+    }
+  }
+
   let completed = 0;
   let errored = false;
   const allCombinations: Combination[] = [];
@@ -749,7 +986,6 @@ function runOptimize() {
   let totalModules = 0;
 
   for (let i = 0; i < numWorkers; i++) {
-    const speedMode = $<HTMLSelectElement>("opt-speed").value;
     const req: OptimizeRequest = {
       required_stats: [...optRequired],
       desired_stats: [...optDesired],
@@ -758,6 +994,7 @@ function runOptimize() {
       speed_mode: speedMode as OptimizeRequest["speed_mode"],
       worker_id: i,
       num_workers: numWorkers,
+      min_thresholds: Object.keys(minThresholds).length > 0 ? minThresholds : undefined,
     };
 
     workers[i].onmessage = (e: MessageEvent) => {
@@ -1754,6 +1991,88 @@ function createLoadingOverlay(): HTMLElement {
   return overlay;
 }
 
+// ========== JSON Import ==========
+
+function importJson() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".json,application/json";
+  input.onchange = () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const raw = JSON.parse(reader.result as string);
+        if (!Array.isArray(raw)) {
+          showToast(t.ui.json_import_error, "error");
+          return;
+        }
+        const imported: ModuleInput[] = [];
+        for (const item of raw) {
+          if (typeof item !== "object" || item === null) continue;
+          // Extract stats: support both Tauri format ({name, part_id, value}) and Web format ({part_id, value})
+          const stats: StatEntry[] = [];
+          if (Array.isArray(item.stats)) {
+            for (const s of item.stats) {
+              if (typeof s.part_id === "number" && typeof s.value === "number") {
+                stats.push({ part_id: s.part_id, value: s.value });
+              }
+            }
+          }
+          if (stats.length === 0) continue;
+          const uuid = Date.now() + Math.floor(Math.random() * 1000);
+          const config_id = typeof item.config_id === "number" ? item.config_id : null;
+          const quality = typeof item.quality === "number" ? item.quality : null;
+          imported.push({ uuid, config_id, quality, stats });
+        }
+        if (imported.length === 0) {
+          showToast(t.ui.json_import_empty, "error");
+          return;
+        }
+        modules.push(...imported);
+        saveModulesToStorage();
+        renderGrid();
+        updateOptRunBtn();
+        showToast(fmt(t.ui.json_import_success, { count: imported.length }), "success");
+      } catch {
+        showToast(t.ui.json_import_error, "error");
+      }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+// ========== Backup Export ==========
+
+function exportBackup() {
+  if (modules.length === 0) {
+    showToast(t.ui.backup_empty, "error");
+    return;
+  }
+  const data = modules.map((m) => ({
+    uuid: m.uuid,
+    config_id: m.config_id,
+    quality: m.quality,
+    rarity: t.rarity[qualityToRarity(m.quality)],
+    stats: m.stats.map((s) => ({
+      name: statName(s.part_id),
+      part_id: s.part_id,
+      value: s.value,
+    })),
+    total_value: m.stats.reduce((sum, s) => sum + s.value, 0),
+  }));
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "modules.json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ========== Clear ==========
 
 let clearPending = false;
@@ -2002,8 +2321,20 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   $("opt-btn-req").onclick = (e) => openOptMultiFly(e.currentTarget as HTMLElement, "req");
-  $("opt-btn-des").onclick = (e) => openOptMultiFly(e.currentTarget as HTMLElement, "des");
-  $("opt-btn-excl").onclick = (e) => openOptMultiFly(e.currentTarget as HTMLElement, "excl");
+
+  // 詳細設定モーダル
+  $("opt-detail-btn").onclick = () => openDetailModal();
+  $("detail-btn-req").onclick = (e) => openDetailFly(e.currentTarget as HTMLElement, "req");
+  $("detail-btn-des").onclick = (e) => openDetailFly(e.currentTarget as HTMLElement, "des");
+  $("detail-btn-excl").onclick = (e) => openDetailFly(e.currentTarget as HTMLElement, "excl");
+  $("detail-btn-min-req").onclick = (e) => openDetailFly(e.currentTarget as HTMLElement, "min-req");
+  $("detail-btn-min-des").onclick = (e) => openDetailFly(e.currentTarget as HTMLElement, "min-des");
+  $("detail-confirm").onclick = () => closeDetailModal();
+  $("detail-modal-close").onclick = () => closeDetailModal();
+  $("detail-modal-bd").onclick = (e) => {
+    if (e.target === $("detail-modal-bd")) closeDetailModal();
+  };
+
   $("opt-quality").onchange = () => { minQuality = Number($<HTMLSelectElement>("opt-quality").value); saveOptState(); };
   $("opt-run").onclick = () => runOptimize();
 
@@ -2014,7 +2345,7 @@ document.addEventListener("DOMContentLoaded", () => {
     desc.textContent = t.ui.speed_info_desc;
     desc.style.cssText = "margin:0 0 12px;font-size:13px;line-height:1.6";
     body.appendChild(desc);
-    const items = [t.ui.speed_info_standard, t.ui.speed_info_precise, t.ui.speed_info_most_precise];
+    const items = [t.ui.speed_info_standard, t.ui.speed_info_precise, t.ui.speed_info_most_precise, t.ui.speed_info_exhaustive];
     const ul = document.createElement("ul");
     ul.style.cssText = "margin:0 0 12px;padding-left:20px;font-size:13px;line-height:1.8";
     items.forEach((text) => { const li = document.createElement("li"); li.textContent = text; ul.appendChild(li); });
@@ -2079,7 +2410,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const idx = Number($<HTMLSelectElement>("pattern-select").value);
       const existing = patterns[idx];
       if (!existing) return;
-      const entry: OptPattern = { name: existing.name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality };
+      const entry: OptPattern = { name: existing.name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality, min_required: [...optMinRequired], min_desired: [...optMinDesired] };
       patterns[idx] = entry;
       savePatterns(patterns);
       closePatsaveModal();
@@ -2090,7 +2421,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const name = patsaveInput.value.trim();
       if (!name) return;
       const duplicateIdx = patterns.findIndex((p) => p.name === name);
-      const entry: OptPattern = { name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality };
+      const entry: OptPattern = { name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality, min_required: [...optMinRequired], min_desired: [...optMinDesired] };
       if (duplicateIdx >= 0) patterns[duplicateIdx] = entry;
       else patterns.push(entry);
       savePatterns(patterns);
@@ -2176,9 +2507,11 @@ document.addEventListener("DOMContentLoaded", () => {
   $("screenshot-info-btn").onclick = () => showScreenshotInfo();
   $("screenshot-info-close").onclick = () => closeScreenshotInfo();
   $("screenshot-info-bd").onclick = (e) => { if (e.target === $("screenshot-info-bd")) closeScreenshotInfo(); };
+  $("json-import-btn").onclick = () => importJson();
   $("clear-btn").onclick = () => clearModules();
 
   // Sidebar
+  $("backup-export-btn").onclick = () => exportBackup();
   $("hamburger-btn").onclick = () => openSidebar();
   $("sidebar-close").onclick = () => closeSidebar();
   $("sidebar-bd").onclick = () => closeSidebar();

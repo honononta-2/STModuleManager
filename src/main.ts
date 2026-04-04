@@ -35,7 +35,8 @@ function esc(str: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function utcToJst(utcStr: string): string {
@@ -148,6 +149,8 @@ let sortKeys: { k: string; d: number }[] = [];
 let optRequired: number[] = [];
 let optDesired: number[] = [];
 let optExcluded: number[] = [];
+let optMinRequired: number[] = [];
+let optMinDesired: number[] = [];
 
 // --- DOM ---
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -286,7 +289,7 @@ function updateFilterBtnLabel() {
 function addFlySection(
   fl: HTMLElement,
   title: string,
-  items: { label: string; checked: boolean }[],
+  items: { label: string; checked: boolean; iconSrc?: string }[],
   onChange: (index: number, checked: boolean) => void,
 ) {
   const header = document.createElement("div");
@@ -301,9 +304,16 @@ function addFlySection(
     cb.type = "checkbox";
     cb.checked = item.checked;
     cb.onchange = () => onChange(i, cb.checked);
+    el.appendChild(cb);
+    if (item.iconSrc) {
+      const img = document.createElement("img");
+      img.className = "sicon";
+      img.src = item.iconSrc;
+      img.alt = "";
+      el.appendChild(img);
+    }
     const span = document.createElement("span");
     span.textContent = item.label;
-    el.appendChild(cb);
     el.appendChild(span);
     fl.appendChild(el);
   });
@@ -346,7 +356,10 @@ function openFilterMultiFly(anchor: HTMLElement) {
   // Section: ステータス
   const allStatIds = Object.keys(t.stat_names).map(Number);
   addFlySection(fl, t.ui.fly_stat,
-    allStatIds.map((pid) => ({ label: statName(pid), checked: filterStats.includes(pid) })),
+    allStatIds.map((pid) => {
+      const icon = STAT_ICONS[pid];
+      return { label: statName(pid), checked: filterStats.includes(pid), iconSrc: icon ? `/icons/${icon}` : undefined };
+    }),
     (i, checked) => {
       const pid = allStatIds[i];
       if (checked) filterStats.push(pid);
@@ -355,11 +368,10 @@ function openFilterMultiFly(anchor: HTMLElement) {
     },
   );
 
-  const r = anchor.getBoundingClientRect();
-  fl.style.left = r.left + "px";
-  fl.style.top = r.bottom + 4 + "px";
   fl.classList.add("on");
-  $("bd").classList.add("on");
+  activeFlyout = fl;
+  activeFlyAnchor = anchor;
+  positionFly(fl, anchor);
 }
 
 function renderSChips() {
@@ -405,16 +417,27 @@ function renderSChips() {
 function openFly(
   flyId: string,
   anchor: HTMLElement,
-  items: { label: string; val: string; disabled: boolean }[],
+  items: { label: string; val: string; disabled: boolean; iconSrc?: string }[],
   onPick: (item: { label: string; val: string }) => void
 ) {
   closeFly();
   const fl = $(flyId);
-  fl.innerHTML = "";
+  fl.textContent = "";
   items.forEach((it) => {
     const el = document.createElement("div");
     el.className = "fitem" + (it.disabled ? " dim" : "");
-    el.textContent = it.label;
+    if (it.iconSrc) {
+      const img = document.createElement("img");
+      img.className = "sicon";
+      img.src = it.iconSrc;
+      img.alt = "";
+      el.appendChild(img);
+      const span = document.createElement("span");
+      span.textContent = it.label;
+      el.appendChild(span);
+    } else {
+      el.textContent = it.label;
+    }
     if (!it.disabled)
       el.onclick = () => {
         closeFly();
@@ -422,16 +445,46 @@ function openFly(
       };
     fl.appendChild(el);
   });
-  const r = anchor.getBoundingClientRect();
-  fl.style.left = r.left + "px";
-  fl.style.top = r.bottom + 4 + "px";
   fl.classList.add("on");
-  $("bd").classList.add("on");
+  activeFlyout = fl;
+  activeFlyAnchor = anchor;
+  positionFly(fl, anchor);
+}
+
+let activeFlyout: HTMLElement | null = null;
+let activeFlyAnchor: HTMLElement | null = null;
+
+function positionFly(fl: HTMLElement, anchor: HTMLElement) {
+  const r = anchor.getBoundingClientRect();
+  const menuH = fl.scrollHeight;
+  const spaceBelow = window.innerHeight - r.bottom - 4;
+  const spaceAbove = r.top - 4;
+
+  fl.style.left = r.left + "px";
+  fl.style.minWidth = r.width + "px";
+
+  if (spaceBelow >= menuH || spaceBelow >= spaceAbove) {
+    fl.style.top = r.bottom + 2 + "px";
+    fl.style.bottom = "";
+    fl.style.maxHeight = Math.min(240, spaceBelow) + "px";
+  } else {
+    fl.style.top = "";
+    fl.style.bottom = (window.innerHeight - r.top + 2) + "px";
+    fl.style.maxHeight = Math.min(240, spaceAbove) + "px";
+  }
 }
 
 function closeFly() {
-  document.querySelectorAll(".flyout").forEach((f) => f.classList.remove("on"));
-  $("bd").classList.remove("on");
+  document.querySelectorAll(".flyout").forEach((f) => {
+    (f as HTMLElement).classList.remove("on");
+    (f as HTMLElement).style.top = "";
+    (f as HTMLElement).style.bottom = "";
+    (f as HTMLElement).style.maxHeight = "";
+    (f as HTMLElement).style.minWidth = "";
+  });
+  activeFlyout = null;
+  activeFlyAnchor = null;
+  detailFlyAnchor = null;
 }
 
 // --- Optimizer state persistence ---
@@ -456,6 +509,8 @@ interface OptPattern {
   desired: (string | number)[];
   excluded: (string | number)[];
   quality: number;
+  min_required?: number[];
+  min_desired?: number[];
 }
 
 function saveOptState() {
@@ -465,6 +520,8 @@ function saveOptState() {
     desired: optDesired,
     excluded: optExcluded,
     quality,
+    min_required: optMinRequired,
+    min_desired: optMinDesired,
   }));
 }
 
@@ -477,6 +534,8 @@ function restoreOptState() {
     if (Array.isArray(s.desired)) optDesired = toPartIds(s.desired);
     if (Array.isArray(s.excluded)) optExcluded = toPartIds(s.excluded);
     if (s.quality) ($<HTMLSelectElement>("opt-quality")).value = String(s.quality);
+    if (Array.isArray(s.min_required)) optMinRequired = toPartIds(s.min_required).filter((id) => optRequired.includes(id));
+    if (Array.isArray(s.min_desired)) optMinDesired = toPartIds(s.min_desired).filter((id) => optDesired.includes(id));
   } catch { /* ignore */ }
 }
 
@@ -524,6 +583,8 @@ function loadPattern(idx: number) {
   optRequired = toPartIds(p.required);
   optDesired = toPartIds(p.desired);
   optExcluded = toPartIds(p.excluded);
+  optMinRequired = Array.isArray(p.min_required) ? toPartIds(p.min_required).filter((id) => optRequired.includes(id)) : [];
+  optMinDesired = Array.isArray(p.min_desired) ? toPartIds(p.min_desired).filter((id) => optDesired.includes(id)) : [];
   if (p.quality) ($<HTMLSelectElement>("opt-quality")).value = String(p.quality);
   updateOptBtnLabel("req");
   updateOptBtnLabel("des");
@@ -536,8 +597,9 @@ function loadPattern(idx: number) {
 
 function updateOptBtnLabel(category: "req" | "des" | "excl") {
   const btnId = { req: "opt-btn-req", des: "opt-btn-des", excl: "opt-btn-excl" }[category];
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
   const items = { req: optRequired, des: optDesired, excl: optExcluded }[category];
-  const btn = $(btnId);
   btn.textContent = items.length > 0 ? fmt(t.ui.filter_count, { count: items.length }) : t.ui.filter_none;
   btn.classList.toggle("has-items", items.length > 0);
 }
@@ -580,22 +642,202 @@ function openOptMultiFly(anchor: HTMLElement, category: "req" | "des" | "excl") 
         saveOptState();
       };
     }
+    el.appendChild(cb);
+    const iconFile = STAT_ICONS[pid];
+    if (iconFile) {
+      const img = document.createElement("img");
+      img.className = "sicon";
+      img.src = `/icons/${iconFile}`;
+      img.alt = "";
+      el.appendChild(img);
+    }
     const span = document.createElement("span");
     span.textContent = statName(pid);
-    el.appendChild(cb);
     el.appendChild(span);
     fl.appendChild(el);
   });
 
-  const r = anchor.getBoundingClientRect();
-  fl.style.left = r.left + "px";
-  fl.style.top = r.bottom + 4 + "px";
   fl.classList.add("on");
-  $("bd").classList.add("on");
+  activeFlyout = fl;
+  activeFlyAnchor = anchor;
+  positionFly(fl, anchor);
 }
 
 function updateOptRunBtn() {
   ($<HTMLButtonElement>("opt-run")).disabled = optRequired.length === 0;
+}
+
+// --- 詳細設定モーダル ---
+
+function updateDetailBtnLabels() {
+  const setBtn = (id: string, items: number[]) => {
+    const btn = $(id);
+    btn.textContent = items.length > 0 ? fmt(t.ui.filter_count, { count: items.length }) : t.ui.filter_none;
+    btn.classList.toggle("has-items", items.length > 0);
+  };
+  setBtn("detail-btn-req", optRequired);
+  setBtn("detail-btn-des", optDesired);
+  setBtn("detail-btn-excl", optExcluded);
+  setBtn("detail-btn-min-req", optMinRequired);
+  setBtn("detail-btn-min-des", optMinDesired);
+}
+
+let detailFlyAnchor: HTMLElement | null = null;
+
+function closeDetailFly() {
+  const fl = $("fly-detail");
+  fl.classList.remove("on");
+  fl.style.top = "";
+  fl.style.bottom = "";
+  fl.style.maxHeight = "";
+  detailFlyAnchor = null;
+}
+
+function openDetailModal() {
+  closeFly();
+  updateDetailBtnLabels();
+  $("detail-modal-bd").classList.add("on");
+}
+
+function closeDetailModal() {
+  closeDetailFly();
+  $("detail-modal-bd").classList.remove("on");
+  updateOptBtnLabel("req");
+  updateOptRunBtn();
+  saveOptState();
+}
+
+function openDetailFly(
+  anchor: HTMLElement,
+  category: "req" | "des" | "excl" | "min-req" | "min-des",
+) {
+  const fl = $("fly-detail");
+  if (fl.classList.contains("on") && fl.dataset.category === category) {
+    closeDetailFly();
+    return;
+  }
+  closeDetailFly();
+  fl.dataset.category = category;
+  detailFlyAnchor = anchor;
+  fl.textContent = "";
+
+  const allStatIds = Object.keys(t.stat_names).map(Number);
+
+  if (category === "min-req" || category === "min-des") {
+    let sourceArr: number[];
+    const minArr = category === "min-req" ? optMinRequired : optMinDesired;
+
+    if (category === "min-req") {
+      sourceArr = optRequired;
+    } else {
+      // +16以上: メインステータス＋サブステータスから、+20選択済みを除外
+      const minReqSet = new Set(optMinRequired);
+      const seen = new Set<number>();
+      sourceArr = [...optRequired, ...optDesired].filter((pid) => {
+        if (seen.has(pid) || minReqSet.has(pid)) return false;
+        seen.add(pid);
+        return true;
+      });
+    }
+
+    if (sourceArr.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "fitem";
+      empty.style.opacity = "0.5";
+      empty.textContent = t.ui.filter_none;
+      fl.appendChild(empty);
+    } else {
+      sourceArr.forEach((pid) => {
+        const isSelected = minArr.includes(pid);
+        const el = document.createElement("label");
+        el.className = "fitem-check";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = isSelected;
+        cb.onchange = () => {
+          if (cb.checked) {
+            if (!minArr.includes(pid)) minArr.push(pid);
+            // +20に追加時、+16から除去
+            if (category === "min-req") {
+              const idx16 = optMinDesired.indexOf(pid);
+              if (idx16 >= 0) optMinDesired.splice(idx16, 1);
+            }
+          } else {
+            const idx = minArr.indexOf(pid);
+            if (idx >= 0) minArr.splice(idx, 1);
+          }
+          updateDetailBtnLabels();
+        };
+        el.appendChild(cb);
+        const iconFile = STAT_ICONS[pid];
+        if (iconFile) {
+          const img = document.createElement("img");
+          img.className = "sicon";
+          img.src = `/icons/${iconFile}`;
+          img.alt = "";
+          el.appendChild(img);
+        }
+        const span = document.createElement("span");
+        span.textContent = statName(pid);
+        el.appendChild(span);
+        fl.appendChild(el);
+      });
+    }
+  } else {
+    const current = { req: optRequired, des: optDesired, excl: optExcluded }[category];
+    const others = (["req", "des", "excl"] as const)
+      .filter((k) => k !== category)
+      .flatMap((k) => ({ req: optRequired, des: optDesired, excl: optExcluded }[k]));
+    const otherSet = new Set(others);
+
+    allStatIds.forEach((pid) => {
+      const isSelected = current.includes(pid);
+      const isOther = otherSet.has(pid);
+      const el = document.createElement("label");
+      el.className = "fitem-check" + (isOther ? " dim" : "");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = isSelected;
+      cb.disabled = isOther;
+      if (!isOther) {
+        cb.onchange = () => {
+          if (cb.checked) {
+            current.push(pid);
+          } else {
+            const idx = current.indexOf(pid);
+            if (idx >= 0) current.splice(idx, 1);
+            if (category === "req") {
+              const mi = optMinRequired.indexOf(pid);
+              if (mi >= 0) optMinRequired.splice(mi, 1);
+            }
+            if (category === "des") {
+              const mi = optMinDesired.indexOf(pid);
+              if (mi >= 0) optMinDesired.splice(mi, 1);
+            }
+          }
+          updateDetailBtnLabels();
+          updateOptBtnLabel("req");
+          updateOptRunBtn();
+        };
+      }
+      el.appendChild(cb);
+      const iconFile = STAT_ICONS[pid];
+      if (iconFile) {
+        const img = document.createElement("img");
+        img.className = "sicon";
+        img.src = `/icons/${iconFile}`;
+        img.alt = "";
+        el.appendChild(img);
+      }
+      const span = document.createElement("span");
+      span.textContent = statName(pid);
+      el.appendChild(span);
+      fl.appendChild(el);
+    });
+  }
+
+  fl.classList.add("on");
+  positionFly(fl, anchor);
 }
 
 async function runOptimize() {
@@ -617,15 +859,35 @@ async function runOptimize() {
 
   const quality = Number(($<HTMLSelectElement>("opt-quality")).value);
   const speedMode = ($<HTMLSelectElement>("opt-speed")).value;
+  const minThresholds: Record<number, number> = {};
+  optMinRequired.forEach((pid) => { minThresholds[pid] = 20; });
+  optMinDesired.forEach((pid) => { minThresholds[pid] = 16; });
   const req = {
     required_stats: optRequired,
     desired_stats: optDesired,
     excluded_stats: optExcluded,
     min_quality: quality,
     speed_mode: speedMode,
+    min_thresholds: Object.keys(minThresholds).length > 0 ? minThresholds : undefined,
   };
 
   try {
+    // 総当たりモード: 候補数を事前チェックし、600件超なら警告
+    if (speedMode === "exhaustive") {
+      const countRes = await invoke<OptimizeResponse>("optimize_modules", {
+        req: { ...req, count_only: true },
+      });
+      if (countRes.filtered_count > 600) {
+        const msg = fmt(t.ui.exhaustive_warn_msg, { count: countRes.filtered_count });
+        if (!confirm(msg)) {
+          overlay.remove();
+          btn.classList.remove("loading");
+          btn.textContent = t.ui.btn_run;
+          return;
+        }
+      }
+    }
+
     const res = await invoke<OptimizeResponse>("optimize_modules", { req });
     renderOptResults(res);
   } catch (e) {
@@ -975,11 +1237,15 @@ async function init() {
       { label: t.ui.sort_total, val: "total", disabled: ex.has("total") },
     ];
     const allStatIds = Object.keys(t.stat_names).map(Number);
-    const statItems = allStatIds.map((pid) => ({
-      label: statName(pid),
-      val: String(pid),
-      disabled: ex.has(String(pid)),
-    }));
+    const statItems = allStatIds.map((pid) => {
+      const iconFile = STAT_ICONS[pid];
+      return {
+        label: statName(pid),
+        val: String(pid),
+        disabled: ex.has(String(pid)),
+        iconSrc: iconFile ? `/icons/${iconFile}` : undefined,
+      };
+    });
     openFly(
       "fly-s",
       e.currentTarget as HTMLElement,
@@ -992,19 +1258,50 @@ async function init() {
     );
   };
 
-  // Backdrop
-  $("bd").onclick = closeFly;
+  // Close flyout on outside click / wheel / resize
+  document.addEventListener("click", (e) => {
+    if (activeFlyout && !activeFlyout.contains(e.target as Node) &&
+        (!activeFlyAnchor || !activeFlyAnchor.contains(e.target as Node))) {
+      closeFly();
+    }
+    const fl = $("fly-detail");
+    if (fl.classList.contains("on") &&
+        !fl.contains(e.target as Node) &&
+        (!detailFlyAnchor || !detailFlyAnchor.contains(e.target as Node))) {
+      closeDetailFly();
+    }
+  });
+  window.addEventListener("resize", () => {
+    closeFly();
+    closeDetailFly();
+  });
+  document.addEventListener("wheel", (e) => {
+    if (activeFlyout && !activeFlyout.contains(e.target as Node)) {
+      closeFly();
+    }
+    const fl = $("fly-detail");
+    if (fl.classList.contains("on") && !fl.contains(e.target as Node)) {
+      closeDetailFly();
+    }
+  }, true);
 
   // --- Optimizer panel ---
 
   $("opt-btn-req").onclick = (e) => {
     openOptMultiFly(e.currentTarget as HTMLElement, "req");
   };
-  $("opt-btn-des").onclick = (e) => {
-    openOptMultiFly(e.currentTarget as HTMLElement, "des");
-  };
-  $("opt-btn-excl").onclick = (e) => {
-    openOptMultiFly(e.currentTarget as HTMLElement, "excl");
+
+  // 詳細設定モーダル
+  $("opt-detail-btn").onclick = () => openDetailModal();
+  $("detail-btn-req").onclick = (e) => openDetailFly(e.currentTarget as HTMLElement, "req");
+  $("detail-btn-des").onclick = (e) => openDetailFly(e.currentTarget as HTMLElement, "des");
+  $("detail-btn-excl").onclick = (e) => openDetailFly(e.currentTarget as HTMLElement, "excl");
+  $("detail-btn-min-req").onclick = (e) => openDetailFly(e.currentTarget as HTMLElement, "min-req");
+  $("detail-btn-min-des").onclick = (e) => openDetailFly(e.currentTarget as HTMLElement, "min-des");
+  $("detail-confirm").onclick = () => closeDetailModal();
+  $("detail-modal-close").onclick = () => closeDetailModal();
+  $("detail-modal-bd").onclick = (e) => {
+    if (e.target === $("detail-modal-bd")) closeDetailModal();
   };
 
   $("opt-quality").onchange = () => saveOptState();
@@ -1018,7 +1315,7 @@ async function init() {
     desc.textContent = t.ui.speed_info_desc;
     desc.style.cssText = "margin:0 0 12px;font-size:13px;line-height:1.6";
     body.appendChild(desc);
-    const items = [t.ui.speed_info_standard, t.ui.speed_info_precise, t.ui.speed_info_most_precise];
+    const items = [t.ui.speed_info_standard, t.ui.speed_info_precise, t.ui.speed_info_most_precise, t.ui.speed_info_exhaustive];
     const ul = document.createElement("ul");
     ul.style.cssText = "margin:0 0 12px;padding-left:20px;font-size:13px;line-height:1.8";
     items.forEach((text) => {
@@ -1059,6 +1356,8 @@ async function init() {
       desired: [...optDesired],
       excluded: [...optExcluded],
       quality,
+      min_required: [...optMinRequired],
+      min_desired: [...optMinDesired],
     };
     if (existing >= 0) {
       patterns[existing] = entry;

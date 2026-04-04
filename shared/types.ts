@@ -11,8 +11,8 @@ export interface ModuleInput {
   stats: StatEntry[];
 }
 
-/** 探索スピードモード: "standard"=標準(170件), "precise"=高精度(250件), "most_precise"=最高精度(300件) */
-export type SpeedMode = "standard" | "precise" | "most_precise";
+/** 探索スピードモード: "standard"=標準(200件), "precise"=高精度(300件), "most_precise"=最高精度(600件), "exhaustive"=総当たり */
+export type SpeedMode = "standard" | "precise" | "most_precise" | "exhaustive";
 
 export interface OptimizeRequest {
   required_stats: number[];
@@ -22,6 +22,10 @@ export interface OptimizeRequest {
   speed_mode?: SpeedMode;
   worker_id?: number;
   num_workers?: number;
+  /** ステータス最低値制約: part_id → 最低合計値 (例: {1110: 20, 1205: 16}) */
+  min_thresholds?: Record<number, number>;
+  /** カウントのみモード: フィルタ後の候補数だけ返す */
+  count_only?: boolean;
 }
 
 export interface OptimizeResponse {

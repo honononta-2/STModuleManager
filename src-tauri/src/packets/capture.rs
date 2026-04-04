@@ -11,6 +11,30 @@ use windivert::WinDivert;
 use windivert::prelude::WinDivertFlags;
 
 const MAX_BACKTRACK_BYTES: u32 = 2 * 1024 * 1024;
+/// zstd展開の最大出力サイズ（展開爆弾対策）
+const MAX_DECOMPRESS_BYTES: usize = 16 * 1024 * 1024; // 16 MB
+
+/// サイズ制限付きzstd展開。出力が MAX_DECOMPRESS_BYTES を超えた場合はエラーを返す。
+fn zstd_decode_limited(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+    use std::io::Read;
+    let mut decoder = zstd::stream::Decoder::new(data)?;
+    let mut output = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = decoder.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        output.extend_from_slice(&buf[..n]);
+        if output.len() > MAX_DECOMPRESS_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "decompressed data exceeds size limit",
+            ));
+        }
+    }
+    Ok(output)
+}
 
 /// キャプチャした1パケットの情報（モジュール関連のみ送信）
 pub struct ModulePayload {
@@ -187,7 +211,7 @@ fn process_frame(mut reader: BinaryReader, module_tx: &Sender<ModulePayload>) {
                 }
                 let nested = inner.read_remaining().to_vec();
                 let nested_data = if is_zstd {
-                    match zstd::decode_all(nested.as_slice()) {
+                    match zstd_decode_limited(nested.as_slice()) {
                         Ok(d) => d,
                         Err(_) => continue,
                     }
@@ -215,7 +239,7 @@ fn parse_service_frame(reader: &mut BinaryReader, compressed: bool) -> Option<(u
 
     let payload = reader.read_remaining().to_vec();
     if compressed {
-        zstd::decode_all(payload.as_slice()).ok().map(|d| (method_id, d))
+        zstd_decode_limited(payload.as_slice()).ok().map(|d| (method_id, d))
     } else {
         Some((method_id, payload))
     }
@@ -286,7 +310,7 @@ fn try_detect_game_server(tcp_payload: &[u8]) -> bool {
                     let nested = inner.read_remaining();
                     let is_zstd = (packet_type & 0x8000) != 0;
                     let nested_data = if is_zstd {
-                        match zstd::decode_all(nested) {
+                        match zstd_decode_limited(nested) {
                             Ok(d) => d,
                             Err(_) => continue,
                         }

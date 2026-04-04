@@ -1,3 +1,8 @@
 [workspace]
 members = ["crates/optimizer", "src-tauri", "web/wasm"]
 resolver = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

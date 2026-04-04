@@ -61,7 +61,11 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => restore_window(app),
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        let bg = app.state::<BackgroundActive>();
+                        bg.0.store(false, Ordering::Relaxed);
+                        app.exit(0);
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
