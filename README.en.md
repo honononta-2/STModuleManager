@@ -130,6 +130,16 @@ The candidate count N can be adjusted via the search precision setting.
 | Standard (default) | 200 | Fast with sufficient accuracy |
 | Precise | 300 | Wider search range for better accuracy |
 | Most Precise | 600 | Most accurate but takes the longest |
+| Brute Force | All | Full search without filtering (see below) |
+
+#### Brute Force Mode
+
+> [!CAUTION]
+> Brute Force mode **may take up to several hours to complete**. For normal use, Standard to Most Precise provides sufficiently accurate results, so this mode is generally not recommended.
+>
+> This mode skips the relevance filter and contribution score narrowing, applying only the rarity filter while searching all modules. While it theoretically produces the most accurate results, the number of combinations grows explosively with more modules, requiring very long processing times.
+>
+> Use this only when you absolutely cannot afford to miss the optimal result, or when you want to verify that the candidate narrowing hasn't missed anything.
 
 After filtering, **multi-core parallel search** via Rayon and **branch pruning** (cutting off when the optimistic upper-bound score — adding +20 to remaining stats after choosing 2 — falls below the current best) are combined to complete the search within a practical time on CPU.
 
