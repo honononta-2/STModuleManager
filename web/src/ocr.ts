@@ -466,32 +466,50 @@ function detectScale(grayImage: any, cv: any): number {
   let bestScale = 0.5;
   let bestScore = -1;
 
-  for (let scale = 0.2; scale <= 0.65; scale += 0.02) {
+  const resized = new cv.Mat();
+  const result = new cv.Mat();
+
+  const testScaleOn = (image: any, scale: number, sizeMul: number) => {
     let maxScore = 0;
     for (const ref of refs) {
-      const w = Math.round(ref.grayMat.cols * scale);
-      const h = Math.round(ref.grayMat.rows * scale);
-      if (w < 10 || h < 10 || w >= grayImage.cols || h >= grayImage.rows)
+      const w = Math.round(ref.grayMat.cols * scale * sizeMul);
+      const h = Math.round(ref.grayMat.rows * scale * sizeMul);
+      if (w < 5 || h < 5 || w >= image.cols || h >= image.rows)
         continue;
 
-      const resized = new cv.Mat();
       cv.resize(ref.grayMat, resized, new cv.Size(w, h));
-
-      const result = new cv.Mat();
-      cv.matchTemplate(grayImage, resized, result, cv.TM_CCOEFF_NORMED);
+      cv.matchTemplate(image, resized, result, cv.TM_CCOEFF_NORMED);
 
       const { maxVal } = cv.minMaxLoc(result);
       if (maxVal > maxScore) maxScore = maxVal;
-
-      resized.delete();
-      result.delete();
     }
-
     if (maxScore > bestScore) {
       bestScore = maxScore;
       bestScale = scale;
     }
+  };
+
+  // 粗探索: 半分の解像度でステップ0.05（matchTemplate計算量が1/4）
+  const halfGray = new cv.Mat();
+  cv.resize(grayImage, halfGray, new cv.Size(
+    Math.round(grayImage.cols / 2),
+    Math.round(grayImage.rows / 2),
+  ));
+  for (let scale = 0.2; scale <= 0.65; scale += 0.05) {
+    testScaleOn(halfGray, scale, 0.5);
   }
+  halfGray.delete();
+
+  // 精密探索: フル解像度でベスト周辺 ±0.04 をステップ0.02で
+  // (粗探索ステップ0.05の最大誤差0.025 < 0.04なので必ず最適値をカバー)
+  const fineStart = Math.max(0.2, bestScale - 0.04);
+  const fineEnd = Math.min(0.65, bestScale + 0.04);
+  for (let scale = fineStart; scale <= fineEnd; scale += 0.02) {
+    testScaleOn(grayImage, scale, 1);
+  }
+
+  resized.delete();
+  result.delete();
 
   return bestScale;
 }
@@ -1861,6 +1879,7 @@ function classifyModuleIconByOcrGraySliding(
   let bestMatch: ModuleIconMatch | null = null;
   let secondBestScore = -1;
   const result = new cv.Mat();
+  const resizedTmpl = new cv.Mat();
 
   const scaleMultipliers = [0.85, 0.9, 0.95, 1.0, 1.05, 1.1];
 
@@ -1875,12 +1894,10 @@ function classifyModuleIconByOcrGraySliding(
         continue;
       }
 
-      const resized = new cv.Mat();
-      cv.resize(tmpl.grayEqMat, resized, new cv.Size(tw, th));
-      cv.matchTemplate(roiGray, resized, result, cv.TM_CCOEFF_NORMED);
+      cv.resize(tmpl.grayEqMat, resizedTmpl, new cv.Size(tw, th));
+      cv.matchTemplate(roiGray, resizedTmpl, result, cv.TM_CCOEFF_NORMED);
       const mm = cv.minMaxLoc(result);
       const score = isNaN(mm.maxVal) ? 0 : mm.maxVal;
-      resized.delete();
 
       if (bestMatch === null || score > bestMatch.score) {
         secondBestScore = bestMatch?.score ?? -1;
@@ -1902,6 +1919,7 @@ function classifyModuleIconByOcrGraySliding(
   }
 
   result.delete();
+  resizedTmpl.delete();
   roiGray.delete();
 
   if (bestMatch) {
@@ -1949,6 +1967,11 @@ function classifyModuleIconByExistingTemplates(
   ]);
   const scaleRange = [...scaleCandidates].sort((a, b) => a - b);
 
+  const resizedEdge = new cv.Mat();
+  const edgeResult = new cv.Mat();
+  const resizedGray = new cv.Mat();
+  const grayResult = new cv.Mat();
+
   for (const scaleMul of scaleRange) {
     const modScale = scaleMul;
 
@@ -1958,26 +1981,18 @@ function classifyModuleIconByExistingTemplates(
       if (tw < 10 || th < 10 || tw >= sw || th >= roiH) continue;
 
       // エッジマッチング
-      const resizedEdge = new cv.Mat();
       cv.resize(tmpl.edgeMat, resizedEdge, new cv.Size(tw, th));
-      const edgeResult = new cv.Mat();
       cv.matchTemplate(roiEdge, resizedEdge, edgeResult, cv.TM_CCOEFF_NORMED);
       const edgeLoc = cv.minMaxLoc(edgeResult);
       const edgeScore = edgeLoc.maxVal;
-      resizedEdge.delete();
-      edgeResult.delete();
 
       // グレーマッチング (best variant)
       let bestGrayScore = 0;
       for (const variant of tmpl.classifyVariants) {
-        const resizedGray = new cv.Mat();
         cv.resize(variant.grayMat, resizedGray, new cv.Size(tw, th));
-        const grayResult = new cv.Mat();
         cv.matchTemplate(roiGray, resizedGray, grayResult, cv.TM_CCOEFF_NORMED);
         const gs = cv.minMaxLoc(grayResult).maxVal;
         if (gs > bestGrayScore) bestGrayScore = gs;
-        resizedGray.delete();
-        grayResult.delete();
       }
 
       const combined = edgeScore * 0.5 + bestGrayScore * 0.5;
@@ -2001,6 +2016,10 @@ function classifyModuleIconByExistingTemplates(
     }
   }
 
+  resizedEdge.delete();
+  edgeResult.delete();
+  resizedGray.delete();
+  grayResult.delete();
   roiGray.delete();
   roiEdge.delete();
 
@@ -2061,19 +2080,18 @@ function classifyModuleIconByUserTemplates(
 
   const topCandidates: UserModuleCandidate[] = [];
 
+  const resizedUser = new cv.Mat();
+  const resultUser = new cv.Mat();
+
   for (const tmpl of userModuleOcrTemplates) {
     for (const ratio of sizeRatios) {
       const tw = Math.round(tileSize * ratio);
       const th = tw;
       if (tw < 24 || th < 24 || tw >= tileW || th >= tileH) continue;
 
-      const resized = new cv.Mat();
-      cv.resize(tmpl.colorMat, resized, new cv.Size(tw, th));
-      const result = new cv.Mat();
-      cv.matchTemplate(roiColor, resized, result, cv.TM_CCOEFF_NORMED);
-      const { maxVal, maxLoc } = cv.minMaxLoc(result);
-      resized.delete();
-      result.delete();
+      cv.resize(tmpl.colorMat, resizedUser, new cv.Size(tw, th));
+      cv.matchTemplate(roiColor, resizedUser, resultUser, cv.TM_CCOEFF_NORMED);
+      const { maxVal, maxLoc } = cv.minMaxLoc(resultUser);
 
       const cx = maxLoc.x + tw / 2;
       const cy = maxLoc.y + th / 2;
@@ -2096,6 +2114,9 @@ function classifyModuleIconByUserTemplates(
       }
     }
   }
+
+  resizedUser.delete();
+  resultUser.delete();
 
   const bestCandidate = topCandidates[0];
   roiColor.delete();

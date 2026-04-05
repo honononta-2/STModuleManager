@@ -2052,16 +2052,12 @@ function exportBackup() {
     return;
   }
   const data = modules.map((m) => ({
-    uuid: m.uuid,
     config_id: m.config_id,
     quality: m.quality,
-    rarity: t.rarity[qualityToRarity(m.quality)],
     stats: m.stats.map((s) => ({
-      name: statName(s.part_id),
       part_id: s.part_id,
       value: s.value,
     })),
-    total_value: m.stats.reduce((sum, s) => sum + s.value, 0),
   }));
   const json = JSON.stringify(data, null, 2);
   const blob = new Blob([json], { type: "application/json" });
@@ -2273,6 +2269,65 @@ function setupImagePinchZoom(container: HTMLElement, gi: number) {
     if (now - lastTap < 300) { scale = 1; translateX = 0; translateY = 0; applyTransform(); }
     lastTap = now;
   });
+
+  // ---- PC: click to zoom toggle + drag to pan ----
+  const DRAG_THRESHOLD = 5;
+  let mouseDown = false;
+  let didDrag = false;
+  let mDownX = 0;
+  let mDownY = 0;
+  let mPanStartTX = 0;
+  let mPanStartTY = 0;
+
+  container.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    mouseDown = true;
+    didDrag = false;
+    mDownX = e.clientX;
+    mDownY = e.clientY;
+    mPanStartTX = translateX;
+    mPanStartTY = translateY;
+    if (scale > 1) container.style.cursor = "grabbing";
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!mouseDown) return;
+    const dx = e.clientX - mDownX;
+    const dy = e.clientY - mDownY;
+    if (!didDrag && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+    didDrag = true;
+    if (scale > 1) {
+      translateX = mPanStartTX + dx;
+      translateY = mPanStartTY + dy;
+      clampTranslate();
+      applyTransform();
+    }
+  });
+
+  window.addEventListener("mouseup", (e) => {
+    if (!mouseDown) return;
+    mouseDown = false;
+    container.style.cursor = "";
+    if (didDrag) return;
+    // click (no drag) → toggle zoom
+    const rect = container.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+    if (scale <= 1) {
+      // zoom in to 2x, centering on click point
+      const newScale = 2;
+      translateX = clickX - clickX * newScale;
+      translateY = clickY - clickY * newScale;
+      scale = newScale;
+      clampTranslate();
+    } else {
+      // zoom out to 1x
+      scale = 1;
+      translateX = 0;
+      translateY = 0;
+    }
+    applyTransform();
+  });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -2473,8 +2528,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ocr-register").onclick = registerOcrModules;
   $("ocr-cancel").onclick = cancelOcrModal;
   $("ocr-modal-close").onclick = closeOcrModal;
-  $("ocr-prev").onclick = () => { ocrCurrentPage--; renderOcrModalBody(); };
-  $("ocr-next").onclick = () => { ocrCurrentPage++; renderOcrModalBody(); };
+  $("ocr-prev").onclick = () => { ocrCurrentPage--; renderOcrModalBody(); $("ocr-modal-body").querySelector(".ocr-group-list")?.scrollTo(0, 0); };
+  $("ocr-next").onclick = () => { ocrCurrentPage++; renderOcrModalBody(); $("ocr-modal-body").querySelector(".ocr-group-list")?.scrollTo(0, 0); };
 
   // OCR cancel confirm modal
   $("ocr-cancel-ok").onclick = confirmCancelOcr;
