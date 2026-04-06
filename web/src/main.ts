@@ -1488,7 +1488,7 @@ function renderOcrModalBody() {
   const body = $("ocr-modal-body");
   const allMods = allPendingModules();
 
-  if (allMods.length === 0) {
+  if (pendingOcrGroups.length === 0) {
     body.textContent = "";
     const emptyDiv = document.createElement("div");
     emptyDiv.className = "ocr-empty";
@@ -2219,10 +2219,8 @@ async function startOcrFromSetup() {
       });
       try {
         const detected = await processScreenshot(img, undefined, ocrWorker);
-        if (detected.length > 0) {
-          const thumbnailUrl = createThumbnailDataUrl(img);
-          groups.push({ imageUrl: thumbnailUrl, modules: detected });
-        }
+        const thumbnailUrl = createThumbnailDataUrl(img);
+        groups.push({ imageUrl: thumbnailUrl, modules: detected });
       } catch {
         throw new Error(t.ui.ocr_failed);
       } finally {
@@ -2236,11 +2234,7 @@ async function startOcrFromSetup() {
     btn.classList.remove("loading");
     btn.textContent = t.ui.btn_screenshot;
     progress.style.display = "none";
-    if (groups.length === 0) {
-      showToast(t.ui.ocr_no_detect, "error");
-    } else {
-      openOcrConfirmationModal(groups);
-    }
+    openOcrConfirmationModal(groups);
   } catch (err) {
     overlay.remove();
     btn.classList.remove("loading");
@@ -2339,7 +2333,7 @@ async function showLicenseModal() {
   try {
     const res = await fetch("/licenses.json");
     if (!res.ok) throw new Error("Failed to load");
-    const data: { name: string; version?: string; license?: string; repository?: string; licenseText?: string }[] = await res.json();
+    const data: { name: string; version?: string; license?: string; repository?: string }[] = await res.json();
     body.textContent = "";
     data.forEach((pkg) => {
       const item = document.createElement("div");
@@ -2362,12 +2356,6 @@ async function showLicenseModal() {
         typeEl.className = "license-item-type";
         typeEl.textContent = pkg.license;
         item.appendChild(typeEl);
-      }
-      if (pkg.licenseText) {
-        const textEl = document.createElement("div");
-        textEl.className = "license-item-text";
-        textEl.textContent = pkg.licenseText;
-        item.appendChild(textEl);
       }
       body.appendChild(item);
     });
