@@ -14,6 +14,7 @@ import {
   t, fmt, statName, applyI18n, initLang, saveLang, getSavedLang,
   JA, migrateStatNamesToIds,
 } from "./i18n";
+import Cropper from "cropperjs";
 
 // --- Helpers ---
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -163,18 +164,18 @@ function statDropdownHtml(
     : `<span class="stat-dd-placeholder">${placeholder || ""}</span>`;
 
   const placeholderItem = placeholder
-    ? `<div class="stat-dd-item${!hasSelection ? " selected" : ""}" data-value="">${placeholder}</div>`
+    ? `<div class="fitem stat-dd-item${!hasSelection ? " selected" : ""}" data-value="">${placeholder}</div>`
     : "";
   const items = ALL_STAT_IDS.map((id) => {
     const icon = STAT_ICONS[id];
     const name = statName(id);
-    return `<div class="stat-dd-item${id === selectedId ? " selected" : ""}" data-value="${id}">
+    return `<div class="fitem stat-dd-item${id === selectedId ? " selected" : ""}" data-value="${id}">
       <img class="sicon" src="/icons/${icon}" alt=""><span>${name}</span>
     </div>`;
   }).join("");
 
   return `<div class="stat-dd ${className}" ${dataStr} data-value="${hasSelection ? selectedId : ""}">
-    <button type="button" class="stat-dd-trigger">${triggerContent}</button>
+    <button type="button" class="opt-multi-btn">${triggerContent}</button>
     <div class="stat-dd-menu">${placeholderItem}${items}</div>
   </div>`;
 }
@@ -215,7 +216,7 @@ function closeAllStatDropdowns() {
 
 function initStatDropdowns(container: HTMLElement) {
   container.querySelectorAll<HTMLElement>(".stat-dd").forEach((dd) => {
-    const trigger = dd.querySelector<HTMLButtonElement>(".stat-dd-trigger")!;
+    const trigger = dd.querySelector<HTMLButtonElement>(".opt-multi-btn")!;
     const menuTemplate = dd.querySelector<HTMLElement>(".stat-dd-menu")!;
     menuTemplate.remove();
 
@@ -227,7 +228,20 @@ function initStatDropdowns(container: HTMLElement) {
 
       const menu = menuTemplate.cloneNode(true) as HTMLElement;
       document.body.appendChild(menu);
-      menu.classList.add("stat-dd-menu-portal");
+      Object.assign(menu.style, {
+        display: "flex",
+        flexDirection: "column",
+        position: "fixed",
+        maxHeight: "240px",
+        overflowY: "auto",
+        background: "var(--s-flyout)",
+        backdropFilter: "blur(20px) saturate(1.4)",
+        border: "1px solid var(--str-default)",
+        borderRadius: "6px",
+        boxShadow: "var(--sh8)",
+        zIndex: "10000",
+        padding: "4px",
+      });
       dd.classList.add("open");
       activeStatDdMenu = menu;
       activeStatDd = dd;
@@ -262,8 +276,109 @@ function initStatDropdowns(container: HTMLElement) {
   });
 }
 
+// ========== Generic Custom Dropdown ==========
+
+function initCustomDds(container: HTMLElement | Document = document) {
+  container.querySelectorAll<HTMLElement>(".custom-dd").forEach((dd) => {
+    const trigger = dd.querySelector<HTMLButtonElement>(".custom-dd-trigger")!;
+    const menu = dd.querySelector<HTMLElement>(".custom-dd-menu")!;
+    if (!trigger || !menu) return;
+
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const wasOpen = dd.classList.contains("open");
+      closeAllCustomDds();
+      closeAllStatDropdowns();
+      if (wasOpen) return;
+
+      dd.classList.add("open");
+      menu.style.display = "flex";
+      menu.style.position = "fixed";
+      menu.style.zIndex = "10000";
+      menu.style.background = "var(--s-flyout)";
+      menu.style.backdropFilter = "blur(20px) saturate(1.4)";
+      menu.style.border = "1px solid var(--str-default)";
+      menu.style.borderRadius = "6px";
+      menu.style.boxShadow = "var(--sh8)";
+      menu.style.padding = "4px";
+      menu.style.flexDirection = "column";
+      positionFlyout(menu, dd);
+    });
+
+    menu.querySelectorAll<HTMLElement>(".custom-dd-item").forEach((item) => {
+      item.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const val = item.dataset.value ?? "";
+        dd.dataset.value = val;
+        trigger.textContent = item.textContent ?? "";
+        menu.querySelectorAll(".custom-dd-item.selected").forEach((s) => s.classList.remove("selected"));
+        item.classList.add("selected");
+        closeAllCustomDds();
+        dd.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    });
+  });
+}
+
+function closeAllCustomDds() {
+  document.querySelectorAll<HTMLElement>(".custom-dd.open").forEach((dd) => {
+    dd.classList.remove("open");
+    const menu = dd.querySelector<HTMLElement>(".custom-dd-menu");
+    if (menu) {
+      menu.style.display = "none";
+      menu.style.position = "";
+      menu.style.top = "";
+      menu.style.bottom = "";
+      menu.style.left = "";
+      menu.style.maxHeight = "";
+      menu.style.minWidth = "";
+      menu.style.zIndex = "";
+    }
+  });
+}
+
+function setCustomDdValue(dd: HTMLElement, value: string) {
+  dd.dataset.value = value;
+  const trigger = dd.querySelector<HTMLButtonElement>(".custom-dd-trigger");
+  const item = dd.querySelector<HTMLElement>(`.custom-dd-item[data-value="${value}"]`);
+  if (trigger && item) {
+    trigger.textContent = item.textContent ?? "";
+    dd.querySelectorAll(".custom-dd-item.selected").forEach((s) => s.classList.remove("selected"));
+    item.classList.add("selected");
+  }
+}
+
+function updateCustomDdOptions(dd: HTMLElement, options: { value: string; label: string }[], selectedValue?: string) {
+  const menu = dd.querySelector<HTMLElement>(".custom-dd-menu");
+  const trigger = dd.querySelector<HTMLButtonElement>(".custom-dd-trigger");
+  if (!menu || !trigger) return;
+  menu.textContent = "";
+  options.forEach((opt) => {
+    const item = document.createElement("div");
+    item.className = "fitem custom-dd-item";
+    item.dataset.value = opt.value;
+    item.textContent = opt.label;
+    if (opt.value === (selectedValue ?? dd.dataset.value ?? "")) {
+      item.classList.add("selected");
+      trigger.textContent = opt.label;
+      dd.dataset.value = opt.value;
+    }
+    item.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      dd.dataset.value = opt.value;
+      trigger.textContent = opt.label;
+      menu.querySelectorAll(".custom-dd-item.selected").forEach((s) => s.classList.remove("selected"));
+      item.classList.add("selected");
+      closeAllCustomDds();
+      dd.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    menu.appendChild(item);
+  });
+}
+
 document.addEventListener("click", (e) => {
   closeAllStatDropdowns();
+  closeAllCustomDds();
   if (activeFlyout && !activeFlyout.contains(e.target as Node) &&
       (!activeFlyAnchor || !activeFlyAnchor.contains(e.target as Node))) {
     closeFly();
@@ -278,6 +393,7 @@ document.addEventListener("click", (e) => {
 });
 window.addEventListener("resize", () => {
   closeAllStatDropdowns();
+  closeAllCustomDds();
   closeFly();
   closeDetailFly();
 });
@@ -285,6 +401,7 @@ document.addEventListener("scroll", (e) => {
   if (activeStatDdMenu && !activeStatDdMenu.contains(e.target as Node)) {
     closeAllStatDropdowns();
   }
+  closeAllCustomDds();
   if (activeFlyout && !activeFlyout.contains(e.target as Node)) {
     closeFly();
   }
@@ -357,13 +474,14 @@ function renderGrid() {
     return;
   }
 
-  ms.forEach((m, i) => {
+  const INITIAL_COUNT = 60;
+  let rendered = 0;
+
+  function buildCard(m: ModuleInput, i: number): HTMLDivElement {
     const c = document.createElement("div");
     c.className = "card";
     c.style.animationDelay = `${Math.min(i, 16) * 14}ms`;
-    const r = qualityToRarity(m.quality);
 
-    // card-head
     const head = document.createElement("div");
     head.className = "card-head";
     const iconWrap = document.createElement("span");
@@ -410,8 +528,35 @@ function renderGrid() {
       statsDiv.appendChild(srow);
     });
     c.appendChild(statsDiv);
-    g.appendChild(c);
-  });
+    return c;
+  }
+
+  function renderBatch() {
+    const end = Math.min(rendered + INITIAL_COUNT, ms.length);
+    for (let i = rendered; i < end; i++) {
+      g.appendChild(buildCard(ms[i], i));
+    }
+    rendered = end;
+  }
+
+  renderBatch();
+
+  // スクロールで残りを遅延描画
+  if (ms.length > INITIAL_COUNT) {
+    const scroll = g.closest(".scroll");
+    const onScroll = () => {
+      if (rendered >= ms.length) {
+        scroll?.removeEventListener("scroll", onScroll);
+        return;
+      }
+      if (!scroll) return;
+      const { scrollTop, scrollHeight, clientHeight } = scroll;
+      if (scrollTop + clientHeight >= scrollHeight - 200) {
+        renderBatch();
+      }
+    };
+    scroll?.addEventListener("scroll", onScroll);
+  }
 
   $("sb-n").textContent = fmt(t.ui.n_modules, { count: ms.length });
   const info: string[] = [];
@@ -610,7 +755,7 @@ interface OptPattern {
 }
 
 function saveOptState() {
-  const quality = Number($<HTMLSelectElement>("opt-quality").value);
+  const quality = Number($("opt-quality").dataset.value);
   localStorage.setItem(OPT_STATE_KEY, JSON.stringify({
     required: optRequired, desired: optDesired, excluded: optExcluded, quality,
     min_required: optMinRequired, min_desired: optMinDesired,
@@ -625,7 +770,7 @@ function restoreOptState() {
     if (Array.isArray(s.required)) optRequired = migrateStatNamesToIds(s.required).filter((id) => ALL_STAT_IDS.includes(id));
     if (Array.isArray(s.desired)) optDesired = migrateStatNamesToIds(s.desired).filter((id) => ALL_STAT_IDS.includes(id));
     if (Array.isArray(s.excluded)) optExcluded = migrateStatNamesToIds(s.excluded).filter((id) => ALL_STAT_IDS.includes(id));
-    if (s.quality) $<HTMLSelectElement>("opt-quality").value = String(s.quality);
+    if (s.quality) setCustomDdValue($("opt-quality"), String(s.quality));
     if (Array.isArray(s.min_required)) optMinRequired = (s.min_required as number[]).filter((id) => ALL_STAT_IDS.includes(id) && optRequired.includes(id));
     if (Array.isArray(s.min_desired)) optMinDesired = (s.min_desired as number[]).filter((id) => ALL_STAT_IDS.includes(id) && optDesired.includes(id));
   } catch { /* ignore */ }
@@ -650,25 +795,19 @@ function savePatterns(patterns: OptPattern[]) {
 }
 
 function renderPatternSelect() {
-  const sel = $<HTMLSelectElement>("pattern-select");
+  const dd = $("pattern-select");
   const patterns = getPatterns();
-  sel.textContent = "";
-  const defaultOpt = document.createElement("option");
-  defaultOpt.value = "";
-  defaultOpt.textContent = t.ui.pattern_placeholder;
-  sel.appendChild(defaultOpt);
+  const options = [{ value: "", label: t.ui.pattern_placeholder }];
   patterns.forEach((p, i) => {
-    const opt = document.createElement("option");
-    opt.value = String(i);
-    opt.textContent = p.name;
-    sel.appendChild(opt);
+    options.push({ value: String(i), label: p.name });
   });
+  updateCustomDdOptions(dd, options, "");
   updatePatternButtons();
 }
 
 function updatePatternButtons() {
-  const sel = $<HTMLSelectElement>("pattern-select");
-  const hasSelection = sel.value !== "";
+  const dd = $("pattern-select");
+  const hasSelection = (dd.dataset.value ?? "") !== "";
   ($("pattern-delete") as HTMLButtonElement).disabled = !hasSelection;
   ($("pattern-load") as HTMLButtonElement).disabled = !hasSelection;
 }
@@ -682,7 +821,7 @@ function loadPattern(idx: number) {
   optExcluded = p.excluded.filter((id) => ALL_STAT_IDS.includes(id));
   optMinRequired = Array.isArray(p.min_required) ? p.min_required.filter((id) => ALL_STAT_IDS.includes(id) && optRequired.includes(id)) : [];
   optMinDesired = Array.isArray(p.min_desired) ? p.min_desired.filter((id) => ALL_STAT_IDS.includes(id) && optDesired.includes(id)) : [];
-  if (p.quality) $<HTMLSelectElement>("opt-quality").value = String(p.quality);
+  if (p.quality) setCustomDdValue($("opt-quality"), String(p.quality));
   updateOptBtnLabel("req");
   updateOptBtnLabel("des");
   updateOptBtnLabel("excl");
@@ -944,8 +1083,8 @@ async function runOptimize() {
   optOverlay = createLoadingOverlay();
   $("opt-scroll").appendChild(optOverlay);
 
-  const quality = Number($<HTMLSelectElement>("opt-quality").value);
-  const speedMode = $<HTMLSelectElement>("opt-speed").value;
+  const quality = Number($("opt-quality").dataset.value);
+  const speedMode = $("opt-speed").dataset.value ?? "standard";
   const minThresholds: Record<number, number> = {};
   optMinRequired.forEach((pid) => { minThresholds[pid] = 20; });
   optMinDesired.forEach((pid) => { minThresholds[pid] = 16; });
@@ -1410,7 +1549,7 @@ function renderOcrModalBody() {
         .join("");
       return `<div class="ocr-stat-row">
         ${statDropdownHtml("ocr-stat-name", s.part_id, { gi: String(gi), mi: String(mi), si: String(si) })}
-        <select class="opt-select ocr-stat-value" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${valueOptions}</select>
+        <select class="opt-multi-btn ocr-stat-value" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${valueOptions}</select>
         <button class="ocr-stat-remove" data-gi="${gi}" data-mi="${mi}" data-si="${si}">&times;</button>
       </div>`;
     }).join("");
@@ -1426,11 +1565,11 @@ function renderOcrModalBody() {
           `<div class="ocr-row-fields">`,
             `<label class="form-field">`,
               `<span class="cmd-lbl">${t.ui.type_label}</span>`,
-              `<select class="opt-select ocr-type" data-gi="${gi}" data-mi="${mi}">${typeSelectOptions(typeDigit)}</select>`,
+              `<select class="opt-multi-btn ocr-type" data-gi="${gi}" data-mi="${mi}">${typeSelectOptions(typeDigit)}</select>`,
             `</label>`,
             `<label class="form-field">`,
               `<span class="cmd-lbl">${t.ui.rarity_sub_label}</span>`,
-              `<select class="opt-select ocr-rarity-sub" data-gi="${gi}" data-mi="${mi}">${raritySubSelectOptions(raritySub)}</select>`,
+              `<select class="opt-multi-btn ocr-rarity-sub" data-gi="${gi}" data-mi="${mi}">${raritySubSelectOptions(raritySub)}</select>`,
             `</label>`,
           `</div>`,
           `<button class="ocr-row-remove" data-gi="${gi}" data-mi="${mi}">&times;</button>`,
@@ -1600,7 +1739,7 @@ function renderEditModalBody() {
       .join("");
     statRows.push(`<div class="ocr-stat-row" data-si="${i}">
       ${statDropdownHtml("edit-stat-name", curStat?.part_id, undefined, curStat ? undefined : t.ui.select_placeholder)}
-      <select class="opt-select ocr-stat-value edit-stat-value">${valueOpts}</select>
+      <select class="opt-multi-btn ocr-stat-value edit-stat-value">${valueOpts}</select>
       <button class="ocr-stat-remove edit-remove-stat" data-si="${i}">&times;</button>
     </div>`);
   }
@@ -1611,11 +1750,11 @@ function renderEditModalBody() {
       <div class="ocr-row-fields">
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.type_label}</span>
-          <select class="opt-select" id="edit-type">${typeSelectOptions(typeDigit)}</select>
+          <select class="opt-multi-btn" id="edit-type">${typeSelectOptions(typeDigit)}</select>
         </label>
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
-          <select class="opt-select" id="edit-rarity-sub">${raritySubSelectOptions(raritySub)}</select>
+          <select class="opt-multi-btn" id="edit-rarity-sub">${raritySubSelectOptions(raritySub)}</select>
         </label>
       </div>
     </div>
@@ -1739,7 +1878,7 @@ function renderManualModalBody() {
       .join("");
     statRows.push(`<div class="ocr-stat-row" data-si="${i}">
       ${statDropdownHtml("manual-stat-name", undefined, undefined, t.ui.select_placeholder)}
-      <select class="opt-select ocr-stat-value manual-stat-value">${valueOpts}</select>
+      <select class="opt-multi-btn ocr-stat-value manual-stat-value">${valueOpts}</select>
       <button class="ocr-stat-remove manual-remove-stat" data-si="${i}">&times;</button>
     </div>`);
   }
@@ -1751,11 +1890,11 @@ function renderManualModalBody() {
       <div class="ocr-row-fields">
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.type_label}</span>
-          <select class="opt-select" id="manual-type">${typeSelectOptions(1)}</select>
+          <select class="opt-multi-btn" id="manual-type">${typeSelectOptions(1)}</select>
         </label>
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
-          <select class="opt-select" id="manual-rarity-sub">${raritySubSelectOptions(1)}</select>
+          <select class="opt-multi-btn" id="manual-rarity-sub">${raritySubSelectOptions(1)}</select>
         </label>
       </div>
     </div>
@@ -1901,81 +2040,344 @@ function startNewImport() {
   $("ocr-prev-modal-bd").classList.remove("on");
   hasStoredOcrData = false;
   deleteOcrGroups().catch(() => {});
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = "image/*";
-  input.multiple = true;
-  input.addEventListener("change", async () => {
-    const files = input.files;
-    if (!files || files.length === 0) return;
+  openOcrSetupModal();
+}
 
-    const btn = $<HTMLButtonElement>("screenshot-btn");
-    btn.classList.add("loading");
-    btn.textContent = t.ui.ocr_reading;
-    const overlay = createLoadingOverlay();
-    const appEl = document.querySelector(".app")!;
-    const statusbar = appEl.querySelector(".statusbar")!;
-    appEl.insertBefore(overlay, statusbar);
+// ========== OCR Setup Modal ==========
 
-    const groups: OcrGroup[] = [];
-    const progress = $("sb-progress");
-    const total = files.length;
-    progress.textContent = fmt(t.ui.ocr_progress, { current: 0, total });
-    progress.style.display = "";
+let ocrSetupFiles: File[] = [];
+let ocrSetupSelectedRarities: number[] = [];
+let ocrSetupSelectedTypes: number[] = [];
+let ocrSetupRegion: { x: number; y: number; width: number; height: number } | null = null;
 
-    let ocrWorker: any = null;
-    try {
-      const { createWorker } = await import("tesseract.js");
-      ocrWorker = await createWorker("eng");
-      await ocrWorker.setParameters({
-        tessedit_char_whitelist: "+0123456789",
-        tessedit_pageseg_mode: "7" as any,
+function openOcrSetupModal() {
+  ocrSetupFiles = [];
+  ocrSetupSelectedRarities = [];
+  ocrSetupSelectedTypes = [];
+  ocrSetupRegion = null;
+  // Reset radio buttons
+  const autoRadio = document.querySelector<HTMLInputElement>('input[name="ocr-mode"][value="auto"]');
+  if (autoRadio) autoRadio.checked = true;
+  const mobileRadio = document.querySelector<HTMLInputElement>('input[name="ocr-platform"][value="mobile"]');
+  if (mobileRadio) mobileRadio.checked = true;
+  updateOcrSetupCustomPanel();
+  updateOcrSetupBtnLabels();
+  renderOcrSetupFileList();
+  $<HTMLButtonElement>("ocr-setup-start").disabled = true;
+  $("ocr-setup-modal-bd").classList.add("on");
+}
+
+function closeOcrSetupModal() {
+  $("ocr-setup-modal-bd").classList.remove("on");
+  ocrSetupFiles = [];
+}
+
+function updateOcrSetupCustomPanel() {
+  const mode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value ?? "auto";
+  const panel = $("ocr-setup-custom-panel");
+  if (mode === "custom") {
+    panel.classList.add("on");
+  } else {
+    panel.classList.remove("on");
+  }
+}
+
+function updateOcrSetupBtnLabels() {
+  const rarBtn = $("ocr-setup-rarity-btn");
+  rarBtn.textContent = ocrSetupSelectedRarities.length > 0
+    ? fmt(t.ui.filter_count, { count: ocrSetupSelectedRarities.length })
+    : t.ui.filter_none;
+  rarBtn.classList.toggle("has-items", ocrSetupSelectedRarities.length > 0);
+
+  const typeBtn = $("ocr-setup-type-btn");
+  typeBtn.textContent = ocrSetupSelectedTypes.length > 0
+    ? fmt(t.ui.filter_count, { count: ocrSetupSelectedTypes.length })
+    : t.ui.filter_none;
+  typeBtn.classList.toggle("has-items", ocrSetupSelectedTypes.length > 0);
+
+  const regionBtn = $("ocr-setup-region-btn");
+  if (ocrSetupRegion) {
+    regionBtn.textContent = t.ui.ocr_region_set;
+    regionBtn.classList.add("has-items");
+  } else {
+    regionBtn.textContent = t.ui.ocr_setup_region_btn;
+    regionBtn.classList.remove("has-items");
+  }
+}
+
+function addOcrSetupFiles(files: FileList | File[]) {
+  for (const f of files) {
+    if (f.type.startsWith("image/")) ocrSetupFiles.push(f);
+  }
+  renderOcrSetupFileList();
+  $<HTMLButtonElement>("ocr-setup-start").disabled = ocrSetupFiles.length === 0;
+}
+
+function renderOcrSetupFileList() {
+  const el = $("ocr-setup-file-count");
+  if (ocrSetupFiles.length === 0) {
+    el.textContent = "";
+  } else {
+    el.textContent = fmt(t.ui.ocr_setup_file_count, { count: ocrSetupFiles.length });
+  }
+}
+
+function openOcrSetupFlyout(anchor: HTMLElement, category: "rarity" | "type") {
+  const fl = $("fly-ocr-setup");
+  if (activeFlyout === fl && fl.dataset.category === category) { closeFly(); return; }
+  closeFly();
+  fl.dataset.category = category;
+  fl.textContent = "";
+
+  if (category === "rarity") {
+    const rarityValues = [3, 4, 5]; // purple, gold-A, gold-B
+    const rarityLabels: Record<number, string> = {
+      3: t.rarity.purple,
+      4: t.rarity.gold,
+      5: t.rarity.gold + " B",
+    };
+    rarityValues.forEach((val) => {
+      const el = document.createElement("label");
+      el.className = "fitem-check";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = ocrSetupSelectedRarities.includes(val);
+      cb.onchange = () => {
+        if (cb.checked) ocrSetupSelectedRarities.push(val);
+        else { const idx = ocrSetupSelectedRarities.indexOf(val); if (idx >= 0) ocrSetupSelectedRarities.splice(idx, 1); }
+        updateOcrSetupBtnLabels();
+      };
+      el.appendChild(cb);
+      const span = document.createElement("span");
+      span.textContent = rarityLabels[val] ?? String(val);
+      el.appendChild(span);
+      fl.appendChild(el);
+    });
+  } else {
+    MODULE_TYPE_PREFIXES.forEach((p) => {
+      const el = document.createElement("label");
+      el.className = "fitem-check";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = ocrSetupSelectedTypes.includes(p);
+      cb.onchange = () => {
+        if (cb.checked) ocrSetupSelectedTypes.push(p);
+        else { const idx = ocrSetupSelectedTypes.indexOf(p); if (idx >= 0) ocrSetupSelectedTypes.splice(idx, 1); }
+        updateOcrSetupBtnLabels();
+      };
+      el.appendChild(cb);
+      const span = document.createElement("span");
+      span.textContent = t.module_types[String(p)] ?? "";
+      el.appendChild(span);
+      fl.appendChild(el);
+    });
+  }
+
+  fl.classList.add("on");
+  positionFlyout(fl, anchor);
+  activeFlyout = fl;
+  activeFlyAnchor = anchor;
+}
+
+async function startOcrFromSetup() {
+  const files = ocrSetupFiles;
+  if (files.length === 0) return;
+
+  closeOcrSetupModal();
+
+  const btn = $<HTMLButtonElement>("screenshot-btn");
+  btn.classList.add("loading");
+  btn.textContent = t.ui.ocr_reading;
+  const overlay = createLoadingOverlay();
+  const appEl = document.querySelector(".app")!;
+  const statusbar = appEl.querySelector(".statusbar")!;
+  appEl.insertBefore(overlay, statusbar);
+
+  const groups: OcrGroup[] = [];
+  const progress = $("sb-progress");
+  const total = files.length;
+  progress.textContent = fmt(t.ui.ocr_progress, { current: 0, total });
+  progress.style.display = "";
+
+  let ocrWorker: any = null;
+  try {
+    const { createWorker } = await import("tesseract.js");
+    ocrWorker = await createWorker("eng");
+    await ocrWorker.setParameters({
+      tessedit_char_whitelist: "+0123456789",
+      tessedit_pageseg_mode: "7" as any,
+    });
+
+    for (let fi = 0; fi < files.length; fi++) {
+      const file = files[fi];
+      const imageUrl = URL.createObjectURL(file);
+      const img = new Image();
+      img.src = imageUrl;
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("Failed to load image"));
       });
-
-      for (let fi = 0; fi < files.length; fi++) {
-        const file = files[fi];
-        const imageUrl = URL.createObjectURL(file);
-        const img = new Image();
-        img.src = imageUrl;
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => resolve();
-          img.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
-        });
-        try {
-          const detected = await processScreenshot(img, undefined, ocrWorker);
-          if (detected.length > 0) {
-            const thumbnailUrl = createThumbnailDataUrl(img);
-            groups.push({ imageUrl: thumbnailUrl, modules: detected });
-          }
-        } catch {
-          throw new Error(t.ui.ocr_failed);
-        } finally {
-          URL.revokeObjectURL(imageUrl);
-          img.src = "";
+      try {
+        const detected = await processScreenshot(img, undefined, ocrWorker);
+        if (detected.length > 0) {
+          const thumbnailUrl = createThumbnailDataUrl(img);
+          groups.push({ imageUrl: thumbnailUrl, modules: detected });
         }
-        progress.textContent = fmt(t.ui.ocr_progress, { current: fi + 1, total });
+      } catch {
+        throw new Error(t.ui.ocr_failed);
+      } finally {
+        URL.revokeObjectURL(imageUrl);
+        img.src = "";
       }
-
-      overlay.remove();
-      btn.classList.remove("loading");
-      btn.textContent = t.ui.btn_screenshot;
-      progress.style.display = "none";
-      if (groups.length === 0) {
-        showToast(t.ui.ocr_no_detect, "error");
-      } else {
-        openOcrConfirmationModal(groups);
-      }
-    } catch (err) {
-      overlay.remove();
-      btn.classList.remove("loading");
-      btn.textContent = t.ui.btn_screenshot;
-      progress.style.display = "none";
-      showToast(err instanceof Error ? err.message : t.ui.ocr_failed, "error");
-    } finally {
-      if (ocrWorker) await ocrWorker.terminate();
+      progress.textContent = fmt(t.ui.ocr_progress, { current: fi + 1, total });
     }
-  });
-  input.click();
+
+    overlay.remove();
+    btn.classList.remove("loading");
+    btn.textContent = t.ui.btn_screenshot;
+    progress.style.display = "none";
+    if (groups.length === 0) {
+      showToast(t.ui.ocr_no_detect, "error");
+    } else {
+      openOcrConfirmationModal(groups);
+    }
+  } catch (err) {
+    overlay.remove();
+    btn.classList.remove("loading");
+    btn.textContent = t.ui.btn_screenshot;
+    progress.style.display = "none";
+    showToast(err instanceof Error ? err.message : t.ui.ocr_failed, "error");
+  } finally {
+    if (ocrWorker) await ocrWorker.terminate();
+  }
+}
+
+// ========== OCR Region Selection ==========
+
+let regionCropper: Cropper | null = null;
+
+function openRegionModal() {
+  if (ocrSetupFiles.length === 0) {
+    showToast(t.ui.ocr_region_no_image, "error");
+    return;
+  }
+  const file = ocrSetupFiles[0];
+  const img = $<HTMLImageElement>("ocr-region-img");
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    $("ocr-region-modal-bd").classList.add("on");
+    requestAnimationFrame(() => {
+      if (regionCropper) { regionCropper.destroy(); regionCropper = null; }
+      regionCropper = new Cropper(img, {
+        container: $("ocr-region-cropper-wrap"),
+        template: `<cropper-canvas background>
+          <cropper-image scalable translatable></cropper-image>
+          <cropper-shade hidden></cropper-shade>
+          <cropper-handle action="move" plain></cropper-handle>
+          <cropper-selection movable resizable initial-coverage="0.5">
+            <cropper-grid role="grid" bordered covered></cropper-grid>
+            <cropper-crosshair centered></cropper-crosshair>
+            <cropper-handle action="move" theme-color="rgba(255,255,255,0.35)"></cropper-handle>
+            <cropper-handle action="n-resize"></cropper-handle>
+            <cropper-handle action="e-resize"></cropper-handle>
+            <cropper-handle action="s-resize"></cropper-handle>
+            <cropper-handle action="w-resize"></cropper-handle>
+            <cropper-handle action="ne-resize"></cropper-handle>
+            <cropper-handle action="nw-resize"></cropper-handle>
+            <cropper-handle action="se-resize"></cropper-handle>
+            <cropper-handle action="sw-resize"></cropper-handle>
+          </cropper-selection>
+        </cropper-canvas>`,
+      });
+    });
+  };
+  img.src = url;
+}
+
+function closeRegionModal() {
+  if (regionCropper) { regionCropper.destroy(); regionCropper = null; }
+  const img = $<HTMLImageElement>("ocr-region-img");
+  if (img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
+  img.src = "";
+  $("ocr-region-modal-bd").classList.remove("on");
+}
+
+async function confirmRegion() {
+  if (!regionCropper) return;
+  const selection = regionCropper.getCropperSelection();
+  const image = regionCropper.getCropperImage();
+  if (!selection || !image) return;
+
+  // 表示座標を元画像のピクセル座標に変換
+  const [a, , , d, tx, ty] = image.$getTransform();
+  ocrSetupRegion = {
+    x: Math.round((selection.x - tx) / a),
+    y: Math.round((selection.y - ty) / d),
+    width: Math.round(selection.width / a),
+    height: Math.round(selection.height / d),
+  };
+
+  closeRegionModal();
+  updateOcrSetupBtnLabels();
+}
+
+function closeRegionPreview() {
+  $("ocr-region-preview-bd").classList.remove("on");
+}
+
+// ========== License Modal ==========
+
+async function showLicenseModal() {
+  const body = $("license-modal-body");
+  body.textContent = "";
+  const loading = document.createElement("div");
+  loading.textContent = "Loading...";
+  loading.style.cssText = "text-align:center;padding:20px;color:var(--tx3)";
+  body.appendChild(loading);
+  $("license-modal-bd").classList.add("on");
+
+  try {
+    const res = await fetch("/licenses.json");
+    if (!res.ok) throw new Error("Failed to load");
+    const data: { name: string; version?: string; license?: string; repository?: string; licenseText?: string }[] = await res.json();
+    body.textContent = "";
+    data.forEach((pkg) => {
+      const item = document.createElement("div");
+      item.className = "license-item";
+      const nameEl = document.createElement("div");
+      nameEl.className = "license-item-name";
+      if (pkg.repository) {
+        const a = document.createElement("a");
+        a.href = pkg.repository;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = pkg.name + (pkg.version ? ` v${pkg.version}` : "");
+        nameEl.appendChild(a);
+      } else {
+        nameEl.textContent = pkg.name + (pkg.version ? ` v${pkg.version}` : "");
+      }
+      item.appendChild(nameEl);
+      if (pkg.license) {
+        const typeEl = document.createElement("div");
+        typeEl.className = "license-item-type";
+        typeEl.textContent = pkg.license;
+        item.appendChild(typeEl);
+      }
+      if (pkg.licenseText) {
+        const textEl = document.createElement("div");
+        textEl.className = "license-item-text";
+        textEl.textContent = pkg.licenseText;
+        item.appendChild(textEl);
+      }
+      body.appendChild(item);
+    });
+  } catch {
+    body.textContent = "";
+    const err = document.createElement("div");
+    err.textContent = "Failed to load license information.";
+    err.style.cssText = "text-align:center;padding:20px;color:var(--tx3)";
+    body.appendChild(err);
+  }
 }
 
 // ========== Loading overlay ==========
@@ -2334,6 +2736,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initLang();
   applyI18n();
   document.documentElement.lang = getSavedLang() === "ko" ? "ko" : getSavedLang() === "en" ? "en" : "ja";
+  initCustomDds();
 
   loadModulesFromStorage();
   hasOcrGroups().then((v) => { hasStoredOcrData = v; }).catch(() => {});
@@ -2390,7 +2793,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target === $("detail-modal-bd")) closeDetailModal();
   };
 
-  $("opt-quality").onchange = () => { minQuality = Number($<HTMLSelectElement>("opt-quality").value); saveOptState(); };
+  $("opt-quality").addEventListener("change", () => { minQuality = Number($("opt-quality").dataset.value); saveOptState(); });
   $("opt-run").onclick = () => runOptimize();
 
   $("speed-info-btn").onclick = () => {
@@ -2415,40 +2818,35 @@ document.addEventListener("DOMContentLoaded", () => {
   $("speed-info-bd").onclick = (e) => { if (e.target === $("speed-info-bd")) $("speed-info-bd").classList.remove("on"); };
 
   renderPatternSelect();
-  $("pattern-select").onchange = () => updatePatternButtons();
+  $("pattern-select").addEventListener("change", () => updatePatternButtons());
   $("pattern-load").onclick = () => {
-    const idx = Number($<HTMLSelectElement>("pattern-select").value);
+    const idx = Number($("pattern-select").dataset.value);
     if (!isNaN(idx) && idx >= 0) loadPattern(idx);
   };
   const patsaveBd = $("patsave-modal-bd");
   const patsaveInput = $<HTMLInputElement>("patsave-name");
-  const patsaveMode = $<HTMLSelectElement>("patsave-mode");
+  const patsaveModeDd = $("patsave-mode");
   const patsaveNameRow = $("patsave-name-row");
 
   const updatePatsaveNameRow = () => {
-    const isNew = patsaveMode.value === "new";
+    const isNew = (patsaveModeDd.dataset.value ?? "") === "new";
     patsaveNameRow.style.display = isNew ? "block" : "none";
   };
-  patsaveMode.onchange = updatePatsaveNameRow;
+  patsaveModeDd.addEventListener("change", updatePatsaveNameRow);
 
   const openPatsaveModal = () => {
-    const patSel = $<HTMLSelectElement>("pattern-select");
-    const selectedIdx = patSel.value;
+    const patSelDd = $("pattern-select");
+    const selectedIdx = patSelDd.dataset.value ?? "";
     const patterns = getPatterns();
-    patsaveMode.textContent = "";
+    const options: { value: string; label: string }[] = [];
 
     if (selectedIdx !== "" && patterns[Number(selectedIdx)]) {
       const p = patterns[Number(selectedIdx)];
-      const overwriteOpt = document.createElement("option");
-      overwriteOpt.value = "overwrite";
-      overwriteOpt.textContent = fmt(t.ui.pattern_overwrite, { name: p.name });
-      patsaveMode.appendChild(overwriteOpt);
+      options.push({ value: "overwrite", label: fmt(t.ui.pattern_overwrite, { name: p.name }) });
     }
-    const newOpt = document.createElement("option");
-    newOpt.value = "new";
-    newOpt.textContent = t.ui.pattern_new;
-    patsaveMode.appendChild(newOpt);
+    options.push({ value: "new", label: t.ui.pattern_new });
 
+    updateCustomDdOptions(patsaveModeDd, options, options[0].value);
     patsaveInput.value = "";
     updatePatsaveNameRow();
     patsaveBd.classList.add("on");
@@ -2457,12 +2855,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const closePatsaveModal = () => { patsaveBd.classList.remove("on"); };
 
   const confirmPatsave = () => {
-    const mode = patsaveMode.value;
-    const quality = Number($<HTMLSelectElement>("opt-quality").value);
+    const mode = patsaveModeDd.dataset.value ?? "";
+    const quality = Number($("opt-quality").dataset.value);
     const patterns = getPatterns();
 
     if (mode === "overwrite") {
-      const idx = Number($<HTMLSelectElement>("pattern-select").value);
+      const idx = Number($("pattern-select").dataset.value);
       const existing = patterns[idx];
       if (!existing) return;
       const entry: OptPattern = { name: existing.name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality, min_required: [...optMinRequired], min_desired: [...optMinDesired] };
@@ -2470,7 +2868,7 @@ document.addEventListener("DOMContentLoaded", () => {
       savePatterns(patterns);
       closePatsaveModal();
       renderPatternSelect();
-      $<HTMLSelectElement>("pattern-select").value = String(idx);
+      setCustomDdValue($("pattern-select"), String(idx));
       updatePatternButtons();
     } else {
       const name = patsaveInput.value.trim();
@@ -2482,7 +2880,7 @@ document.addEventListener("DOMContentLoaded", () => {
       savePatterns(patterns);
       closePatsaveModal();
       renderPatternSelect();
-      $<HTMLSelectElement>("pattern-select").value = String(duplicateIdx >= 0 ? duplicateIdx : patterns.length - 1);
+      setCustomDdValue($("pattern-select"), String(duplicateIdx >= 0 ? duplicateIdx : patterns.length - 1));
       updatePatternButtons();
     }
   };
@@ -2498,9 +2896,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const closePatdelModal = () => { patdelBd.classList.remove("on"); };
   let patdelIdx = -1;
   $("pattern-delete").onclick = () => {
-    const sel = $<HTMLSelectElement>("pattern-select");
-    const idx = Number(sel.value);
-    if (sel.value === "" || isNaN(idx) || idx < 0) return;
+    const selVal = $("pattern-select").dataset.value ?? "";
+    const idx = Number(selVal);
+    if (selVal === "" || isNaN(idx) || idx < 0) return;
     const patterns = getPatterns();
     const p = patterns[idx];
     if (!p) return;
@@ -2545,6 +2943,65 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   $("ocr-prev-modal-close").onclick = () => $("ocr-prev-modal-bd").classList.remove("on");
   $("ocr-prev-modal-bd").onclick = (e) => { if (e.target === $("ocr-prev-modal-bd")) $("ocr-prev-modal-bd").classList.remove("on"); };
+
+  // OCR Setup modal
+  $("ocr-setup-close").onclick = () => closeOcrSetupModal();
+  $("ocr-setup-cancel").onclick = () => closeOcrSetupModal();
+  $("ocr-setup-start").onclick = () => startOcrFromSetup();
+  $("ocr-setup-modal-bd").onclick = (e) => { if (e.target === $("ocr-setup-modal-bd")) closeOcrSetupModal(); };
+  document.querySelectorAll<HTMLInputElement>('input[name="ocr-mode"]').forEach((radio) => {
+    radio.onchange = () => updateOcrSetupCustomPanel();
+  });
+  $("ocr-setup-rarity-btn").onclick = (e) => openOcrSetupFlyout(e.currentTarget as HTMLElement, "rarity");
+  $("ocr-setup-type-btn").onclick = (e) => openOcrSetupFlyout(e.currentTarget as HTMLElement, "type");
+  $("ocr-setup-region-btn").onclick = () => openRegionModal();
+
+  // Dropzone
+  const dropzone = $("ocr-setup-dropzone");
+  dropzone.onclick = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.multiple = true;
+    input.onchange = () => { if (input.files) addOcrSetupFiles(input.files); };
+    input.click();
+  };
+  dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("dragover"); });
+  dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+  dropzone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropzone.classList.remove("dragover");
+    if (e.dataTransfer?.files) addOcrSetupFiles(e.dataTransfer.files);
+  });
+  document.addEventListener("paste", (e) => {
+    if (!$("ocr-setup-modal-bd").classList.contains("on")) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length > 0) addOcrSetupFiles(files);
+  });
+
+  // OCR Region modal
+  $("ocr-region-close").onclick = () => closeRegionModal();
+  $("ocr-region-cancel").onclick = () => closeRegionModal();
+  $("ocr-region-confirm").onclick = () => confirmRegion();
+  $("ocr-region-modal-bd").onclick = (e) => { if (e.target === $("ocr-region-modal-bd")) closeRegionModal(); };
+
+  // OCR Region Preview modal
+  $("ocr-region-preview-close").onclick = () => closeRegionPreview();
+  $("ocr-region-preview-ok").onclick = () => closeRegionPreview();
+  $("ocr-region-preview-bd").onclick = (e) => { if (e.target === $("ocr-region-preview-bd")) closeRegionPreview(); };
+
+  // License modal
+  $("btn-licenses").onclick = () => { closeSidebar(); showLicenseModal(); };
+  $("license-modal-close").onclick = () => $("license-modal-bd").classList.remove("on");
+  $("license-modal-bd").onclick = (e) => { if (e.target === $("license-modal-bd")) $("license-modal-bd").classList.remove("on"); };
 
   $("manual-btn").onclick = () => openManualInputModal();
   $("manual-modal-close").onclick = closeManualModal;
