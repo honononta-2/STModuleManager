@@ -5,7 +5,7 @@ import type {
   Combination, CombinationModule, ModuleInput, OptimizeRequest,
   OptimizeResponse, StatEntry, StatTotal,
 } from "@shared/types";
-import { processScreenshot } from "./ocr";
+import { processScreenshot, type OcrCustomOptions } from "./ocr";
 import {
   saveOcrGroups, loadOcrGroups, deleteOcrGroups, hasOcrGroups,
   type OcrGroup,
@@ -2179,9 +2179,37 @@ function openOcrSetupFlyout(anchor: HTMLElement, category: "rarity" | "type") {
   activeFlyAnchor = anchor;
 }
 
+// MODULE_TYPE_PREFIXES → type名変換
+const PREFIX_TO_TYPE_NAME: Record<number, string> = {
+  55001: "attack",
+  55002: "device",
+  55003: "protect",
+};
+
 async function startOcrFromSetup() {
   const files = ocrSetupFiles;
   if (files.length === 0) return;
+
+  // カスタムモードオプション構築
+  const mode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value ?? "auto";
+  let customOptions: OcrCustomOptions | undefined;
+  const platform = document.querySelector<HTMLInputElement>('input[name="ocr-platform"]:checked')?.value as "mobile" | "pc" | undefined;
+  if (mode === "custom") {
+    customOptions = {
+      platform: platform ?? "mobile",
+    };
+    if (ocrSetupRegion) {
+      customOptions.region = { ...ocrSetupRegion };
+    }
+    if (ocrSetupSelectedRarities.length > 0) {
+      customOptions.rarities = [...ocrSetupSelectedRarities];
+    }
+    if (ocrSetupSelectedTypes.length > 0) {
+      customOptions.typeNames = ocrSetupSelectedTypes
+        .map((p) => PREFIX_TO_TYPE_NAME[p])
+        .filter((n): n is string => !!n);
+    }
+  }
 
   closeOcrSetupModal();
 
@@ -2218,7 +2246,7 @@ async function startOcrFromSetup() {
         img.onerror = () => reject(new Error("Failed to load image"));
       });
       try {
-        const detected = await processScreenshot(img, undefined, ocrWorker);
+        const detected = await processScreenshot(img, undefined, ocrWorker, customOptions);
         const thumbnailUrl = createThumbnailDataUrl(img);
         groups.push({ imageUrl: thumbnailUrl, modules: detected });
       } catch {
@@ -2303,13 +2331,22 @@ async function confirmRegion() {
   if (!selection || !image) return;
 
   // 表示座標を元画像のピクセル座標に変換
-  const [a, , , d, tx, ty] = image.$getTransform();
+  // CSS transform-origin はデフォルトの 50% 50%（画像中心）なので
+  // canvas座標 = a * (img座標 - ox) + e + ox の逆変換が必要
+  const [a, , , d, e, f] = image.$getTransform();
+  const imgEl = $<HTMLImageElement>("ocr-region-img");
+  const ox = imgEl.naturalWidth / 2;
+  const oy = imgEl.naturalHeight / 2;
   ocrSetupRegion = {
-    x: Math.round((selection.x - tx) / a),
-    y: Math.round((selection.y - ty) / d),
+    x: Math.round((selection.x - e - ox) / a + ox),
+    y: Math.round((selection.y - f - oy) / d + oy),
     width: Math.round(selection.width / a),
     height: Math.round(selection.height / d),
   };
+  console.log("[regionSelect] transform:", { a, d, e, f },
+    "origin:", { ox, oy },
+    "selection:", { x: selection.x, y: selection.y, w: selection.width, h: selection.height },
+    "→ pixels:", ocrSetupRegion);
 
   closeRegionModal();
   updateOcrSetupBtnLabels();
