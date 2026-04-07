@@ -938,8 +938,11 @@ body {
   color:var(--tx2);
 }
 .capture-step-content {
-  display:flex; align-items:center; gap:10px;
+  display:flex; flex-direction:column; gap:4px;
   flex:1; min-width:0;
+}
+.capture-step-row {
+  display:flex; align-items:center; gap:10px;
 }
 .capture-step-text {
   font-size:13px; color:var(--tx3); line-height:1.5;
@@ -950,6 +953,12 @@ body {
 }
 .capture-step-btn {
   flex-shrink:0;
+}
+
+.capture-privacy {
+  font-size:11px; color:var(--tx3);
+  margin:0;
+  line-height:1.5;
 }
 
 .capture-status {
