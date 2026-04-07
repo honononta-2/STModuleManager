@@ -2516,6 +2516,7 @@ function resetCaptureRegion() {
   $("capture-region-reset-btn").style.display = "none";
   $<HTMLButtonElement>("capture-take-btn").disabled = true;
   setCaptureStep(2);
+  resetCustomScaleCache(); // 領域リセット時にスケール・列位置キャッシュもクリア
 }
 
 async function ensureCaptureOcrWorker() {
@@ -2580,7 +2581,6 @@ async function processCaptureOcrQueue() {
       updateCaptureStatus();
 
       try {
-        resetCustomScaleCache();
         const img = new Image();
         img.src = dataUrl;
         await new Promise<void>((resolve, reject) => {

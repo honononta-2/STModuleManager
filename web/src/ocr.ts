@@ -63,6 +63,7 @@ interface TemplateInfo {
   grayMat: any; // グレースケール（スケール検出 + 分類用）
   edgeMat: any; // Cannyエッジ（分類用）
   classifyVariants: TemplateClassifyVariant[]; // 実画面寄りの背景合成版（局所分類用）
+  colorVariants: { name: string; colorMat: any }[]; // カラー版（BGR, テンプレート列+カラーマッチング用）
 }
 
 interface TemplateClassifyVariant {
@@ -79,6 +80,7 @@ interface ModuleIconTemplateInfo {
   grayMat: any;
   edgeMat: any;
   classifyVariants: TemplateClassifyVariant[];
+  colorVariants: { name: string; colorMat: any }[]; // カラー版（BGR）
 }
 
 let moduleIconTemplates: ModuleIconTemplateInfo[] = [];
@@ -158,10 +160,12 @@ async function loadTemplates(): Promise<void> {
   for (const t of statTemplates) {
     t.grayMat.delete(); t.edgeMat.delete();
     for (const v of t.classifyVariants) { v.grayMat.delete(); v.edgeMat.delete(); }
+    for (const v of t.colorVariants) { v.colorMat.delete(); }
   }
   for (const t of moduleIconTemplates) {
     t.grayMat.delete(); t.edgeMat.delete();
     for (const v of t.classifyVariants) { v.grayMat.delete(); v.edgeMat.delete(); }
+    for (const v of t.colorVariants) { v.colorMat.delete(); }
   }
   for (const t of userModuleOcrTemplates) { t.colorMat.delete(); t.grayEqMat.delete(); }
   statTemplates = [];
@@ -184,11 +188,19 @@ async function loadTemplates(): Promise<void> {
       };
     });
 
+    // カラーバリアント（テンプレート列+カラーマッチング用）
+    const colorVariants = CLASSIFY_BACKGROUNDS.map((background) => {
+      const variantCanvas = renderTemplateCanvas(img, background.fill);
+      const colorMat = buildColorMat(variantCanvas, cv);
+      return { name: background.name, colorMat };
+    });
+
     statTemplates.push({
       partId,
       grayMat: baseMats.grayMat,
       edgeMat: baseMats.edgeMat,
       classifyVariants,
+      colorVariants,
     });
   }
 
@@ -198,7 +210,7 @@ async function loadTemplates(): Promise<void> {
   }
 
   for (const modIcon of MODULE_ICONS) {
-    if (modIcon.rarity === 5) continue; // 金Bは金Aと色で区別不能のためスキップ
+    // rarity5もカラーマッチングで区別可能なため含める
     const img = await loadImage(`/icons/${modIcon.file}`);
     const bgRarity = Math.min(modIcon.rarity, 4);
     const bgImg = rarityBgImages[bgRarity];
@@ -216,12 +228,24 @@ async function loadTemplates(): Promise<void> {
       };
     });
 
+    // カラーバリアント（モジュールアイコンカラーマッチング用）
+    const modColorVariants = CLASSIFY_BACKGROUNDS.map((background) => {
+      const variantCanvas = renderTemplateCanvas(img, background.fill);
+      const colorMat = buildColorMat(variantCanvas, cv);
+      return { name: background.name, colorMat };
+    });
+    // レアリティ背景合成版もカラーに追加
+    const bgCanvas = renderTemplateCanvas(img, bgImg);
+    const bgColorMat = buildColorMat(bgCanvas, cv);
+    modColorVariants.push({ name: "rarityBg", colorMat: bgColorMat });
+
     moduleIconTemplates.push({
       type: modIcon.type,
       rarity: modIcon.rarity,
       grayMat: baseMats.grayMat,
       edgeMat: baseMats.edgeMat,
       classifyVariants: modClassifyVariants,
+      colorVariants: modColorVariants,
     });
   }
 
@@ -2285,9 +2309,11 @@ function classifyModuleIconForRow(
 // Step 1: スケールとアンカー位置を検出
 // 前回検出したスケールをキャッシュ（複数枚処理時に2枚目以降を高速化）
 let _lastCustomScale: number | null = null;
+let _lastCustomColXs: number[] | null = null;
 
 export function resetCustomScaleCache(): void {
   _lastCustomScale = null;
+  _lastCustomColXs = null;
 }
 
 function customDetectScaleAndAnchor(
@@ -2597,9 +2623,152 @@ function isCustomStatConfident(score: number, margin: number): boolean {
   return score >= 0.55 || (score >= 0.50 && margin >= 0.015);
 }
 
-// グリッド交点ベースのモジュールアイコン分類（実験: 軽量版）
-function classifyModuleIconAtGrid(
-  edgeImage: any,
+// --- テンプレート列検出: アンカー実測gapで3列位置を推定 ---
+
+function customDetectColumnsFromAnchors(
+  grayEq: any,
+  cv: any,
+  scale: number,
+  iconSize: number,
+): number[] | null {
+  const refs = statTemplates.slice(0, 8);
+  const result = new cv.Mat();
+  const hits: { x: number; y: number; score: number }[] = [];
+
+  for (const ref of refs) {
+    const tw = Math.round(ref.grayMat.cols * scale);
+    const th = Math.round(ref.grayMat.rows * scale);
+    if (tw >= grayEq.cols || th >= grayEq.rows || tw < 10 || th < 10) continue;
+    const r = new cv.Mat();
+    cv.resize(ref.grayMat, r, new cv.Size(tw, th));
+    cv.matchTemplate(grayEq, r, result, cv.TM_CCOEFF_NORMED);
+    for (let y = 0; y < result.rows; y++) {
+      for (let x = 0; x < result.cols; x++) {
+        const s = result.floatAt(y, x);
+        if (s >= 0.5) hits.push({ x: x + iconSize / 2, y: y + iconSize / 2, score: s });
+      }
+    }
+    r.delete();
+  }
+  result.delete();
+
+  // NMS
+  hits.sort((a, b) => b.score - a.score);
+  const anchors: typeof hits = [];
+  const minDist = iconSize * 0.5;
+  for (const h of hits) {
+    if (anchors.some((k) => Math.abs(k.x - h.x) < minDist && Math.abs(k.y - h.y) < minDist)) continue;
+    anchors.push(h);
+    if (anchors.length >= 30) break;
+  }
+  if (anchors.length < 4) return null;
+
+  // 同行ペアからgapを実測
+  const approxGap = iconSize * 2.65;
+  const measuredGaps: number[] = [];
+  for (let i = 0; i < anchors.length; i++) {
+    for (let j = i + 1; j < anchors.length; j++) {
+      if (Math.abs(anchors[i].y - anchors[j].y) > iconSize * 1.5) continue;
+      const dx = Math.abs(anchors[i].x - anchors[j].x);
+      const colDiff = Math.round(dx / approxGap);
+      if (colDiff === 0 || colDiff > 2) continue;
+      const gap = dx / colDiff;
+      if (gap > iconSize * 1.5 && gap < iconSize * 4) measuredGaps.push(gap);
+    }
+  }
+  if (measuredGaps.length < 2) return null;
+  measuredGaps.sort((a, b) => a - b);
+  const gap = measuredGaps[Math.floor(measuredGaps.length / 2)];
+
+  // アンカーから3列位置を推定
+  const top = anchors[0];
+  const colIndices = anchors.map((a) => Math.round((a.x - top.x) / gap));
+  const uniqueIdx = [...new Set(colIndices)].sort((a, b) => a - b);
+  const minIdx = Math.min(...uniqueIdx);
+  const maxIdx = Math.max(...uniqueIdx);
+  let bestStart = minIdx;
+  let bestCount = 0;
+  for (let s = minIdx; s <= maxIdx - 2; s++) {
+    const c = colIndices.filter((ci) => ci >= s && ci <= s + 2).length;
+    if (c > bestCount) { bestCount = c; bestStart = s; }
+  }
+  if (bestCount === 0) bestStart = minIdx;
+
+  const leftCandidates: number[] = [];
+  for (let i = 0; i < anchors.length; i++) {
+    const ci = colIndices[i];
+    if (ci >= bestStart && ci <= bestStart + 2) {
+      leftCandidates.push(anchors[i].x - (ci - bestStart) * gap);
+    }
+  }
+  leftCandidates.sort((a, b) => a - b);
+  const col1X = leftCandidates[Math.floor(leftCandidates.length / 2)];
+
+  const colXs = [col1X, col1X + gap, col1X + 2 * gap].filter(
+    (x) => x > iconSize * 0.3 && x < grayEq.cols - iconSize * 0.3,
+  );
+  return colXs.length >= 2 ? colXs : null;
+}
+
+// --- カラーマッチングによるステータスアイコン分類 ---
+
+function customClassifyStatByColor(
+  colorMat: any,
+  cx: number,
+  cy: number,
+  iconSide: number,
+  cv: any,
+  excludePids?: Set<number>,
+): { pid: number; score: number; margin: number } {
+  const pad = 3;
+  const roiX = Math.max(0, Math.round(cx - iconSide / 2 - pad));
+  const roiY = Math.max(0, Math.round(cy - iconSide / 2 - pad));
+  const roiS = iconSide + pad * 2;
+  if (roiX + roiS > colorMat.cols || roiY + roiS > colorMat.rows) {
+    return { pid: -1, score: -Infinity, margin: 0 };
+  }
+
+  const roi = colorMat.roi(new cv.Rect(roiX, roiY, roiS, roiS));
+  const result = new cv.Mat();
+  const scores: { pid: number; score: number }[] = [];
+
+  for (const tmpl of statTemplates) {
+    if (excludePids?.has(tmpl.partId)) continue;
+    let partBest = -Infinity;
+    for (const v of tmpl.colorVariants) {
+      const resized = new cv.Mat();
+      cv.resize(v.colorMat, resized, new cv.Size(iconSide, iconSide));
+      if (roi.rows >= resized.rows && roi.cols >= resized.cols) {
+        cv.matchTemplate(roi, resized, result, cv.TM_CCOEFF_NORMED);
+        const s = cv.minMaxLoc(result).maxVal;
+        if (!isNaN(s) && s > partBest) partBest = s;
+      }
+      resized.delete();
+    }
+    scores.push({ pid: tmpl.partId, score: partBest });
+  }
+
+  roi.delete();
+  result.delete();
+
+  scores.sort((a, b) => b.score - a.score);
+  if (scores.length === 0) return { pid: -1, score: -Infinity, margin: 0 };
+  return {
+    pid: scores[0].pid,
+    score: scores[0].score,
+    margin: scores.length >= 2 ? scores[0].score - scores[1].score : 0,
+  };
+}
+
+// カラーマッチング用confident判定（スコアが高いので閾値を調整）
+function isColorStatConfident(score: number): boolean {
+  return score >= 0.50;
+}
+
+// --- モジュールアイコン カラーマッチング分類 ---
+
+function classifyModuleIconByColor(
+  colorMat: any,
   cx: number,
   cy: number,
   moduleScale: number,
@@ -2613,16 +2782,15 @@ function classifyModuleIconAtGrid(
   const expectedW = Math.round(refTmpl.edgeMat.cols * moduleScale);
   const expectedH = Math.round(refTmpl.edgeMat.rows * moduleScale);
 
-  // 推定位置周辺に余裕を持ったROI
   const padX = Math.round(expectedW * 0.5);
   const padY = Math.round(expectedH * 0.5);
   const roiX = Math.max(0, Math.round(cx - expectedW / 2 - padX));
   const roiY = Math.max(0, Math.round(cy - expectedH / 2 - padY));
-  const roiW = Math.min(expectedW + padX * 2, edgeImage.cols - roiX);
-  const roiH = Math.min(expectedH + padY * 2, edgeImage.rows - roiY);
+  const roiW = Math.min(expectedW + padX * 2, colorMat.cols - roiX);
+  const roiH = Math.min(expectedH + padY * 2, colorMat.rows - roiY);
   if (roiW < expectedW || roiH < expectedH) return null;
 
-  const roi = edgeImage.roi(new cv.Rect(roiX, roiY, roiW, roiH));
+  const roi = colorMat.roi(new cv.Rect(roiX, roiY, roiW, roiH));
   const result = new cv.Mat();
   const resized = new cv.Mat();
 
@@ -2633,30 +2801,43 @@ function classifyModuleIconAtGrid(
     if (filterRarities?.length && !filterRarities.includes(tmpl.rarity)) continue;
     if (filterTypes?.length && !filterTypes.includes(tmpl.type)) continue;
 
-    const tw = Math.round(tmpl.edgeMat.cols * moduleScale);
-    const th = Math.round(tmpl.edgeMat.rows * moduleScale);
-    if (tw < 10 || th < 10 || tw >= roiW || th >= roiH) continue;
+    let partBest = -Infinity;
+    let partLoc = { x: 0, y: 0 };
+    let partW = 0, partH = 0;
 
-    cv.resize(tmpl.edgeMat, resized, new cv.Size(tw, th));
-    cv.matchTemplate(roi, resized, result, cv.TM_CCOEFF_NORMED);
-    const mm = cv.minMaxLoc(result);
-    const score = isNaN(mm.maxVal) ? -Infinity : mm.maxVal;
+    for (const v of tmpl.colorVariants) {
+      const tw = Math.round(v.colorMat.cols * moduleScale);
+      const th = Math.round(v.colorMat.rows * moduleScale);
+      if (tw < 10 || th < 10 || tw >= roiW || th >= roiH) continue;
 
-    if (bestMatch === null || score > bestMatch.score) {
+      cv.resize(v.colorMat, resized, new cv.Size(tw, th));
+      cv.matchTemplate(roi, resized, result, cv.TM_CCOEFF_NORMED);
+      const mm = cv.minMaxLoc(result);
+      const score = isNaN(mm.maxVal) ? -Infinity : mm.maxVal;
+
+      if (score > partBest) {
+        partBest = score;
+        partLoc = mm.maxLoc;
+        partW = tw;
+        partH = th;
+      }
+    }
+
+    if (bestMatch === null || partBest > bestMatch.score) {
       secondBestScore = bestMatch?.score ?? -1;
       bestMatch = {
         type: tmpl.type,
         rarity: tmpl.rarity,
         configId: buildConfigId(tmpl.type, tmpl.rarity),
-        score,
+        score: partBest,
         margin: 0,
-        x: roiX + mm.maxLoc.x,
-        y: roiY + mm.maxLoc.y,
-        w: tw,
-        h: th,
+        x: roiX + partLoc.x,
+        y: roiY + partLoc.y,
+        w: partW,
+        h: partH,
       };
-    } else if (score > secondBestScore) {
-      secondBestScore = score;
+    } else if (partBest > secondBestScore) {
+      secondBestScore = partBest;
     }
   }
 
@@ -2669,66 +2850,6 @@ function classifyModuleIconAtGrid(
   }
 
   return bestMatch;
-}
-
-// --- モジュールアイコン中央色によるレアリティ判定 ---
-
-function classifyRarityByColor(
-  colorMat: any,
-  iconX: number,
-  iconY: number,
-  iconW: number,
-  iconH: number,
-  cv: any,
-): number | null {
-  // アイコン中央付近をサンプリング（中央の穴の色）
-  const centerX = Math.round(iconX + iconW / 2);
-  const centerY = Math.round(iconY + iconH / 2);
-  const sampleR = Math.max(2, Math.round(Math.min(iconW, iconH) * 0.08));
-
-  const x1 = Math.max(0, centerX - sampleR);
-  const y1 = Math.max(0, centerY - sampleR);
-  const x2 = Math.min(colorMat.cols, centerX + sampleR + 1);
-  const y2 = Math.min(colorMat.rows, centerY + sampleR + 1);
-  if (x2 <= x1 || y2 <= y1) return null;
-
-  const roi = colorMat.roi(new cv.Rect(x1, y1, x2 - x1, y2 - y1));
-  const hsv = new cv.Mat();
-  cv.cvtColor(roi, hsv, cv.COLOR_RGBA2RGB);
-  const hsv2 = new cv.Mat();
-  cv.cvtColor(hsv, hsv2, cv.COLOR_RGB2HSV);
-  hsv.delete();
-
-  // 全ピクセルのH, Sを平均
-  let totalH = 0;
-  let totalS = 0;
-  let count = 0;
-  for (let py = 0; py < hsv2.rows; py++) {
-    for (let px = 0; px < hsv2.cols; px++) {
-      const h = hsv2.ucharAt(py, px * 3);     // H: 0-180
-      const s = hsv2.ucharAt(py, px * 3 + 1); // S: 0-255
-      totalH += h;
-      totalS += s;
-      count++;
-    }
-  }
-  hsv2.delete();
-  roi.delete();
-
-  if (count === 0) return null;
-  const avgH = totalH / count; // OpenCV H: 0-180
-  const avgS = totalS / count;
-
-  // 彩度が極端に低い場合は判定不能
-  if (avgS < 10) return null;
-
-  // 色相で分類 (OpenCV H: 0-180)
-  //   金 H_cv≈15, 青 H_cv≈106, 紫 H_cv≈132
-  if (avgH >= 5 && avgH < 50) return 4;    // 金
-  if (avgH >= 90 && avgH < 120) return 2;  // 青
-  if (avgH >= 120 && avgH < 160) return 3; // 紫
-
-  return null;
 }
 
 // ========== 詳細設定モード メインパイプライン ==========
@@ -2765,7 +2886,42 @@ async function processCustomMode(
     return [];
   }
   onProgress?.({ stage: "列検出中...", percent: 30 });
-  const colXs = customDetectColumns(grayEq1x, anchor.anchorY, anchor.iconSize, anchor.scale, cv);
+  let colXs: number[];
+  if (_lastCustomColXs) {
+    // キャッシュがある場合はそのまま使用
+    colXs = _lastCustomColXs;
+  } else {
+    // 両方の列検出を実行し、スコアが高い方を採用
+    const templateColXs = customDetectColumnsFromAnchors(grayEq1x, cv, anchor.scale, anchor.iconSize);
+    const profileColXs = customDetectColumns(grayEq1x, anchor.anchorY, anchor.iconSize, anchor.scale, cv);
+    const colCandidates = [templateColXs, profileColXs.length > 0 ? profileColXs : null]
+      .filter((c): c is number[] => c !== null && c.length >= 2);
+
+    if (colCandidates.length === 0) {
+      colXs = [];
+    } else if (colCandidates.length === 1) {
+      colXs = colCandidates[0];
+    } else {
+      // アンカーY付近でカラーマッチングスコアを比較して列を選択
+      // 極端に低いスコア（アイコンがない位置）は平均から除外
+      const MIN_SCORE_FOR_AVG = 0.40;
+      let bestCols = colCandidates[0];
+      let bestAvg = -Infinity;
+      for (const cols of colCandidates) {
+        let scoreSum = 0, count = 0;
+        for (const cx of cols) {
+          const r = customClassifyStatByColor(colorMat1x, cx, anchor.anchorY, anchor.iconSize, cv);
+          if (isFinite(r.score) && r.score >= MIN_SCORE_FOR_AVG) { scoreSum += r.score; count++; }
+        }
+        const avg = count > 0 ? scoreSum / count : -Infinity;
+        if (avg > bestAvg) { bestAvg = avg; bestCols = cols; }
+      }
+      colXs = bestCols;
+    }
+    if (colXs.length >= 2) {
+      _lastCustomColXs = colXs; // キャッシュ
+    }
+  }
   if (colXs.length === 0) {
     console.warn("[customOCR] 列検出失敗");
     gray.delete(); grayEq1x.delete(); edgeMat1x.delete();
@@ -2789,12 +2945,7 @@ async function processCustomMode(
   gray.delete();
 
   const grayClUp = applyCLAHE(grayUpscaled, cv);
-  const grayEqUp = new cv.Mat();
-  cv.equalizeHist(grayUpscaled, grayEqUp);
   grayUpscaled.delete();
-
-  const edgeUp = new cv.Mat();
-  cv.Canny(grayEqUp, edgeUp, 50, 150);
 
   // アップスケール座標
   const scaledColXs = colXs.map((x) => x * upscale);
@@ -2802,7 +2953,9 @@ async function processCustomMode(
   const scaledIconSize = Math.round(anchor.iconSize * upscale);
   const scaledScale = anchor.scale * upscale;
 
-  // カラー画像はレアリティ判定で使用するため保持
+  // カラー画像をアップスケール（カラーマッチング用）
+  const colorMatUp = new cv.Mat();
+  cv.resize(colorMat1x, colorMatUp, new cv.Size(0, 0), upscale, upscale, cv.INTER_CUBIC);
 
   // 1x画像は不要なので解放
   grayEq1x.delete();
@@ -2810,7 +2963,7 @@ async function processCustomMode(
   grayCl1x.delete();
   edgeCl1x.delete();
 
-  // Step 3: グリッド交点でステータス分類
+  // Step 3: グリッド交点でステータス分類（カラーマッチング）
   onProgress?.({ stage: "ステータスアイコン分類中...", percent: 45 });
   const rows: ModuleRow[] = [];
 
@@ -2823,26 +2976,45 @@ async function processCustomMode(
       // 列フィルタ: 真ん中・右列で極系除外
       const excludePids = ci >= 1 ? EXTREME_STAT_PIDS : undefined;
 
-      const result = customClassifyStatAtGrid(grayClUp, cx, ry, scaledIconSize, cv, excludePids);
+      // カラーマッチング（テンプレート列+カラー方式）
+      const result = customClassifyStatByColor(colorMatUp, cx, ry, scaledIconSize, cv, excludePids);
+      const confident = isColorStatConfident(result.score);
 
-      const confident = isCustomStatConfident(result.score, result.margin);
-      if (confident) {
-        stats.push({
-          partId: result.pid,
-          x: Math.round(cx - scaledIconSize / 2),
-          y: Math.round(ry - scaledIconSize / 2),
-          w: scaledIconSize,
-          h: scaledIconSize,
-          score: result.score,
-          margin: result.margin,
-        });
+      // フォールバック: カラーで低スコアの場合は従来のCLAHE方式も試す
+      if (!confident) {
+        const grayResult = customClassifyStatAtGrid(grayClUp, cx, ry, scaledIconSize, cv, excludePids);
+        const grayConfident = isCustomStatConfident(grayResult.score, grayResult.margin);
+        if (grayConfident) {
+          stats.push({
+            partId: grayResult.pid,
+            x: Math.round(cx - scaledIconSize / 2),
+            y: Math.round(ry - scaledIconSize / 2),
+            w: scaledIconSize,
+            h: scaledIconSize,
+            score: grayResult.score,
+            margin: grayResult.margin,
+          });
+        }
+        continue;
       }
+
+      stats.push({
+        partId: result.pid,
+        x: Math.round(cx - scaledIconSize / 2),
+        y: Math.round(ry - scaledIconSize / 2),
+        w: scaledIconSize,
+        h: scaledIconSize,
+        score: result.score,
+        margin: result.margin,
+      });
     }
 
     rows.push({ y: ry, stats });
+    // UIスレッドに制御を返す（撮影ボタンなどのイベントを処理可能にする）
+    await new Promise((r) => setTimeout(r, 0));
   }
 
-  // Step 4: モジュールアイコン分類（グリッド+エッジ方式）
+  // Step 4: モジュールアイコン分類（カラーマッチング）
   onProgress?.({ stage: "モジュールアイコン検出中...", percent: 55 });
   const moduleScale = scaledScale * 0.65;
   const columnGap = scaledColXs.length >= 2
@@ -2853,29 +3025,16 @@ async function processCustomMode(
   const moduleIcons: (ModuleIconMatch | null)[] = [];
   for (let ri = 0; ri < scaledRowYs.length; ri++) {
     moduleIcons.push(
-      classifyModuleIconAtGrid(
-        edgeUp, moduleEstX, scaledRowYs[ri],
+      classifyModuleIconByColor(
+        colorMatUp, moduleEstX, scaledRowYs[ri],
         moduleScale, cv, filterRarities, filterTypes,
       ),
     );
+    // UIスレッドに制御を返す
+    await new Promise((r) => setTimeout(r, 0));
   }
 
-  // Step 4.5: カラー画像の中央色でレアリティを補正
-  for (const m of moduleIcons) {
-    if (!m) continue;
-    // アップスケール座標 → 1x座標に変換してカラー画像を参照
-    const colorRarity = classifyRarityByColor(
-      colorMat1x,
-      m.x / upscale, m.y / upscale,
-      m.w / upscale, m.h / upscale,
-      cv,
-    );
-    if (colorRarity !== null) {
-      m.rarity = colorRarity;
-      m.configId = buildConfigId(m.type, colorRarity);
-    }
-  }
-
+  colorMatUp.delete();
   colorMat1x.delete();
 
   // ステータスが4つ以上検出された行はスコア上位3つに絞る
@@ -2886,8 +3045,6 @@ async function processCustomMode(
     return { y: row.y, stats: kept };
   });
 
-  grayEqUp.delete();
-  edgeUp.delete();
   grayClUp.delete();
 
   // Step 5: 数値OCR（1xのcanvasを使用）
