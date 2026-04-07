@@ -1,10 +1,10 @@
 import { STAT_ICONS, MODULE_ICONS } from "@shared/stats";
 import type { ModuleInput, StatEntry } from "@shared/types";
 
-// --- カスタムモードオプション ---
+// --- 詳細設定モードオプション ---
 
 export interface OcrCustomOptions {
-  platform?: "mobile" | "pc";
+  platform: "mobile" | "pc";
   region?: { x: number; y: number; width: number; height: number };
   rarities?: number[];   // e.g. [3, 4, 5]
   typeNames?: string[];  // e.g. ["attack", "device", "protect"]
@@ -2276,97 +2276,37 @@ function classifyModuleIconForRow(
   return chosen;
 }
 
-function pruneStatsUsingModuleAnchor(
-  row: ModuleRow,
-  moduleIcon: ModuleIconMatch | null,
-): ModuleRow {
-  if (!moduleIcon || row.stats.length === 0) return row;
 
-  const sorted = [...row.stats].sort((a, b) => a.x - b.x);
-  const statWidths = sorted.map((s) => s.w).filter((w) => w > 0);
-  if (statWidths.length === 0) return row;
 
-  const medianStatWidth = median(statWidths);
-  const moduleRight = moduleIcon.x + moduleIcon.w;
-  const gap = Math.max(4, Math.round(medianStatWidth * 0.12));
-  const keptStartIndex = sorted.findIndex(
-    (stat) => stat.x + stat.w / 2 >= moduleRight + gap,
-  );
-
-  if (keptStartIndex <= 0) return row;
-
-  const removed = sorted.slice(0, keptStartIndex);
-  const kept = sorted.slice(keptStartIndex);
-  if (kept.length === 0) return row;
-
-  const removedAvgScore =
-    removed.reduce((sum, stat) => sum + (stat.score ?? 0), 0) / removed.length;
-  const keptAvgScore =
-    kept.reduce((sum, stat) => sum + (stat.score ?? 0), 0) / kept.length;
-  const removedStrong = removed.some(
-    (stat) => (stat.score ?? 0) >= 0.58 || (stat.margin ?? 0) >= 0.04,
-  );
-  const moduleLooksReliable =
-    moduleIcon.score >= 0.48 && moduleIcon.w >= medianStatWidth * 1.6;
-  const removedLooksWeak =
-    removedAvgScore + 0.10 < keptAvgScore ||
-    removed.every((stat) => (stat.score ?? 0) < 0.52);
-
-  if (!moduleLooksReliable || removedStrong || !removedLooksWeak) {
-    return row;
-  }
-
-  return {
-    y: row.y,
-    stats: kept,
-  };
-}
-
-// スマートアライメント: 行のステータス列が期待より多い場合に
-// 左寄せ/右寄せのスコア合計を比較して最適な方を採用する。
-// Python検証で+3.8%の精度向上を確認（特にrarity2/3の行で効果的）。
-function applySmartAlignment(
-  rows: ModuleRow[],
-  moduleIcons: (ModuleIconMatch | null)[],
-): ModuleRow[] {
-  return rows.map((row, index) => {
-    const modIcon = moduleIcons[index];
-    if (!modIcon || row.stats.length <= 1) return row;
-
-    // モジュールのrarity → 期待ステータス数
-    const expectedStatCount = Math.max(1, modIcon.rarity - 1);
-
-    if (row.stats.length <= expectedStatCount) return row;
-
-    // stats はX座標でソート済みと想定
-    const sorted = [...row.stats].sort((a, b) => a.x - b.x);
-
-    // 左寄せ: 先頭N個を採用
-    const leftSlice = sorted.slice(0, expectedStatCount);
-    const leftScore = leftSlice.reduce((sum, s) => sum + (s.score ?? 0), 0);
-
-    // 右寄せ: 末尾N個を採用
-    const rightSlice = sorted.slice(-expectedStatCount);
-    const rightScore = rightSlice.reduce((sum, s) => sum + (s.score ?? 0), 0);
-
-    const chosen = leftScore > rightScore ? leftSlice : rightSlice;
-    return { y: row.y, stats: chosen };
-  });
-}
-
-// ========== カスタムモード: グリッド交点ベース検出 ==========
+// ========== 詳細設定モード: グリッド交点ベース検出 ==========
 
 // Step 1: スケールとアンカー位置を検出
+// 前回検出したスケールをキャッシュ（複数枚処理時に2枚目以降を高速化）
+let _lastCustomScale: number | null = null;
+
+export function resetCustomScaleCache(): void {
+  _lastCustomScale = null;
+}
+
 function customDetectScaleAndAnchor(
   grayEq: any,
   cv: any,
+  imgWidth: number,
+  imgHeight: number,
+  platform: "mobile" | "pc",
 ): { scale: number; anchorX: number; anchorY: number; iconSize: number } | null {
+  // 画像サイズからスケールを推定（粗探索を省略して速度向上）
+  // PC: width基準 (W / iconSize ≈ 72, scale ≈ W / 5780)
+  // mobile: sqrt(W×H)基準 (sqrt(W×H) / iconSize ≈ 43.4, scale ≈ sqrt(W×H) / 3470)
+  const estimatedScale = platform === "mobile"
+    ? Math.sqrt(imgWidth * imgHeight) / 3470
+    : imgWidth / 5780;
+
   const refs = statTemplates.slice(0, 8);
   let bestScale = 0, bestScore = -1, bestX = 0, bestY = 0;
   const result = new cv.Mat();
 
-  // 粗探索
-  for (let scale = 0.15; scale <= 0.70; scale += 0.02) {
+  const testScale = (scale: number) => {
     for (const ref of refs) {
       const tw = Math.round(ref.grayMat.cols * scale);
       const th = Math.round(ref.grayMat.rows * scale);
@@ -2382,32 +2322,41 @@ function customDetectScaleAndAnchor(
         bestY = mm.maxLoc.y;
       }
       r.delete();
+    }
+  };
+
+  // 推定スケール周辺の探索（実測の最大誤差 ±0.015 に対して ±0.05 で十分なマージン）
+  const searchCenter = _lastCustomScale ?? estimatedScale;
+  for (let scale = searchCenter - 0.05; scale <= searchCenter + 0.05; scale += 0.01) {
+    if (scale < 0.10 || scale > 0.80) continue;
+    testScale(scale);
+  }
+
+  // スコアが低い場合、推定値ベースで再探索（キャッシュが外れた場合のフォールバック）
+  if (bestScore < 0.3 && _lastCustomScale !== null) {
+    bestScore = -1;
+    bestScale = 0;
+    for (let scale = estimatedScale - 0.05; scale <= estimatedScale + 0.05; scale += 0.01) {
+      if (scale < 0.10 || scale > 0.80) continue;
+      testScale(scale);
     }
   }
 
   // 精密探索
-  for (let scale = bestScale - 0.03; scale <= bestScale + 0.03; scale += 0.005) {
-    if (scale < 0.15 || scale > 0.70) continue;
-    for (const ref of refs) {
-      const tw = Math.round(ref.grayMat.cols * scale);
-      const th = Math.round(ref.grayMat.rows * scale);
-      if (tw >= grayEq.cols || th >= grayEq.rows || tw < 10 || th < 10) continue;
-      const r = new cv.Mat();
-      cv.resize(ref.grayMat, r, new cv.Size(tw, th));
-      cv.matchTemplate(grayEq, r, result, cv.TM_CCOEFF_NORMED);
-      const mm = cv.minMaxLoc(result);
-      if (mm.maxVal > bestScore) {
-        bestScore = mm.maxVal;
-        bestScale = scale;
-        bestX = mm.maxLoc.x;
-        bestY = mm.maxLoc.y;
-      }
-      r.delete();
-    }
+  const fineCenter = bestScale;
+  for (let scale = fineCenter - 0.03; scale <= fineCenter + 0.03; scale += 0.005) {
+    if (scale < 0.10 || scale > 0.80) continue;
+    testScale(scale);
   }
 
   result.delete();
-  if (bestScore < 0.3) return null;
+  if (bestScore < 0.3) {
+    _lastCustomScale = null;
+    return null;
+  }
+
+  // 成功したスケールをキャッシュ
+  _lastCustomScale = bestScale;
 
   const iconSize = Math.round(80 * bestScale);
   return {
@@ -2561,7 +2510,7 @@ function customDetectRows(
   result.delete();
 
   // ピーク検出
-  const minDist = Math.round(iconSize * 1.2);
+  const minDist = Math.round(iconSize * 1.5);
   const threshold = 0.3;
   const peaks: { y: number; score: number }[] = [];
   for (let y = 0; y < yScores.length; y++) {
@@ -2641,12 +2590,86 @@ function customClassifyStatAtGrid(
   };
 }
 
-// confident判定（カスタムモード用）
+// confident判定（詳細設定モード用）
 function isCustomStatConfident(score: number, margin: number): boolean {
   return score >= 0.55 || (score >= 0.50 && margin >= 0.015);
 }
 
-// ========== カスタムモード メインパイプライン ==========
+// グリッド交点ベースのモジュールアイコン分類（実験: 軽量版）
+function classifyModuleIconAtGrid(
+  edgeImage: any,
+  cx: number,
+  cy: number,
+  moduleScale: number,
+  cv: any,
+  filterRarities?: number[],
+  filterTypes?: string[],
+): ModuleIconMatch | null {
+  if (moduleIconTemplates.length === 0) return null;
+
+  const refTmpl = moduleIconTemplates[0];
+  const expectedW = Math.round(refTmpl.edgeMat.cols * moduleScale);
+  const expectedH = Math.round(refTmpl.edgeMat.rows * moduleScale);
+
+  // 推定位置周辺に余裕を持ったROI
+  const padX = Math.round(expectedW * 0.5);
+  const padY = Math.round(expectedH * 0.5);
+  const roiX = Math.max(0, Math.round(cx - expectedW / 2 - padX));
+  const roiY = Math.max(0, Math.round(cy - expectedH / 2 - padY));
+  const roiW = Math.min(expectedW + padX * 2, edgeImage.cols - roiX);
+  const roiH = Math.min(expectedH + padY * 2, edgeImage.rows - roiY);
+  if (roiW < expectedW || roiH < expectedH) return null;
+
+  const roi = edgeImage.roi(new cv.Rect(roiX, roiY, roiW, roiH));
+  const result = new cv.Mat();
+  const resized = new cv.Mat();
+
+  let bestMatch: ModuleIconMatch | null = null;
+  let secondBestScore = -1;
+
+  for (const tmpl of moduleIconTemplates) {
+    if (filterRarities?.length && !filterRarities.includes(tmpl.rarity)) continue;
+    if (filterTypes?.length && !filterTypes.includes(tmpl.type)) continue;
+
+    const tw = Math.round(tmpl.edgeMat.cols * moduleScale);
+    const th = Math.round(tmpl.edgeMat.rows * moduleScale);
+    if (tw < 10 || th < 10 || tw >= roiW || th >= roiH) continue;
+
+    cv.resize(tmpl.edgeMat, resized, new cv.Size(tw, th));
+    cv.matchTemplate(roi, resized, result, cv.TM_CCOEFF_NORMED);
+    const mm = cv.minMaxLoc(result);
+    const score = isNaN(mm.maxVal) ? -Infinity : mm.maxVal;
+
+    if (bestMatch === null || score > bestMatch.score) {
+      secondBestScore = bestMatch?.score ?? -1;
+      bestMatch = {
+        type: tmpl.type,
+        rarity: tmpl.rarity,
+        configId: buildConfigId(tmpl.type, tmpl.rarity),
+        score,
+        margin: 0,
+        x: roiX + mm.maxLoc.x,
+        y: roiY + mm.maxLoc.y,
+        w: tw,
+        h: th,
+      };
+    } else if (score > secondBestScore) {
+      secondBestScore = score;
+    }
+  }
+
+  roi.delete();
+  result.delete();
+  resized.delete();
+
+  if (bestMatch) {
+    bestMatch.margin = secondBestScore >= 0 ? bestMatch.score - secondBestScore : 0;
+  }
+
+  return bestMatch;
+}
+
+// ========== 詳細設定モード メインパイプライン ==========
 
 async function processCustomMode(
   canvas: HTMLCanvasElement,
@@ -2658,6 +2681,8 @@ async function processCustomMode(
   colorMat1x: any,
   cropWidth: number,
   cropHeight: number,
+  imgWidth: number,
+  imgHeight: number,
   onProgress: ((p: OcrProgress) => void) | undefined,
   externalWorker: any,
   customOptions: OcrCustomOptions | undefined,
@@ -2665,14 +2690,11 @@ async function processCustomMode(
 ): Promise<ModuleInput[]> {
   const filterRarities = customOptions?.rarities;
   const filterTypes = customOptions?.typeNames;
-
-  console.log("[customOCR] crop:", cropWidth, "x", cropHeight,
-    "platform:", customOptions?.platform,
-    "rarities:", filterRarities, "types:", filterTypes);
+  const platform = customOptions!.platform;
 
   // Step 1: グリッド検出（1x解像度で実行）
   onProgress?.({ stage: "グリッド解析中...", percent: 20 });
-  const anchor = customDetectScaleAndAnchor(grayEq1x, cv);
+  const anchor = customDetectScaleAndAnchor(grayEq1x, cv, imgWidth, imgHeight, platform);
   if (!anchor) {
     console.warn("[customOCR] スケール検出失敗");
     gray.delete(); grayEq1x.delete(); edgeMat1x.delete();
@@ -2680,9 +2702,6 @@ async function processCustomMode(
     canvas.width = 0; canvas.height = 0;
     return [];
   }
-  console.log("[customOCR] scale:", anchor.scale.toFixed(3),
-    "iconSize:", anchor.iconSize, "anchor:", Math.round(anchor.anchorX), Math.round(anchor.anchorY));
-
   onProgress?.({ stage: "列検出中...", percent: 30 });
   const colXs = customDetectColumns(grayEq1x, anchor.anchorY, anchor.iconSize, anchor.scale, cv);
   if (colXs.length === 0) {
@@ -2692,8 +2711,6 @@ async function processCustomMode(
     canvas.width = 0; canvas.height = 0;
     return [];
   }
-  console.log("[customOCR] cols:", colXs.map((x) => Math.round(x)));
-
   onProgress?.({ stage: "行検出中...", percent: 35 });
   const rowYs = customDetectRows(grayEq1x, colXs, anchor.iconSize, anchor.scale, cv);
   if (rowYs.length === 0) {
@@ -2703,8 +2720,6 @@ async function processCustomMode(
     canvas.width = 0; canvas.height = 0;
     return [];
   }
-  console.log("[customOCR] rows:", rowYs.length, "y=", rowYs.map((y) => Math.round(y)));
-
   // Step 2: アップスケール
   const upscale = cropHeight < 700 ? 3 : 2;
   const grayUpscaled = new cv.Mat();
@@ -2725,9 +2740,7 @@ async function processCustomMode(
   const scaledIconSize = Math.round(anchor.iconSize * upscale);
   const scaledScale = anchor.scale * upscale;
 
-  // カラー画像もアップスケール（モジュールアイコン分類用）
-  const colorMatUp = new cv.Mat();
-  cv.resize(colorMat1x, colorMatUp, new cv.Size(0, 0), upscale, upscale, cv.INTER_CUBIC);
+  // カラー画像は不要（グリッド+エッジ方式ではedgeUpのみ使用）
   colorMat1x.delete();
 
   // 1x画像は不要なので解放
@@ -2752,9 +2765,7 @@ async function processCustomMode(
       const result = customClassifyStatAtGrid(grayClUp, cx, ry, scaledIconSize, cv, excludePids);
 
       const confident = isCustomStatConfident(result.score, result.margin);
-      if (!confident) {
-        console.log(`[customOCR] R${ri + 1} C${ci + 1} rejected: pid=${result.pid} score=${result.score.toFixed(3)} margin=${result.margin.toFixed(3)}`);
-      } else {
+      if (confident) {
         stats.push({
           partId: result.pid,
           x: Math.round(cx - scaledIconSize / 2),
@@ -2769,38 +2780,39 @@ async function processCustomMode(
 
     rows.push({ y: ry, stats });
   }
-  console.log("[customOCR] stat classification:", rows.map((r, i) =>
-    `R${i + 1}(${r.stats.length} stats)`).join(", "));
 
-  // Step 4: モジュールアイコン分類
+  // Step 4: モジュールアイコン分類（グリッド+エッジ方式）
   onProgress?.({ stage: "モジュールアイコン検出中...", percent: 55 });
   const moduleScale = scaledScale * 0.65;
-  const moduleIcons: (ModuleIconMatch | null)[] = [];
+  const columnGap = scaledColXs.length >= 2
+    ? scaledColXs[1] - scaledColXs[0]
+    : scaledIconSize * 2;
+  const moduleEstX = scaledColXs[0] - columnGap;
 
-  for (const row of rows) {
+  const moduleIcons: (ModuleIconMatch | null)[] = [];
+  for (let ri = 0; ri < scaledRowYs.length; ri++) {
     moduleIcons.push(
-      classifyModuleIconForRow(
-        colorMatUp, grayEqUp, edgeUp, grayClUp,
-        row, scaledScale, moduleScale, cv,
-        filterRarities, filterTypes,
+      classifyModuleIconAtGrid(
+        edgeUp, moduleEstX, scaledRowYs[ri],
+        moduleScale, cv, filterRarities, filterTypes,
       ),
     );
   }
 
-  // スマートアライメント: レアリティに基づく期待ステータス数で最適化
-  const prunedRows = rows.map((row, index) =>
-    pruneStatsUsingModuleAnchor(row, moduleIcons[index]),
-  );
-  const anchoredRows = applySmartAlignment(prunedRows, moduleIcons);
+  // ステータスが4つ以上検出された行はスコア上位3つに絞る
+  const anchoredRows = rows.map((row) => {
+    if (row.stats.length <= 3) return row;
+    const sorted = [...row.stats].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const kept = sorted.slice(0, 3).sort((a, b) => a.x - b.x);
+    return { y: row.y, stats: kept };
+  });
 
   grayEqUp.delete();
   edgeUp.delete();
   grayClUp.delete();
-  colorMatUp.delete();
 
   // Step 5: 数値OCR（1xのcanvasを使用）
   onProgress?.({ stage: "数値読み取り中...", percent: 60 });
-
   // 数値OCR用: アップスケール座標を1xに変換したcanvasが必要
   // 行・ステータスの座標を1xに戻す
   const ocrRows: ModuleRow[] = anchoredRows.map((row) => ({
@@ -2891,7 +2903,7 @@ export async function processScreenshot(
   const isCustomMode = !!customOptions?.region;
   const region = customOptions?.region;
 
-  // クロップ: カスタムモードはユーザー指定領域、autoモードは左40%
+  // クロップ: 詳細設定モードはユーザー指定領域、autoモードは左40%
   let cropX: number, cropY: number, cropWidth: number, cropHeight: number;
   if (region) {
     cropX = Math.max(0, Math.round(region.x));
@@ -2927,11 +2939,11 @@ export async function processScreenshot(
   const edgeCl = new cv.Mat();
   cv.Canny(grayCl, edgeCl, 50, 150);
 
-  // --- カスタムモード: グリッド交点ベース検出 ---
+  // --- 詳細設定モード: グリッド交点ベース検出 ---
   if (isCustomMode) {
     return processCustomMode(
       canvas, gray, grayEq, edgeMat, grayCl, edgeCl, colorMat,
-      cropWidth, cropHeight,
+      cropWidth, cropHeight, imgWidth, imgHeight,
       onProgress, externalWorker, customOptions, cv,
     );
   }
@@ -3128,11 +3140,13 @@ export async function processScreenshot(
   for (const row of rows) {
     moduleIcons.push(classifyModuleIconForRow(colorMat, grayEq, edgeMat, grayCl, row, scale, moduleScale, cv));
   }
-  const prunedRows = rows.map((row, index) =>
-    pruneStatsUsingModuleAnchor(row, moduleIcons[index]),
-  );
-  // スマートアライメント: 列数が期待より多い行で左寄せ/右寄せを最適化
-  const anchoredRows = applySmartAlignment(prunedRows, moduleIcons);
+  // ステータスが4つ以上検出された行はスコア上位3つに絞る
+  const anchoredRows = rows.map((row) => {
+    if (row.stats.length <= 3) return row;
+    const sorted = [...row.stats].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const kept = sorted.slice(0, 3).sort((a, b) => a.x - b.x);
+    return { y: row.y, stats: kept };
+  });
   grayEq.delete();
   edgeMat.delete();
   grayCl.delete();

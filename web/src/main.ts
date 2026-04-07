@@ -5,7 +5,7 @@ import type {
   Combination, CombinationModule, ModuleInput, OptimizeRequest,
   OptimizeResponse, StatEntry, StatTotal,
 } from "@shared/types";
-import { processScreenshot, type OcrCustomOptions } from "./ocr";
+import { processScreenshot, resetCustomScaleCache, type OcrCustomOptions } from "./ocr";
 import {
   saveOcrGroups, loadOcrGroups, deleteOcrGroups, hasOcrGroups,
   type OcrGroup,
@@ -2190,7 +2190,7 @@ async function startOcrFromSetup() {
   const files = ocrSetupFiles;
   if (files.length === 0) return;
 
-  // カスタムモードオプション構築
+  // 詳細設定モードオプション構築
   const mode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value ?? "auto";
   let customOptions: OcrCustomOptions | undefined;
   const platform = document.querySelector<HTMLInputElement>('input[name="ocr-platform"]:checked')?.value as "mobile" | "pc" | undefined;
@@ -2227,6 +2227,7 @@ async function startOcrFromSetup() {
   progress.textContent = fmt(t.ui.ocr_progress, { current: 0, total });
   progress.style.display = "";
 
+  resetCustomScaleCache();
   let ocrWorker: any = null;
   try {
     const { createWorker } = await import("tesseract.js");
@@ -2343,10 +2344,7 @@ async function confirmRegion() {
     width: Math.round(selection.width / a),
     height: Math.round(selection.height / d),
   };
-  console.log("[regionSelect] transform:", { a, d, e, f },
-    "origin:", { ox, oy },
-    "selection:", { x: selection.x, y: selection.y, w: selection.width, h: selection.height },
-    "→ pixels:", ocrSetupRegion);
+
 
   closeRegionModal();
   updateOcrSetupBtnLabels();
