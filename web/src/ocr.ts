@@ -1808,6 +1808,21 @@ export interface OcrProgress {
   percent: number;
 }
 
+/** サムネイルにラベルを描画するための行位置情報 */
+export interface RowPosition {
+  /** 行中央Y（元画像ピクセル座標） */
+  y: number;
+  /** ラベル配置の基準X（元画像ピクセル座標、モジュールアイコン左端付近） */
+  x: number;
+  /** アイコンの高さ（元画像ピクセル） */
+  h: number;
+}
+
+export interface ProcessScreenshotResult {
+  modules: ModuleInput[];
+  rowPositions: RowPosition[];
+}
+
 // --- モジュールアイコン分類 ---
 
 interface ModuleIconMatch {
@@ -2870,10 +2885,12 @@ async function processCustomMode(
   externalWorker: any,
   customOptions: OcrCustomOptions | undefined,
   cv: any,
-): Promise<ModuleInput[]> {
+): Promise<ProcessScreenshotResult> {
   const filterRarities = customOptions?.rarities;
   const filterTypes = customOptions?.typeNames;
   const platform = customOptions!.platform;
+  const cropX = customOptions?.region ? Math.max(0, Math.round(customOptions.region.x)) : 0;
+  const cropY = customOptions?.region ? Math.max(0, Math.round(customOptions.region.y)) : 0;
 
   // Step 1: グリッド検出（1x解像度で実行）
   onProgress?.({ stage: "グリッド解析中...", percent: 20 });
@@ -2883,7 +2900,7 @@ async function processCustomMode(
     gray.delete(); grayEq1x.delete(); edgeMat1x.delete();
     grayCl1x.delete(); edgeCl1x.delete(); colorMat1x.delete();
     canvas.width = 0; canvas.height = 0;
-    return [];
+    return { modules: [], rowPositions: [] };
   }
   onProgress?.({ stage: "列検出中...", percent: 30 });
   let colXs: number[];
@@ -2927,7 +2944,7 @@ async function processCustomMode(
     gray.delete(); grayEq1x.delete(); edgeMat1x.delete();
     grayCl1x.delete(); edgeCl1x.delete(); colorMat1x.delete();
     canvas.width = 0; canvas.height = 0;
-    return [];
+    return { modules: [], rowPositions: [] };
   }
   onProgress?.({ stage: "行検出中...", percent: 35 });
   const rowYs = customDetectRows(grayEq1x, colXs, anchor.iconSize, anchor.scale, cv);
@@ -2936,7 +2953,7 @@ async function processCustomMode(
     gray.delete(); grayEq1x.delete(); edgeMat1x.delete();
     grayCl1x.delete(); edgeCl1x.delete(); colorMat1x.delete();
     canvas.width = 0; canvas.height = 0;
-    return [];
+    return { modules: [], rowPositions: [] };
   }
   // Step 2: アップスケール
   const upscale = cropHeight < 700 ? 3 : 2;
@@ -3081,7 +3098,9 @@ async function processCustomMode(
   }
 
   const modules: ModuleInput[] = [];
+  const rowPositions: RowPosition[] = [];
   let uuidCounter = Date.now();
+  const iconH1x = anchor.iconSize;
 
   try {
     for (let i = 0; i < ocrRows.length; i++) {
@@ -3099,6 +3118,12 @@ async function processCustomMode(
           quality: modIcon?.rarity ?? null,
           stats: stats.map((s) => ({ part_id: s.part_id, value: s.value })),
         });
+        const refX = modIcon ? modIcon.x : (ocrRows[i].stats[0]?.x ?? 0) - iconH1x * 2;
+        rowPositions.push({
+          y: ocrRows[i].y + cropY,
+          x: refX + cropX,
+          h: iconH1x,
+        });
       }
     }
   } finally {
@@ -3110,7 +3135,7 @@ async function processCustomMode(
   }
 
   onProgress?.({ stage: "完了", percent: 100 });
-  return modules;
+  return { modules, rowPositions };
 }
 
 export async function processScreenshot(
@@ -3118,7 +3143,7 @@ export async function processScreenshot(
   onProgress?: (p: OcrProgress) => void,
   externalWorker?: any,
   customOptions?: OcrCustomOptions,
-): Promise<ModuleInput[]> {
+): Promise<ProcessScreenshotResult> {
   onProgress?.({ stage: "OpenCV.js 読み込み中...", percent: 0 });
   await loadOpenCV();
   const cv = (window as any).cv;
@@ -3252,7 +3277,7 @@ export async function processScreenshot(
     // Canvas即時解放
     canvas.width = 0;
     canvas.height = 0;
-    return [];
+    return { modules: [], rowPositions: [] };
   }
 
   // 行グルーピング
@@ -3405,7 +3430,9 @@ export async function processScreenshot(
   }
 
   const modules: ModuleInput[] = [];
+  const rowPositions: RowPosition[] = [];
   let uuidCounter = Date.now();
+  const iconH = anchoredRows[0]?.stats[0]?.h ?? Math.round(80 * scale);
 
   try {
     for (let i = 0; i < anchoredRows.length; i++) {
@@ -3432,6 +3459,12 @@ export async function processScreenshot(
           quality: modIcon?.rarity ?? null,
           stats: stats.map((s) => ({ part_id: s.part_id, value: s.value })),
         });
+        const refX = modIcon ? modIcon.x : (anchoredRows[i].stats[0]?.x ?? 0) - iconH * 2;
+        rowPositions.push({
+          y: anchoredRows[i].y,
+          x: refX,
+          h: iconH,
+        });
       }
     }
   } finally {
@@ -3444,5 +3477,5 @@ export async function processScreenshot(
   }
 
   onProgress?.({ stage: "完了", percent: 100 });
-  return modules;
+  return { modules, rowPositions };
 }

@@ -5,7 +5,7 @@ import type {
   Combination, CombinationModule, ModuleInput, OptimizeRequest,
   OptimizeResponse, StatEntry, StatTotal,
 } from "@shared/types";
-import { processScreenshot, resetCustomScaleCache, type OcrCustomOptions } from "./ocr";
+import { processScreenshot, resetCustomScaleCache, type OcrCustomOptions, type RowPosition } from "./ocr";
 import {
   saveOcrGroups, loadOcrGroups, deleteOcrGroups, hasOcrGroups,
   type OcrGroup,
@@ -1427,10 +1427,65 @@ let ocrImageZoomStates: { scale: number; translateX: number; translateY: number 
 let ocrCurrentPage = 0;
 let hasStoredOcrData = false;
 
+/** 登録済みモジュールと同一（config_id + stats完全一致）か判定 */
+function isModuleDuplicate(m: ModuleInput): boolean {
+  const key = moduleFingerprint(m);
+  return modules.some((existing) => moduleFingerprint(existing) === key);
+}
+
+function moduleFingerprint(m: ModuleInput): string {
+  const sortedStats = [...m.stats]
+    .map((s) => `${s.part_id}:${s.value}`)
+    .sort()
+    .join(",");
+  return `${m.config_id}|${sortedStats}`;
+}
+
+/** 全行の重複クラスを再評価してからフィルタを適用 */
+function refreshOcrDuplicateState() {
+  const body = $("ocr-modal-body");
+  body.querySelectorAll<HTMLElement>(".ocr-row").forEach((row) => {
+    const gi = Number(row.dataset.gi);
+    const mi = Number(row.dataset.mi);
+    const m = pendingOcrGroups[gi]?.modules[mi];
+    if (!m) return;
+    if (isModuleDuplicate(m)) {
+      row.classList.add("ocr-row--duplicate");
+    } else {
+      row.classList.remove("ocr-row--duplicate");
+    }
+  });
+  applyOcrNewOnlyFilter();
+}
+
+/** 新規のみチェック状態に応じて行の表示/非表示を切り替え、カウンターを更新 */
+function applyOcrNewOnlyFilter() {
+  const checked = ($("ocr-new-only") as HTMLInputElement).checked;
+  const body = $("ocr-modal-body");
+  const rows = body.querySelectorAll<HTMLElement>(".ocr-row");
+  let total = 0;
+  let newCount = 0;
+  rows.forEach((row) => {
+    total++;
+    const isDup = row.classList.contains("ocr-row--duplicate");
+    if (isDup && checked) {
+      row.classList.add("ocr-row--hidden");
+    } else {
+      row.classList.remove("ocr-row--hidden");
+    }
+    if (!isDup) newCount++;
+  });
+  const counter = body.querySelector<HTMLElement>(".ocr-new-count");
+  if (counter) {
+    counter.textContent = fmt(t.ui.ocr_new_count, { total: String(total), newCount: String(newCount) });
+  }
+}
+
 function openOcrConfirmationModal(groups: OcrGroup[], startPage = 0) {
   pendingOcrGroups = groups.map((g) => ({
     imageUrl: g.imageUrl,
     modules: g.modules.map((m) => ({ ...m, stats: m.stats.map((s) => ({ ...s })) })),
+    originalRowIndices: g.originalRowIndices ?? g.modules.map((_, i) => i + 1),
   }));
   ocrImageZoomStates = groups.map(() => ({ scale: 1, translateX: 0, translateY: 0 }));
   ocrCurrentPage = Math.min(startPage, groups.length - 1);
@@ -1538,6 +1593,10 @@ function renderOcrModalBody() {
   hint.textContent = t.ui.ocr_hint;
   header.appendChild(hint);
 
+  const newCountEl = document.createElement("div");
+  newCountEl.className = "ocr-new-count";
+  header.appendChild(newCountEl);
+
   section.appendChild(header);
 
   const listWrap = document.createElement("div");
@@ -1549,7 +1608,7 @@ function renderOcrModalBody() {
     const raritySub = comp?.raritySub ?? 2;
 
     const row = document.createElement("div");
-    row.className = "ocr-row";
+    row.className = "ocr-row" + (isModuleDuplicate(m) ? " ocr-row--duplicate" : "");
     row.dataset.gi = String(gi);
     row.dataset.mi = String(mi);
 
@@ -1568,7 +1627,7 @@ function renderOcrModalBody() {
       : "";
 
     row.innerHTML = [
-      `<span class="ocr-row-index">${mi + 1}</span>`,
+      `<span class="ocr-row-index">R${group.originalRowIndices?.[mi] ?? mi + 1}</span>`,
       `<div class="ocr-row-content">`,
         `<div class="ocr-row-header">`,
           `<div class="ocr-row-icon" id="ocr-icon-${gi}-${mi}">${moduleIconHtml(m.config_id)}</div>`,
@@ -1608,12 +1667,17 @@ function renderOcrModalBody() {
   body.querySelectorAll<HTMLButtonElement>(".ocr-group-add").forEach((btn) => {
     btn.onclick = () => {
       const g = Number(btn.dataset.gi);
-      pendingOcrGroups[g].modules.push({
+      const grp = pendingOcrGroups[g];
+      grp.modules.push({
         uuid: Date.now() + Math.floor(Math.random() * 1000),
         config_id: buildConfigId(1, 2),
         quality: 3,
         stats: [{ part_id: ALL_STAT_IDS[0], value: 1 }],
       });
+      const nextIdx = (grp.originalRowIndices && grp.originalRowIndices.length > 0)
+        ? Math.max(...grp.originalRowIndices) + 1
+        : grp.modules.length;
+      (grp.originalRowIndices ??= []).push(nextIdx);
       saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
       renderOcrModalBody();
     };
@@ -1626,18 +1690,21 @@ function renderOcrModalBody() {
     sel.onchange = () => {
       onOcrFieldChange(Number(sel.dataset.gi), Number(sel.dataset.mi));
       saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+      refreshOcrDuplicateState();
     };
   });
   body.querySelectorAll<HTMLElement>(".ocr-stat-name").forEach((dd) => {
     dd.addEventListener("change", () => {
       pendingOcrGroups[Number(dd.dataset.gi)].modules[Number(dd.dataset.mi)].stats[Number(dd.dataset.si)].part_id = Number(dd.dataset.value);
       saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+      refreshOcrDuplicateState();
     });
   });
   body.querySelectorAll<HTMLSelectElement>(".ocr-stat-value").forEach((sel) => {
     sel.onchange = () => {
       pendingOcrGroups[Number(sel.dataset.gi)].modules[Number(sel.dataset.mi)].stats[Number(sel.dataset.si)].value = Number(sel.value);
       saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+      refreshOcrDuplicateState();
     };
   });
   body.querySelectorAll<HTMLButtonElement>(".ocr-row-remove").forEach((btn) => {
@@ -1645,6 +1712,7 @@ function renderOcrModalBody() {
       const g = Number(btn.dataset.gi);
       const mi = Number(btn.dataset.mi);
       pendingOcrGroups[g].modules.splice(mi, 1);
+      pendingOcrGroups[g].originalRowIndices?.splice(mi, 1);
       if (pendingOcrGroups[g].modules.length === 0) {
         ocrImageZoomStates.splice(g, 1);
         pendingOcrGroups.splice(g, 1);
@@ -1676,6 +1744,7 @@ function renderOcrModalBody() {
 
   initStatDropdowns(body);
   updateOcrPager();
+  applyOcrNewOnlyFilter();
 }
 
 function onOcrFieldChange(gi: number, mi: number) {
@@ -1692,7 +1761,9 @@ function onOcrFieldChange(gi: number, mi: number) {
 
 function registerOcrModules() {
   const all = allPendingModules();
-  if (all.length === 0) {
+  const newOnly = ($("ocr-new-only") as HTMLInputElement).checked;
+  const toRegister = newOnly ? all.filter((m) => !isModuleDuplicate(m)) : all;
+  if (toRegister.length === 0) {
     hasStoredOcrData = false;
     deleteOcrGroups().catch(() => {});
     $("ocr-modal-bd").classList.remove("on");
@@ -1701,7 +1772,7 @@ function registerOcrModules() {
     ocrCurrentPage = 0;
     return;
   }
-  modules.push(...all);
+  modules.push(...toRegister);
   saveModulesToStorage();
   renderGrid();
   updateOptRunBtn();
@@ -1981,7 +2052,11 @@ function addManualModule() {
 
 // ========== Screenshot Import ==========
 
-function createThumbnailDataUrl(img: HTMLImageElement, maxWidth = 1920): string {
+function createThumbnailDataUrl(
+  img: HTMLImageElement,
+  rowPositions?: RowPosition[],
+  maxWidth = 1920,
+): string {
   const scale = Math.min(1, maxWidth / img.naturalWidth);
   const w = Math.round(img.naturalWidth * scale);
   const h = Math.round(img.naturalHeight * scale);
@@ -1990,6 +2065,35 @@ function createThumbnailDataUrl(img: HTMLImageElement, maxWidth = 1920): string 
   c.height = h;
   const ctx = c.getContext("2d")!;
   ctx.drawImage(img, 0, 0, w, h);
+
+  if (rowPositions && rowPositions.length > 0) {
+    for (let i = 0; i < rowPositions.length; i++) {
+      const pos = rowPositions[i];
+      const lx = pos.x * scale;
+      const ly = pos.y * scale;
+      const fontSize = Math.max(14, Math.round(pos.h * scale * 0.45));
+      const label = `R${i + 1}`;
+
+      ctx.font = `bold ${fontSize}px sans-serif`;
+      ctx.textBaseline = "middle";
+      const tm = ctx.measureText(label);
+      const pad = Math.round(fontSize * 0.25);
+      const bgW = tm.width + pad * 2;
+      const bgH = fontSize + pad * 2;
+      const bx = Math.max(0, lx - bgW - 2);
+      const by = ly - bgH / 2;
+
+      ctx.fillStyle = "rgba(0,0,0,0.65)";
+      ctx.beginPath();
+      const r = Math.round(fontSize * 0.2);
+      ctx.roundRect(bx, by, bgW, bgH, r);
+      ctx.fill();
+
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, bx + pad, ly);
+    }
+  }
+
   const dataUrl = c.toDataURL("image/webp", 0.8);
   c.width = 0;
   c.height = 0;
@@ -2275,9 +2379,9 @@ async function startOcrFromSetup() {
         img.onerror = () => reject(new Error("Failed to load image"));
       });
       try {
-        const detected = await processScreenshot(img, undefined, ocrWorker, customOptions);
-        const thumbnailUrl = createThumbnailDataUrl(img);
-        groups.push({ imageUrl: thumbnailUrl, modules: detected });
+        const result = await processScreenshot(img, undefined, ocrWorker, customOptions);
+        const thumbnailUrl = createThumbnailDataUrl(img, result.rowPositions);
+        groups.push({ imageUrl: thumbnailUrl, modules: result.modules, rowPositions: result.rowPositions });
       } catch {
         throw new Error(t.ui.ocr_failed);
       } finally {
@@ -2592,9 +2696,9 @@ async function processCaptureOcrQueue() {
           platform: "pc",
           region: { x: region.x, y: region.y, width: region.w, height: region.h },
         };
-        const detected = await processScreenshot(img, undefined, captureOcrWorker, customOptions);
-        const thumbnailUrl = createThumbnailDataUrl(img);
-        captureOcrGroups.push({ imageUrl: thumbnailUrl, modules: detected });
+        const result = await processScreenshot(img, undefined, captureOcrWorker, customOptions);
+        const thumbnailUrl = createThumbnailDataUrl(img, result.rowPositions);
+        captureOcrGroups.push({ imageUrl: thumbnailUrl, modules: result.modules, rowPositions: result.rowPositions });
         img.src = "";
       } catch {
         // 1枚失敗しても続行
@@ -3337,6 +3441,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ocr-register").onclick = registerOcrModules;
   $("ocr-cancel").onclick = cancelOcrModal;
   $("ocr-modal-close").onclick = closeOcrModal;
+  ($("ocr-new-only") as HTMLInputElement).onchange = applyOcrNewOnlyFilter;
   $("ocr-prev").onclick = () => { ocrCurrentPage--; renderOcrModalBody(); $("ocr-modal-body").querySelector(".ocr-group-list")?.scrollTo(0, 0); };
   $("ocr-next").onclick = () => { ocrCurrentPage++; renderOcrModalBody(); $("ocr-modal-body").querySelector(".ocr-group-list")?.scrollTo(0, 0); };
 

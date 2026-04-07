@@ -1,9 +1,13 @@
 // web/src/ocr-store.ts — OCR一時保存用 IndexedDB ストア
 import type { ModuleInput } from "@shared/types";
+import type { RowPosition } from "./ocr";
 
 export interface OcrGroup {
   imageUrl: string;
   modules: ModuleInput[];
+  rowPositions?: RowPosition[];
+  /** 各モジュールの元の行番号（画像ラベルと一致させる。削除しても詰めない） */
+  originalRowIndices?: number[];
 }
 
 const DB_NAME = "ocr-temp-store";

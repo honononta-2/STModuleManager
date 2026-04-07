@@ -1155,6 +1155,25 @@ body {
   user-select:none;
 }
 
+.ocr-new-only-label {
+  display:flex; align-items:center; gap:4px;
+  font-size:13px; color:var(--tx2);
+  cursor:pointer; user-select:none;
+}
+.ocr-new-only-label input[type="checkbox"] {
+  margin:0; accent-color:var(--accent);
+}
+
+.ocr-new-count {
+  padding:2px 10px;
+  font-size:11px;
+  color:var(--tx3);
+}
+
+.ocr-row.ocr-row--hidden {
+  display:none;
+}
+
 /* ===== Manual Input Modal ===== */
 .manual-form { display:flex; flex-direction:column; gap:14px; }
 
