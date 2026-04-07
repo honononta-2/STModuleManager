@@ -2669,6 +2669,66 @@ function classifyModuleIconAtGrid(
   return bestMatch;
 }
 
+// --- モジュールアイコン中央色によるレアリティ判定 ---
+
+function classifyRarityByColor(
+  colorMat: any,
+  iconX: number,
+  iconY: number,
+  iconW: number,
+  iconH: number,
+  cv: any,
+): number | null {
+  // アイコン中央付近をサンプリング（中央の穴の色）
+  const centerX = Math.round(iconX + iconW / 2);
+  const centerY = Math.round(iconY + iconH / 2);
+  const sampleR = Math.max(2, Math.round(Math.min(iconW, iconH) * 0.08));
+
+  const x1 = Math.max(0, centerX - sampleR);
+  const y1 = Math.max(0, centerY - sampleR);
+  const x2 = Math.min(colorMat.cols, centerX + sampleR + 1);
+  const y2 = Math.min(colorMat.rows, centerY + sampleR + 1);
+  if (x2 <= x1 || y2 <= y1) return null;
+
+  const roi = colorMat.roi(new cv.Rect(x1, y1, x2 - x1, y2 - y1));
+  const hsv = new cv.Mat();
+  cv.cvtColor(roi, hsv, cv.COLOR_RGBA2RGB);
+  const hsv2 = new cv.Mat();
+  cv.cvtColor(hsv, hsv2, cv.COLOR_RGB2HSV);
+  hsv.delete();
+
+  // 全ピクセルのH, Sを平均
+  let totalH = 0;
+  let totalS = 0;
+  let count = 0;
+  for (let py = 0; py < hsv2.rows; py++) {
+    for (let px = 0; px < hsv2.cols; px++) {
+      const h = hsv2.ucharAt(py, px * 3);     // H: 0-180
+      const s = hsv2.ucharAt(py, px * 3 + 1); // S: 0-255
+      totalH += h;
+      totalS += s;
+      count++;
+    }
+  }
+  hsv2.delete();
+  roi.delete();
+
+  if (count === 0) return null;
+  const avgH = totalH / count; // OpenCV H: 0-180
+  const avgS = totalS / count;
+
+  // 彩度が極端に低い場合は判定不能
+  if (avgS < 10) return null;
+
+  // 色相で分類 (OpenCV H: 0-180)
+  //   金 H_cv≈15, 青 H_cv≈106, 紫 H_cv≈132
+  if (avgH >= 5 && avgH < 50) return 4;    // 金
+  if (avgH >= 90 && avgH < 120) return 2;  // 青
+  if (avgH >= 120 && avgH < 160) return 3; // 紫
+
+  return null;
+}
+
 // ========== 詳細設定モード メインパイプライン ==========
 
 async function processCustomMode(
@@ -2740,8 +2800,7 @@ async function processCustomMode(
   const scaledIconSize = Math.round(anchor.iconSize * upscale);
   const scaledScale = anchor.scale * upscale;
 
-  // カラー画像は不要（グリッド+エッジ方式ではedgeUpのみ使用）
-  colorMat1x.delete();
+  // カラー画像はレアリティ判定で使用するため保持
 
   // 1x画像は不要なので解放
   grayEq1x.delete();
@@ -2798,6 +2857,24 @@ async function processCustomMode(
       ),
     );
   }
+
+  // Step 4.5: カラー画像の中央色でレアリティを補正
+  for (const m of moduleIcons) {
+    if (!m) continue;
+    // アップスケール座標 → 1x座標に変換してカラー画像を参照
+    const colorRarity = classifyRarityByColor(
+      colorMat1x,
+      m.x / upscale, m.y / upscale,
+      m.w / upscale, m.h / upscale,
+      cv,
+    );
+    if (colorRarity !== null) {
+      m.rarity = colorRarity;
+      m.configId = buildConfigId(m.type, colorRarity);
+    }
+  }
+
+  colorMat1x.delete();
 
   // ステータスが4つ以上検出された行はスコア上位3つに絞る
   const anchoredRows = rows.map((row) => {

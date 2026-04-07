@@ -832,6 +832,84 @@ body {
   flex:none; width:calc(50% - 5px);
 }
 
+/* ===== Screen Capture ===== */
+.capture-modal { height:auto; max-height:80vh; }
+
+.capture-preview-wrap {
+  position:relative;
+  border:1px solid var(--str-soft);
+  border-radius:8px;
+  background:#0a0a0a;
+  overflow:hidden;
+  aspect-ratio:16/9;
+  display:flex; align-items:center; justify-content:center;
+}
+.capture-preview-wrap video {
+  width:100%; height:100%;
+  object-fit:contain;
+  display:none;
+}
+.capture-preview-wrap.connected video { display:block; }
+.capture-preview-wrap.connected .capture-placeholder { display:none; }
+
+.capture-placeholder {
+  display:flex; flex-direction:column;
+  align-items:center; gap:8px;
+  color:var(--tx3);
+  font-size:13px;
+}
+.capture-placeholder svg { opacity:0.4; }
+
+/* Region selection overlay */
+.capture-selection-overlay {
+  position:absolute; inset:0;
+  cursor:crosshair;
+  display:none;
+  z-index:2;
+}
+.capture-preview-wrap.connected .capture-selection-overlay { display:block; }
+.capture-preview-wrap.has-region .capture-selection-overlay { display:none; }
+
+.capture-region-rect {
+  position:absolute;
+  border:2px solid var(--acc);
+  background:rgba(0,120,212,0.12);
+  display:none;
+  pointer-events:none;
+  z-index:3;
+}
+.capture-region-rect.on { display:block; }
+
+.capture-region-hint {
+  font-size:12px; color:var(--tx3); margin-top:8px;
+  line-height:1.5;
+}
+
+.capture-controls {
+  display:flex; gap:8px;
+  margin-top:12px;
+}
+.capture-controls .addbtn,
+.capture-controls .opt-run-btn {
+  flex:1;
+}
+
+.capture-status {
+  font-size:13px; color:var(--tx2); font-weight:500;
+  margin-top:8px;
+  text-align:center;
+}
+.capture-status:empty { margin-top:0; }
+
+.capture-flash {
+  position:absolute; inset:0;
+  background:rgba(255,255,255,0.5);
+  pointer-events:none;
+  z-index:4;
+  animation:captureFlash 0.25s ease-out forwards;
+}
+@keyframes captureFlash { from{opacity:1} to{opacity:0} }
+
 /* ===== OCR 領域選択モーダル ===== */
 .ocr-region-modal { width:720px; }
 .ocr-region-body { display:flex; flex-direction:column; gap:10px; overflow:hidden; }

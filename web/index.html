@@ -436,7 +436,41 @@
           <div class="ocr-setup-file-count" id="ocr-setup-file-count"></div>
           <span style="flex:1"></span>
           <button class="addbtn" id="ocr-setup-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="addbtn" id="capture-open-btn" style="display:none" data-i18n="capture_open_btn">画面キャプチャ</button>
           <button class="opt-run-btn" id="ocr-setup-start" data-i18n="ocr_setup_start" disabled>取込</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Screen Capture Modal -->
+    <div class="modal-bd" id="capture-modal-bd">
+      <div class="modal modal--form capture-modal">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="capture_title">画面キャプチャ</span>
+          <button class="modal-close" id="capture-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="capture-preview-wrap" id="capture-preview-wrap">
+            <video id="capture-video" autoplay playsinline></video>
+            <div class="capture-selection-overlay" id="capture-selection-overlay"></div>
+            <div class="capture-region-rect" id="capture-region-rect"></div>
+            <div class="capture-placeholder" id="capture-placeholder">
+              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              <span data-i18n="capture_not_connected">接続されていません</span>
+            </div>
+          </div>
+          <div class="capture-region-hint" id="capture-region-hint" data-i18n="capture_region_hint">画面接続後、プレビュー上をドラッグして読取領域を選択できます</div>
+          <div class="capture-controls">
+            <button class="addbtn" id="capture-connect-btn" data-i18n="capture_connect">画面を選択</button>
+            <button class="addbtn" id="capture-region-reset-btn" style="display:none" data-i18n="capture_region_reset">領域リセット</button>
+            <button class="opt-run-btn" id="capture-take-btn" disabled data-i18n="capture_take">撮影</button>
+          </div>
+          <div class="capture-status" id="capture-status"></div>
+        </div>
+        <div class="modal-footer">
+          <span style="flex:1"></span>
+          <button class="addbtn" id="capture-cancel-btn" data-i18n="btn_cancel">キャンセル</button>
+          <button class="opt-run-btn" id="capture-done-btn" disabled data-i18n="capture_done">完了</button>
         </div>
       </div>
     </div>
