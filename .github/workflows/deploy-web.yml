@@ -2,7 +2,7 @@ name: Deploy Web
 
 on:
   push:
-    branches: [master]
+    branches: [master, 'web/**']
     paths:
       - 'web/**'
       - 'crates/optimizer/**'
@@ -51,5 +51,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=st-module-manager --commit-dirty=true --commit-message="${{ github.sha }}"
+          command: pages deploy dist --project-name=st-module-manager --branch=${{ github.ref_name }} --commit-dirty=true --commit-message="${{ github.sha }}"
           workingDirectory: web
