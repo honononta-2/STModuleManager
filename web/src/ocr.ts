@@ -2296,11 +2296,11 @@ function customDetectScaleAndAnchor(
   platform: "mobile" | "pc",
 ): { scale: number; anchorX: number; anchorY: number; iconSize: number } | null {
   // 画像サイズからスケールを推定（粗探索を省略して速度向上）
-  // PC: width基準 (W / iconSize ≈ 72, scale ≈ W / 5780)
+  // PC: UIは16:9を上限としてスケーリングされるため、ウルトラワイド等では高さから16:9相当の幅を逆算
   // mobile: sqrt(W×H)基準 (sqrt(W×H) / iconSize ≈ 43.4, scale ≈ sqrt(W×H) / 3470)
   const estimatedScale = platform === "mobile"
     ? Math.sqrt(imgWidth * imgHeight) / 3470
-    : imgWidth / 5780;
+    : Math.min(imgWidth, imgHeight * 16 / 9) / 5780;
 
   const refs = statTemplates.slice(0, 8);
   let bestScale = 0, bestScore = -1, bestX = 0, bestY = 0;
