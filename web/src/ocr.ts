@@ -198,6 +198,7 @@ async function loadTemplates(): Promise<void> {
   }
 
   for (const modIcon of MODULE_ICONS) {
+    if (modIcon.rarity === 5) continue; // 金Bは金Aと色で区別不能のためスキップ
     const img = await loadImage(`/icons/${modIcon.file}`);
     const bgRarity = Math.min(modIcon.rarity, 4);
     const bgImg = rarityBgImages[bgRarity];
@@ -225,6 +226,7 @@ async function loadTemplates(): Promise<void> {
   }
 
   for (const modIcon of MODULE_ICONS) {
+    if (modIcon.rarity === 5) continue; // 金Bスキップ
     try {
       const img = await loadImage(`/icons/OCR_${modIcon.type}${modIcon.rarity}.png`);
       const colorCanvas = renderTemplateCanvas(img, null);

@@ -415,7 +415,15 @@ document.addEventListener("scroll", (e) => {
 
 // ========== Grid rendering ==========
 
+let _gridScrollCleanup: (() => void) | null = null;
+
 function renderGrid() {
+  // 前回のスクロールリスナーを確実に削除
+  if (_gridScrollCleanup) {
+    _gridScrollCleanup();
+    _gridScrollCleanup = null;
+  }
+
   let ms = [...modules];
 
   if (filterRarities.length > 0) {
@@ -547,6 +555,7 @@ function renderGrid() {
     const onScroll = () => {
       if (rendered >= ms.length) {
         scroll?.removeEventListener("scroll", onScroll);
+        _gridScrollCleanup = null;
         return;
       }
       if (!scroll) return;
@@ -556,6 +565,7 @@ function renderGrid() {
       }
     };
     scroll?.addEventListener("scroll", onScroll);
+    _gridScrollCleanup = () => scroll?.removeEventListener("scroll", onScroll);
   }
 
   $("sb-n").textContent = fmt(t.ui.n_modules, { count: ms.length });
@@ -2080,6 +2090,19 @@ function updateOcrSetupCustomPanel() {
   } else {
     panel.classList.remove("on");
   }
+  updatePcAutoWarn();
+  updateOcrSetupStartBtn();
+}
+
+function updatePcAutoWarn() {
+  const platform = document.querySelector<HTMLInputElement>('input[name="ocr-platform"]:checked')?.value ?? "mobile";
+  const mode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value ?? "auto";
+  const warn = $("ocr-setup-pc-auto-warn");
+  if (platform === "pc" && mode === "auto") {
+    warn.classList.add("on");
+  } else {
+    warn.classList.remove("on");
+  }
 }
 
 function updateOcrSetupBtnLabels() {
@@ -2110,7 +2133,13 @@ function addOcrSetupFiles(files: FileList | File[]) {
     if (f.type.startsWith("image/")) ocrSetupFiles.push(f);
   }
   renderOcrSetupFileList();
-  $<HTMLButtonElement>("ocr-setup-start").disabled = ocrSetupFiles.length === 0;
+  updateOcrSetupStartBtn();
+}
+
+function updateOcrSetupStartBtn() {
+  const mode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value ?? "auto";
+  const needsRegion = mode === "custom" && !ocrSetupRegion;
+  $<HTMLButtonElement>("ocr-setup-start").disabled = ocrSetupFiles.length === 0 || needsRegion;
 }
 
 function renderOcrSetupFileList() {
@@ -2130,11 +2159,10 @@ function openOcrSetupFlyout(anchor: HTMLElement, category: "rarity" | "type") {
   fl.textContent = "";
 
   if (category === "rarity") {
-    const rarityValues = [3, 4, 5]; // purple, gold-A, gold-B
+    const rarityValues = [3, 4]; // purple, gold
     const rarityLabels: Record<number, string> = {
       3: t.rarity.purple,
       4: t.rarity.gold,
-      5: t.rarity.gold + " B",
     };
     rarityValues.forEach((val) => {
       const el = document.createElement("label");
@@ -2306,11 +2334,20 @@ function openCaptureModal() {
   $("capture-preview-wrap").classList.remove("has-region");
   $("capture-region-rect").classList.remove("on");
   $("capture-region-reset-btn").style.display = "none";
-  $("capture-region-hint").textContent = t.ui.capture_region_hint;
+  setCaptureStep(1);
   // プラットフォームをPCソフトに切替
   const pcRadio = document.querySelector<HTMLInputElement>('input[name="ocr-platform"][value="pc"]');
   if (pcRadio) pcRadio.checked = true;
   $("capture-modal-bd").classList.add("on");
+}
+
+function setCaptureStep(step: number) {
+  for (let i = 1; i <= 3; i++) {
+    const el = $(`capture-step-${i}`);
+    el.classList.remove("active", "done");
+    if (i < step) el.classList.add("done");
+    else if (i === step) el.classList.add("active");
+  }
 }
 
 async function closeCaptureModal() {
@@ -2359,7 +2396,7 @@ async function connectCapture() {
     $("capture-preview-wrap").classList.remove("has-region");
     $("capture-region-rect").classList.remove("on");
     $("capture-region-reset-btn").style.display = "none";
-    $("capture-region-hint").textContent = t.ui.capture_region_hint;
+    setCaptureStep(2);
 
     stream.getVideoTracks()[0].addEventListener("ended", () => {
       stopCaptureStream();
@@ -2467,8 +2504,8 @@ function initCaptureRegionDrag() {
 
     $("capture-preview-wrap").classList.add("has-region");
     $("capture-region-reset-btn").style.display = "";
-    $("capture-region-hint").textContent = t.ui.capture_region_set;
     $<HTMLButtonElement>("capture-take-btn").disabled = false;
+    setCaptureStep(3);
   });
 }
 
@@ -2477,8 +2514,8 @@ function resetCaptureRegion() {
   $("capture-preview-wrap").classList.remove("has-region");
   $("capture-region-rect").classList.remove("on");
   $("capture-region-reset-btn").style.display = "none";
-  $("capture-region-hint").textContent = t.ui.capture_region_hint;
   $<HTMLButtonElement>("capture-take-btn").disabled = true;
+  setCaptureStep(2);
 }
 
 async function ensureCaptureOcrWorker() {
@@ -2524,7 +2561,6 @@ function takeCapture() {
       const file = new File([blob], `capture-${idx}.png`, { type: "image/png" });
       captureFiles.push(file);
       updateCaptureStatus();
-      $<HTMLButtonElement>("capture-done-btn").disabled = false;
     }, "image/png");
   }
 }
@@ -2565,7 +2601,6 @@ async function processCaptureOcrQueue() {
       }
 
       updateCaptureStatus();
-      $<HTMLButtonElement>("capture-done-btn").disabled = captureOcrGroups.length === 0;
     }
   } finally {
     captureOcrProcessing = false;
@@ -2577,6 +2612,7 @@ function updateCaptureStatus() {
   const el = $("capture-status");
   const done = captureOcrGroups.length;
   const total = captureOcrTotalShots;
+  const pending = captureOcrQueue.length;
 
   if (captureRegion && total > 0) {
     const totalModules = captureOcrGroups.reduce((s, g) => s + g.modules.length, 0);
@@ -2586,6 +2622,11 @@ function updateCaptureStatus() {
   } else {
     el.textContent = "";
   }
+
+  // 未処理があれば編集ボタン無効
+  const hasDone = done > 0 || captureFiles.length > 0;
+  const hasPending = pending > 0 || captureOcrProcessing;
+  $<HTMLButtonElement>("capture-done-btn").disabled = !hasDone || hasPending;
 }
 
 async function finishCapture() {
@@ -2694,6 +2735,7 @@ async function confirmRegion() {
 
   closeRegionModal();
   updateOcrSetupBtnLabels();
+  updateOcrSetupStartBtn();
 }
 
 function closeRegionPreview() {
@@ -3321,6 +3363,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll<HTMLInputElement>('input[name="ocr-mode"]').forEach((radio) => {
     radio.onchange = () => updateOcrSetupCustomPanel();
   });
+  document.querySelectorAll<HTMLInputElement>('input[name="ocr-platform"]').forEach((radio) => {
+    radio.onchange = () => updatePcAutoWarn();
+  });
   $("ocr-setup-rarity-btn").onclick = (e) => openOcrSetupFlyout(e.currentTarget as HTMLElement, "rarity");
   $("ocr-setup-type-btn").onclick = (e) => openOcrSetupFlyout(e.currentTarget as HTMLElement, "type");
   $("ocr-setup-region-btn").onclick = () => openRegionModal();
@@ -3356,9 +3401,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (files.length > 0) addOcrSetupFiles(files);
   });
 
-  // Screen Capture modal
-  if (navigator.mediaDevices && "getDisplayMedia" in navigator.mediaDevices) {
+  // Screen Capture modal + PC/モバイル判定
+  const isDesktop = !!(navigator.mediaDevices && "getDisplayMedia" in navigator.mediaDevices);
+  if (isDesktop) {
     $("capture-open-btn").style.display = "";
+  } else {
+    const dropText = document.querySelector<HTMLElement>(".ocr-setup-dropzone-text");
+    if (dropText) dropText.textContent = t.ui.ocr_setup_drop_text_mobile;
   }
   $("capture-open-btn").onclick = () => {
     $("ocr-setup-modal-bd").classList.remove("on");

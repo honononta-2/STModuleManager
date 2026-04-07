@@ -387,9 +387,10 @@
               </label>
               <label class="ocr-setup-radio">
                 <input type="radio" name="ocr-platform" value="pc">
-                <span class="ocr-setup-radio-title" data-i18n="ocr_setup_platform_pc">PCソフト</span>
+                <span class="ocr-setup-radio-title" data-i18n="ocr_setup_platform_pc">PC版</span>
               </label>
             </div>
+            <p class="ocr-setup-pc-auto-warn" id="ocr-setup-pc-auto-warn" data-i18n="ocr_setup_pc_auto_warn"></p>
           </div>
           <div class="ocr-setup-section">
             <div class="ocr-setup-label" data-i18n="ocr_setup_mode">取込モード</div>
@@ -412,6 +413,12 @@
           </div>
           <div class="ocr-setup-custom-panel" id="ocr-setup-custom-panel">
             <div class="ocr-setup-section">
+              <div class="ocr-setup-filter-group">
+                <span class="ocr-setup-filter-label"><span data-i18n="ocr_setup_region">領域選択</span><span class="ocr-required">*</span></span>
+                <button class="addbtn ocr-setup-region-btn" id="ocr-setup-region-btn" type="button" data-i18n="ocr_setup_region_btn">選択</button>
+              </div>
+            </div>
+            <div class="ocr-setup-section">
               <div class="ocr-setup-label" data-i18n="ocr_setup_custom_heading">画像に含まれている項目</div>
               <div class="ocr-setup-custom-row">
                 <div class="ocr-setup-filter-group">
@@ -422,12 +429,6 @@
                   <span class="ocr-setup-filter-label" data-i18n="ocr_setup_type">型</span>
                   <button class="opt-multi-btn" id="ocr-setup-type-btn" type="button" data-i18n="filter_none">未選択</button>
                 </div>
-              </div>
-            </div>
-            <div class="ocr-setup-section">
-              <div class="ocr-setup-filter-group">
-                <span class="ocr-setup-filter-label" data-i18n="ocr_setup_region">領域選択</span>
-                <button class="addbtn ocr-setup-region-btn" id="ocr-setup-region-btn" type="button" data-i18n="ocr_setup_region_btn">選択</button>
               </div>
             </div>
           </div>
@@ -449,28 +450,43 @@
           <span class="modal-title" data-i18n="capture_title">画面キャプチャ</span>
           <button class="modal-close" id="capture-modal-close">&times;</button>
         </div>
-        <div class="modal-body">
-          <div class="capture-preview-wrap" id="capture-preview-wrap">
-            <video id="capture-video" autoplay playsinline></video>
-            <div class="capture-selection-overlay" id="capture-selection-overlay"></div>
-            <div class="capture-region-rect" id="capture-region-rect"></div>
-            <div class="capture-placeholder" id="capture-placeholder">
-              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-              <span data-i18n="capture_not_connected">接続されていません</span>
+        <div class="capture-preview-wrap" id="capture-preview-wrap">
+          <video id="capture-video" autoplay playsinline></video>
+          <div class="capture-selection-overlay" id="capture-selection-overlay"></div>
+          <div class="capture-region-rect" id="capture-region-rect"></div>
+          <div class="capture-placeholder" id="capture-placeholder">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            <span data-i18n="capture_not_connected">接続されていません</span>
+          </div>
+        </div>
+        <div class="modal-body capture-steps-body">
+          <div class="capture-step active" id="capture-step-1">
+            <span class="capture-step-num">1</span>
+            <div class="capture-step-content">
+              <span class="capture-step-text" data-i18n="capture_step1">共有する画面を選択</span>
+              <button class="addbtn capture-step-btn" id="capture-connect-btn" data-i18n="capture_connect">画面を選択</button>
             </div>
           </div>
-          <div class="capture-region-hint" id="capture-region-hint" data-i18n="capture_region_hint">画面接続後、プレビュー上をドラッグして読取領域を選択できます</div>
-          <div class="capture-controls">
-            <button class="addbtn" id="capture-connect-btn" data-i18n="capture_connect">画面を選択</button>
-            <button class="addbtn" id="capture-region-reset-btn" style="display:none" data-i18n="capture_region_reset">領域リセット</button>
-            <button class="opt-run-btn" id="capture-take-btn" disabled data-i18n="capture_take">撮影</button>
+          <div class="capture-step" id="capture-step-2">
+            <span class="capture-step-num">2</span>
+            <div class="capture-step-content">
+              <span class="capture-step-text" data-i18n="capture_step2">プレビュー上でモジュール一覧の範囲をドラッグして選択</span>
+              <button class="addbtn capture-step-btn" id="capture-region-reset-btn" style="display:none" data-i18n="capture_region_reset">領域リセット</button>
+            </div>
+          </div>
+          <div class="capture-step" id="capture-step-3">
+            <span class="capture-step-num">3</span>
+            <div class="capture-step-content">
+              <span class="capture-step-text" data-i18n="capture_step3">ゲーム画面でモジュール一覧を表示して撮影</span>
+            </div>
           </div>
           <div class="capture-status" id="capture-status"></div>
         </div>
         <div class="modal-footer">
           <span style="flex:1"></span>
           <button class="addbtn" id="capture-cancel-btn" data-i18n="btn_cancel">キャンセル</button>
-          <button class="opt-run-btn" id="capture-done-btn" disabled data-i18n="capture_done">完了</button>
+          <button class="opt-run-btn" id="capture-take-btn" disabled data-i18n="capture_take">撮影</button>
+          <button class="opt-run-btn" id="capture-done-btn" disabled data-i18n="capture_done">編集</button>
         </div>
       </div>
     </div>
