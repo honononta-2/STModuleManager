@@ -2,7 +2,7 @@ name: Deploy Web
 
 on:
   push:
-    branches: [master, 'web/**']
+    branches: [master]
     paths:
       - 'web/**'
       - 'crates/optimizer/**'
