@@ -61,6 +61,10 @@
         <button class="addbtn sidebar-export-btn" id="backup-export-btn" data-i18n="btn_backup_export">バックアップ出力</button>
       </div>
       <div class="sidebar-section">
+        <div class="sidebar-section-title" data-i18n="maintenance_title">メンテナンス</div>
+        <button class="addbtn sidebar-export-btn" id="data-cleanup-btn" data-i18n="btn_data_refresh">データリフレッシュ</button>
+      </div>
+      <div class="sidebar-section">
         <button class="addbtn sidebar-export-btn" id="btn-licenses">Credits</button>
       </div>
     </div>
@@ -102,24 +106,24 @@
       <div class="cmdbar opt-cmdbar">
         <div class="cmd-grp">
           <span class="cmd-lbl" data-i18n="rarity_label">レアリティ</span>
-          <div id="opt-quality" class="custom-dd" data-value="3">
-            <button type="button" class="opt-multi-btn custom-dd-trigger" data-i18n="rarity_purple_up">紫以上</button>
-            <div class="custom-dd-menu">
-              <div class="fitem custom-dd-item selected" data-value="3" data-i18n="rarity_purple_up">紫以上</div>
-              <div class="fitem custom-dd-item" data-value="4" data-i18n="rarity_gold_only">金のみ</div>
+          <div id="opt-quality" class="uni-dd" data-value="3">
+            <button type="button" class="opt-multi-btn uni-dd-trigger" data-i18n="rarity_purple_up">紫以上</button>
+            <div class="uni-dd-menu">
+              <div class="fitem uni-dd-item selected" data-value="3" data-i18n="rarity_purple_up">紫以上</div>
+              <div class="fitem uni-dd-item" data-value="4" data-i18n="rarity_gold_only">金のみ</div>
             </div>
           </div>
         </div>
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
           <span class="cmd-lbl" data-i18n="speed_label">探索速度</span>
-          <div id="opt-speed" class="custom-dd" data-value="standard">
-            <button type="button" class="opt-multi-btn custom-dd-trigger" data-i18n="speed_standard">標準</button>
-            <div class="custom-dd-menu">
-              <div class="fitem custom-dd-item selected" data-value="standard" data-i18n="speed_standard">標準</div>
-              <div class="fitem custom-dd-item" data-value="precise" data-i18n="speed_precise">高精度</div>
-              <div class="fitem custom-dd-item" data-value="most_precise" data-i18n="speed_most_precise">最高精度</div>
-              <div class="fitem custom-dd-item" data-value="exhaustive" data-i18n="speed_exhaustive">総当たり</div>
+          <div id="opt-speed" class="uni-dd" data-value="standard">
+            <button type="button" class="opt-multi-btn uni-dd-trigger" data-i18n="speed_standard">標準</button>
+            <div class="uni-dd-menu">
+              <div class="fitem uni-dd-item selected" data-value="standard" data-i18n="speed_standard">標準</div>
+              <div class="fitem uni-dd-item" data-value="precise" data-i18n="speed_precise">高精度</div>
+              <div class="fitem uni-dd-item" data-value="most_precise" data-i18n="speed_most_precise">最高精度</div>
+              <div class="fitem uni-dd-item" data-value="exhaustive" data-i18n="speed_exhaustive">総当たり</div>
             </div>
           </div>
           <button class="speed-info-btn" id="speed-info-btn" title="探索速度について">
@@ -139,10 +143,10 @@
 
       <div class="opt-pattern-bar">
         <span class="cmd-lbl" data-i18n="pattern_label">パターン</span>
-        <div id="pattern-select" class="custom-dd pattern-select" data-value="">
-          <button type="button" class="opt-multi-btn custom-dd-trigger">-- 選択 --</button>
-          <div class="custom-dd-menu">
-            <div class="fitem custom-dd-item selected" data-value="">-- 選択 --</div>
+        <div id="pattern-select" class="uni-dd pattern-select" data-value="">
+          <button type="button" class="opt-multi-btn uni-dd-trigger">-- 選択 --</button>
+          <div class="uni-dd-menu">
+            <div class="fitem uni-dd-item selected" data-value="">-- 選択 --</div>
           </div>
         </div>
         <button class="addbtn" id="pattern-load" data-i18n="btn_load">読込</button>
@@ -163,7 +167,7 @@
 
     <!-- 詳細設定モーダル -->
     <div class="modal-bd" id="detail-modal-bd">
-      <div class="modal modal--form">
+      <div class="modal modal--form modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="detail_settings">詳細設定</span>
           <button class="modal-close" id="detail-modal-close">&times;</button>
@@ -320,9 +324,9 @@
           <button class="modal-close" id="patsave-modal-close">&times;</button>
         </div>
         <div class="modal-body">
-          <div id="patsave-mode" class="custom-dd patsave-mode-select" data-value="">
-            <button type="button" class="opt-multi-btn custom-dd-trigger"></button>
-            <div class="custom-dd-menu"></div>
+          <div id="patsave-mode" class="uni-dd patsave-mode-select" data-value="">
+            <button type="button" class="opt-multi-btn uni-dd-trigger"></button>
+            <div class="uni-dd-menu"></div>
           </div>
           <div id="patsave-name-row" style="margin-top:8px;display:none">
             <label style="display:block;font-size:13px;color:var(--tx2);margin-bottom:6px" data-i18n="pattern_name_label">パターン名</label>
@@ -338,7 +342,7 @@
 
     <!-- Manual input modal -->
     <div class="modal-bd" id="manual-modal-bd">
-      <div class="modal modal--form">
+      <div class="modal modal--form modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="modal_manual">モジュール手動入力</span>
           <button class="modal-close" id="manual-modal-close">&times;</button>
@@ -353,7 +357,7 @@
 
     <!-- Edit module modal -->
     <div class="modal-bd" id="edit-modal-bd">
-      <div class="modal modal--form">
+      <div class="modal modal--form modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="modal_edit">モジュール編集</span>
           <button class="modal-close" id="edit-modal-close">&times;</button>
@@ -370,7 +374,7 @@
 
     <!-- OCR Setup Modal -->
     <div class="modal-bd" id="ocr-setup-modal-bd">
-      <div class="modal modal--form">
+      <div class="modal modal--form modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="ocr_setup_title">スクショ取込設定</span>
           <button class="modal-close" id="ocr-setup-close">&times;</button>
@@ -553,13 +557,6 @@
     <div class="sb" id="sb-progress" style="margin-left:auto;display:none"></div>
   </div>
 </div>
-
-<!-- Flyout containers -->
-<div class="flyout" id="fly-filter"></div>
-<div class="flyout" id="fly-s"></div>
-<div class="flyout" id="fly-multi"></div>
-<div class="flyout" id="fly-detail"></div>
-<div class="flyout ocr-setup-flyout" id="fly-ocr-setup"></div>
 
 <!-- Toast -->
 <div id="toast" class="toast" style="display:none"></div>

@@ -17,23 +17,31 @@ import {
 import Cropper from "cropperjs";
 
 // --- Helpers ---
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const $ = <T extends HTMLElement>(id: string) =>
+  (document.getElementById(id) ?? capturePipWindow?.document?.getElementById(id)) as T;
 
-let activeFlyout: HTMLElement | null = null;
-let activeFlyAnchor: HTMLElement | null = null;
+// ========== Unified Flyout System ==========
+
+let _flyMenu: HTMLElement | null = null;
+let _flyAnchor: HTMLElement | null = null;
 
 function positionFlyout(fl: HTMLElement, anchor: HTMLElement) {
   const rect = anchor.getBoundingClientRect();
   const menuH = fl.scrollHeight;
-  const flyW = fl.offsetWidth || 176;
+  const vw = document.documentElement.clientWidth;
   const spaceBelow = window.innerHeight - rect.bottom - 4;
   const spaceAbove = rect.top - 4;
 
-  let left = rect.left;
-  if (left + flyW > window.innerWidth - 8) left = window.innerWidth - flyW - 8;
-  if (left < 8) left = 8;
-  fl.style.left = left + "px";
   fl.style.minWidth = rect.width + "px";
+
+  const triggerCenter = (rect.left + rect.right) / 2;
+  if (triggerCenter > vw / 2) {
+    fl.style.left = "auto";
+    fl.style.right = Math.max(8, vw - rect.right) + "px";
+  } else {
+    fl.style.right = "auto";
+    fl.style.left = Math.max(8, rect.left) + "px";
+  }
 
   if (spaceBelow >= menuH || spaceBelow >= spaceAbove) {
     fl.style.top = rect.bottom + 2 + "px";
@@ -45,6 +53,205 @@ function positionFlyout(fl: HTMLElement, anchor: HTMLElement) {
     fl.style.maxHeight = Math.min(240, spaceAbove) + "px";
   }
 }
+
+function closeFlyout() {
+  if (_flyMenu) { _flyMenu.remove(); _flyMenu = null; }
+  if (_flyAnchor) { _flyAnchor.classList.remove("open"); _flyAnchor = null; }
+}
+
+interface FlyoutItem {
+  value: string;
+  label: string;
+  icon?: string;
+  html?: string;
+  selected?: boolean;
+  disabled?: boolean;
+  checked?: boolean;
+}
+
+interface FlyoutSection {
+  title: string;
+  items: FlyoutItem[];
+  onCheck?: (value: string, checked: boolean) => void;
+}
+
+interface FlyoutOptions {
+  mode?: "single" | "multi";
+  items?: FlyoutItem[];
+  sections?: FlyoutSection[];
+  onSelect?: (value: string) => void;
+  onCheck?: (value: string, checked: boolean) => void;
+  scrollToSelected?: boolean;
+}
+
+function openFlyout(anchor: HTMLElement, opts: FlyoutOptions) {
+  const wasOpen = _flyAnchor === anchor;
+  closeFlyout();
+  if (wasOpen) return;
+
+  const mode = opts.mode ?? "single";
+  const fl = document.createElement("div");
+  fl.className = "flyout on";
+
+  const buildItem = (it: FlyoutItem, sectionOnCheck?: (v: string, c: boolean) => void) => {
+    if (mode === "multi") {
+      const el = document.createElement("label");
+      el.className = "fitem-check" + (it.disabled ? " dim" : "");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!it.checked;
+      cb.disabled = !!it.disabled;
+      if (!it.disabled) {
+        cb.onchange = () => {
+          const handler = sectionOnCheck ?? opts.onCheck;
+          if (handler) handler(it.value, cb.checked);
+        };
+      }
+      el.appendChild(cb);
+      if (it.icon) {
+        const img = document.createElement("img");
+        img.className = "sicon";
+        img.src = it.icon;
+        img.alt = "";
+        el.appendChild(img);
+      }
+      const span = document.createElement("span");
+      span.textContent = it.label;
+      el.appendChild(span);
+      fl.appendChild(el);
+    } else {
+      const el = document.createElement("div");
+      el.className = "fitem" + (it.selected ? " selected" : "") + (it.disabled ? " dim" : "");
+      if (it.html) {
+        el.innerHTML = it.html;
+      } else {
+        if (it.icon) {
+          const img = document.createElement("img");
+          img.className = "sicon";
+          img.src = it.icon;
+          img.alt = "";
+          el.appendChild(img);
+        }
+        const span = document.createElement("span");
+        span.textContent = it.label;
+        el.appendChild(span);
+      }
+      el.dataset.value = it.value;
+      if (!it.disabled) {
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          closeFlyout();
+          if (opts.onSelect) opts.onSelect(it.value);
+        });
+      }
+      fl.appendChild(el);
+    }
+  };
+
+  if (opts.sections) {
+    opts.sections.forEach((sec) => {
+      const hdr = document.createElement("div");
+      hdr.className = "fly-section-header";
+      hdr.textContent = sec.title;
+      fl.appendChild(hdr);
+      sec.items.forEach((it) => buildItem(it, sec.onCheck));
+    });
+  } else if (opts.items) {
+    opts.items.forEach((it) => buildItem(it));
+  }
+
+  document.body.appendChild(fl);
+  positionFlyout(fl, anchor);
+  _flyMenu = fl;
+  _flyAnchor = anchor;
+  anchor.classList.add("open");
+
+  if (opts.scrollToSelected !== false && mode === "single") {
+    const sel = fl.querySelector<HTMLElement>(".fitem.selected");
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function initDropdowns(container: HTMLElement | Document = document) {
+  container.querySelectorAll<HTMLElement>(".uni-dd").forEach((dd) => {
+    const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger")!;
+    const menuTpl = dd.querySelector<HTMLElement>(".uni-dd-menu")!;
+    if (!trigger || !menuTpl) return;
+
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const items: FlyoutItem[] = [];
+      menuTpl.querySelectorAll<HTMLElement>(".uni-dd-item").forEach((el) => {
+        items.push({
+          value: el.dataset.value ?? "",
+          label: el.textContent ?? "",
+          html: el.innerHTML,
+          selected: el.classList.contains("selected"),
+        });
+      });
+
+      openFlyout(trigger, {
+        mode: "single",
+        items,
+        scrollToSelected: true,
+        onSelect: (value) => {
+          dd.dataset.value = value;
+          menuTpl.querySelectorAll(".uni-dd-item.selected").forEach((s) => s.classList.remove("selected"));
+          const picked = menuTpl.querySelector<HTMLElement>(`.uni-dd-item[data-value="${value}"]`);
+          if (picked) {
+            picked.classList.add("selected");
+            trigger.innerHTML = picked.innerHTML;
+          }
+          dd.dispatchEvent(new Event("change", { bubbles: true }));
+        },
+      });
+    });
+  });
+}
+
+function setDropdownValue(dd: HTMLElement, value: string) {
+  dd.dataset.value = value;
+  const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger");
+  const menu = dd.querySelector<HTMLElement>(".uni-dd-menu");
+  if (!trigger || !menu) return;
+  menu.querySelectorAll(".uni-dd-item.selected").forEach((s) => s.classList.remove("selected"));
+  const item = menu.querySelector<HTMLElement>(`.uni-dd-item[data-value="${value}"]`);
+  if (item) {
+    item.classList.add("selected");
+    trigger.innerHTML = item.innerHTML;
+  }
+}
+
+function updateDropdownOptions(dd: HTMLElement, options: { value: string; label: string }[], selectedValue?: string) {
+  const menu = dd.querySelector<HTMLElement>(".uni-dd-menu");
+  const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger");
+  if (!menu || !trigger) return;
+  menu.textContent = "";
+  const sel = selectedValue ?? dd.dataset.value ?? "";
+  options.forEach((opt) => {
+    const item = document.createElement("div");
+    item.className = "fitem uni-dd-item";
+    item.dataset.value = opt.value;
+    item.textContent = opt.label;
+    if (opt.value === sel) {
+      item.classList.add("selected");
+      trigger.textContent = opt.label;
+      dd.dataset.value = opt.value;
+    }
+    menu.appendChild(item);
+  });
+}
+
+document.addEventListener("click", (e) => {
+  if (_flyMenu && !_flyMenu.contains(e.target as Node) &&
+      (!_flyAnchor || !_flyAnchor.contains(e.target as Node))) {
+    closeFlyout();
+  }
+});
+window.addEventListener("resize", () => closeFlyout());
+document.addEventListener("scroll", (e) => {
+  if (_flyMenu && !_flyMenu.contains(e.target as Node)) closeFlyout();
+}, true);
 
 function statIcon(partId: number): string {
   const icon = STAT_ICONS[partId];
@@ -87,6 +294,14 @@ const MODULE_TYPE_PREFIXES = [55001, 55002, 55003] as const;
 // --- State ---
 let modules: ModuleInput[] = [];
 
+/** UUIDカウンター（loadModulesFromStorage時に既存最大値で初期化） */
+let uuidSeq = 0;
+
+/** 新しいuuidを発行する。UUID生成は必ずこの関数を通すこと */
+function nextUuid(): number {
+  return ++uuidSeq;
+}
+
 let filterRarities: Rarity[] = [];
 let filterStats: number[] = [];
 let filterTypes: number[] = [];
@@ -119,31 +334,57 @@ function loadModulesFromStorage() {
     const saved = localStorage.getItem("modules");
     if (saved) modules = JSON.parse(saved);
   } catch { /* ignore */ }
+  // 既存モジュールの最大uuidでカウンターを初期化
+  for (const m of modules) if (m.uuid > uuidSeq) uuidSeq = m.uuid;
 }
 
 // ========== Shared select option builders ==========
 
-function typeSelectOptions(selectedDigit: number): string {
-  return MODULE_TYPE_PREFIXES.map((p) => {
-    const digit = p % 10;
-    return `<option value="${digit}"${digit === selectedDigit ? " selected" : ""}>${t.module_types[String(p)]}</option>`;
-  }).join("");
+function ddAttrs(className?: string, dataAttrs?: Record<string, string>, id?: string): string {
+  const cls = ["uni-dd", className].filter(Boolean).join(" ");
+  const dataStr = dataAttrs ? " " + Object.entries(dataAttrs).map(([k, v]) => `data-${k}="${v}"`).join(" ") : "";
+  const idStr = id ? ` id="${id}"` : "";
+  return `class="${cls}"${idStr}${dataStr}`;
 }
 
-function raritySubSelectOptions(selectedSub: number): string {
+function typeDropdownHtml(selectedDigit: number, className?: string, dataAttrs?: Record<string, string>, id?: string): string {
+  const selectedLabel = MODULE_TYPE_PREFIXES.reduce((a, p) => p % 10 === selectedDigit ? t.module_types[String(p)] : a, "");
+  const items = MODULE_TYPE_PREFIXES.map((p) => {
+    const digit = p % 10;
+    return `<div class="fitem uni-dd-item${digit === selectedDigit ? " selected" : ""}" data-value="${digit}">${t.module_types[String(p)]}</div>`;
+  }).join("");
+  return `<div ${ddAttrs(className, dataAttrs, id)} data-value="${selectedDigit}">
+    <button type="button" class="opt-multi-btn uni-dd-trigger">${selectedLabel}</button>
+    <div class="uni-dd-menu">${items}</div>
+  </div>`;
+}
+
+function raritySubDropdownHtml(selectedSub: number, className?: string, dataAttrs?: Record<string, string>, id?: string): string {
   const opts = [
     { value: 1, key: "rarity_sub_blue" },
     { value: 2, key: "rarity_sub_purple" },
     { value: 3, key: "rarity_sub_gold_a" },
     { value: 4, key: "rarity_sub_gold_b" },
   ];
-  return opts.map((o) => `<option value="${o.value}"${o.value === selectedSub ? " selected" : ""}>${t.ui[o.key]}</option>`).join("");
+  const selectedLabel = opts.find((o) => o.value === selectedSub);
+  const label = selectedLabel ? t.ui[selectedLabel.key] : "";
+  const items = opts.map((o) =>
+    `<div class="fitem uni-dd-item${o.value === selectedSub ? " selected" : ""}" data-value="${o.value}">${t.ui[o.key]}</div>`
+  ).join("");
+  return `<div ${ddAttrs(className, dataAttrs, id)} data-value="${selectedSub}">
+    <button type="button" class="opt-multi-btn uni-dd-trigger">${label}</button>
+    <div class="uni-dd-menu">${items}</div>
+  </div>`;
 }
 
-function statSelectOptions(selectedId?: number): string {
-  return ALL_STAT_IDS.map((id) =>
-    `<option value="${id}"${id === selectedId ? " selected" : ""}>${statName(id)}</option>`
-  ).join("");
+function valueDropdownHtml(selectedValue: number, className?: string, dataAttrs?: Record<string, string>): string {
+  const items = Array.from({ length: 10 }, (_, i) => i + 1)
+    .map((v) => `<div class="fitem uni-dd-item${v === selectedValue ? " selected" : ""}" data-value="${v}">${v}</div>`)
+    .join("");
+  return `<div ${ddAttrs(className, dataAttrs)} data-value="${selectedValue}">
+    <button type="button" class="opt-multi-btn uni-dd-trigger">${selectedValue}</button>
+    <div class="uni-dd-menu">${items}</div>
+  </div>`;
 }
 
 function statDropdownHtml(
@@ -161,257 +402,26 @@ function statDropdownHtml(
 
   const triggerContent = hasSelection
     ? `<img class="sicon" src="/icons/${selectedIcon}" alt=""><span>${selectedName}</span>`
-    : `<span class="stat-dd-placeholder">${placeholder || ""}</span>`;
+    : `<span class="uni-dd-placeholder">${placeholder || ""}</span>`;
 
   const placeholderItem = placeholder
-    ? `<div class="fitem stat-dd-item${!hasSelection ? " selected" : ""}" data-value="">${placeholder}</div>`
+    ? `<div class="fitem uni-dd-item${!hasSelection ? " selected" : ""}" data-value=""><span class="uni-dd-placeholder">${placeholder}</span></div>`
     : "";
   const items = ALL_STAT_IDS.map((id) => {
     const icon = STAT_ICONS[id];
     const name = statName(id);
-    return `<div class="fitem stat-dd-item${id === selectedId ? " selected" : ""}" data-value="${id}">
+    return `<div class="fitem uni-dd-item${id === selectedId ? " selected" : ""}" data-value="${id}">
       <img class="sicon" src="/icons/${icon}" alt=""><span>${name}</span>
     </div>`;
   }).join("");
 
-  return `<div class="stat-dd ${className}" ${dataStr} data-value="${hasSelection ? selectedId : ""}">
-    <button type="button" class="opt-multi-btn">${triggerContent}</button>
-    <div class="stat-dd-menu">${placeholderItem}${items}</div>
+  return `<div class="uni-dd ${className}" ${dataStr} data-value="${hasSelection ? selectedId : ""}">
+    <button type="button" class="opt-multi-btn uni-dd-trigger">${triggerContent}</button>
+    <div class="uni-dd-menu">${placeholderItem}${items}</div>
   </div>`;
 }
 
-let activeStatDdMenu: HTMLElement | null = null;
-let activeStatDd: HTMLElement | null = null;
 
-function positionStatDdMenu(dd: HTMLElement, menu: HTMLElement) {
-  const rect = dd.getBoundingClientRect();
-  const menuH = menu.scrollHeight;
-  const spaceBelow = window.innerHeight - rect.bottom - 4;
-  const spaceAbove = rect.top - 4;
-
-  menu.style.left = rect.left + "px";
-  menu.style.minWidth = rect.width + "px";
-
-  if (spaceBelow >= menuH || spaceBelow >= spaceAbove) {
-    menu.style.top = rect.bottom + 2 + "px";
-    menu.style.bottom = "";
-    menu.style.maxHeight = Math.min(240, spaceBelow) + "px";
-  } else {
-    menu.style.top = "";
-    menu.style.bottom = (window.innerHeight - rect.top + 2) + "px";
-    menu.style.maxHeight = Math.min(240, spaceAbove) + "px";
-  }
-}
-
-function closeAllStatDropdowns() {
-  if (activeStatDdMenu) {
-    activeStatDdMenu.remove();
-    activeStatDdMenu = null;
-  }
-  if (activeStatDd) {
-    activeStatDd.classList.remove("open");
-    activeStatDd = null;
-  }
-}
-
-function initStatDropdowns(container: HTMLElement) {
-  container.querySelectorAll<HTMLElement>(".stat-dd").forEach((dd) => {
-    const trigger = dd.querySelector<HTMLButtonElement>(".opt-multi-btn")!;
-    const menuTemplate = dd.querySelector<HTMLElement>(".stat-dd-menu")!;
-    menuTemplate.remove();
-
-    trigger.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const wasOpen = activeStatDd === dd;
-      closeAllStatDropdowns();
-      if (wasOpen) return;
-
-      const menu = menuTemplate.cloneNode(true) as HTMLElement;
-      document.body.appendChild(menu);
-      Object.assign(menu.style, {
-        display: "flex",
-        flexDirection: "column",
-        position: "fixed",
-        maxHeight: "240px",
-        overflowY: "auto",
-        background: "var(--s-flyout)",
-        backdropFilter: "blur(20px) saturate(1.4)",
-        border: "1px solid var(--str-default)",
-        borderRadius: "6px",
-        boxShadow: "var(--sh8)",
-        zIndex: "10000",
-        padding: "4px",
-      });
-      dd.classList.add("open");
-      activeStatDdMenu = menu;
-      activeStatDd = dd;
-
-      positionStatDdMenu(dd, menu);
-
-      const sel = menu.querySelector<HTMLElement>(".stat-dd-item.selected");
-      if (sel) sel.scrollIntoView({ block: "nearest" });
-
-      menu.querySelectorAll<HTMLElement>(".stat-dd-item").forEach((item) => {
-        item.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          const val = item.dataset.value || "";
-          dd.dataset.value = val;
-
-          menuTemplate.querySelectorAll(".stat-dd-item.selected").forEach((s) => s.classList.remove("selected"));
-          const origItem = menuTemplate.querySelector<HTMLElement>(`.stat-dd-item[data-value="${val}"]`);
-          if (origItem) origItem.classList.add("selected");
-
-          if (val) {
-            const id = Number(val);
-            const icon = STAT_ICONS[id];
-            trigger.innerHTML = `<img class="sicon" src="/icons/${icon}" alt=""><span>${statName(id)}</span>`;
-          } else {
-            trigger.innerHTML = `<span class="stat-dd-placeholder">${trigger.textContent || ""}</span>`;
-          }
-          closeAllStatDropdowns();
-          dd.dispatchEvent(new Event("change", { bubbles: true }));
-        });
-      });
-    });
-  });
-}
-
-// ========== Generic Custom Dropdown ==========
-
-function initCustomDds(container: HTMLElement | Document = document) {
-  container.querySelectorAll<HTMLElement>(".custom-dd").forEach((dd) => {
-    const trigger = dd.querySelector<HTMLButtonElement>(".custom-dd-trigger")!;
-    const menu = dd.querySelector<HTMLElement>(".custom-dd-menu")!;
-    if (!trigger || !menu) return;
-
-    trigger.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const wasOpen = dd.classList.contains("open");
-      closeAllCustomDds();
-      closeAllStatDropdowns();
-      if (wasOpen) return;
-
-      dd.classList.add("open");
-      menu.style.display = "flex";
-      menu.style.position = "fixed";
-      menu.style.zIndex = "10000";
-      menu.style.background = "var(--s-flyout)";
-      menu.style.backdropFilter = "blur(20px) saturate(1.4)";
-      menu.style.border = "1px solid var(--str-default)";
-      menu.style.borderRadius = "6px";
-      menu.style.boxShadow = "var(--sh8)";
-      menu.style.padding = "4px";
-      menu.style.flexDirection = "column";
-      positionFlyout(menu, dd);
-    });
-
-    menu.querySelectorAll<HTMLElement>(".custom-dd-item").forEach((item) => {
-      item.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        const val = item.dataset.value ?? "";
-        dd.dataset.value = val;
-        trigger.textContent = item.textContent ?? "";
-        menu.querySelectorAll(".custom-dd-item.selected").forEach((s) => s.classList.remove("selected"));
-        item.classList.add("selected");
-        closeAllCustomDds();
-        dd.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-    });
-  });
-}
-
-function closeAllCustomDds() {
-  document.querySelectorAll<HTMLElement>(".custom-dd.open").forEach((dd) => {
-    dd.classList.remove("open");
-    const menu = dd.querySelector<HTMLElement>(".custom-dd-menu");
-    if (menu) {
-      menu.style.display = "none";
-      menu.style.position = "";
-      menu.style.top = "";
-      menu.style.bottom = "";
-      menu.style.left = "";
-      menu.style.maxHeight = "";
-      menu.style.minWidth = "";
-      menu.style.zIndex = "";
-    }
-  });
-}
-
-function setCustomDdValue(dd: HTMLElement, value: string) {
-  dd.dataset.value = value;
-  const trigger = dd.querySelector<HTMLButtonElement>(".custom-dd-trigger");
-  const item = dd.querySelector<HTMLElement>(`.custom-dd-item[data-value="${value}"]`);
-  if (trigger && item) {
-    trigger.textContent = item.textContent ?? "";
-    dd.querySelectorAll(".custom-dd-item.selected").forEach((s) => s.classList.remove("selected"));
-    item.classList.add("selected");
-  }
-}
-
-function updateCustomDdOptions(dd: HTMLElement, options: { value: string; label: string }[], selectedValue?: string) {
-  const menu = dd.querySelector<HTMLElement>(".custom-dd-menu");
-  const trigger = dd.querySelector<HTMLButtonElement>(".custom-dd-trigger");
-  if (!menu || !trigger) return;
-  menu.textContent = "";
-  options.forEach((opt) => {
-    const item = document.createElement("div");
-    item.className = "fitem custom-dd-item";
-    item.dataset.value = opt.value;
-    item.textContent = opt.label;
-    if (opt.value === (selectedValue ?? dd.dataset.value ?? "")) {
-      item.classList.add("selected");
-      trigger.textContent = opt.label;
-      dd.dataset.value = opt.value;
-    }
-    item.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      dd.dataset.value = opt.value;
-      trigger.textContent = opt.label;
-      menu.querySelectorAll(".custom-dd-item.selected").forEach((s) => s.classList.remove("selected"));
-      item.classList.add("selected");
-      closeAllCustomDds();
-      dd.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    menu.appendChild(item);
-  });
-}
-
-document.addEventListener("click", (e) => {
-  closeAllStatDropdowns();
-  closeAllCustomDds();
-  if (activeFlyout && !activeFlyout.contains(e.target as Node) &&
-      (!activeFlyAnchor || !activeFlyAnchor.contains(e.target as Node))) {
-    closeFly();
-  }
-  if (detailFlyActive) {
-    const fl = $("fly-detail");
-    if (!fl.contains(e.target as Node) &&
-        (!detailFlyAnchor || !detailFlyAnchor.contains(e.target as Node))) {
-      closeDetailFly();
-    }
-  }
-});
-window.addEventListener("resize", () => {
-  closeAllStatDropdowns();
-  closeAllCustomDds();
-  closeFly();
-  closeDetailFly();
-});
-document.addEventListener("scroll", (e) => {
-  if (activeStatDdMenu && !activeStatDdMenu.contains(e.target as Node)) {
-    closeAllStatDropdowns();
-  }
-  closeAllCustomDds();
-  if (activeFlyout && !activeFlyout.contains(e.target as Node)) {
-    closeFly();
-  }
-  if (detailFlyActive) {
-    const fl = $("fly-detail");
-    if (!fl.contains(e.target as Node)) {
-      closeDetailFly();
-    }
-  }
-}, true);
 
 // ========== Grid rendering ==========
 
@@ -584,85 +594,53 @@ function updateFilterBtnLabel() {
   btn.classList.toggle("has-items", count > 0);
 }
 
-function addFlySection(
-  fl: HTMLElement, title: string,
-  items: { label: string; checked: boolean; iconSrc?: string }[],
-  onChange: (index: number, checked: boolean) => void,
-) {
-  const header = document.createElement("div");
-  header.className = "fly-section-header";
-  header.textContent = title;
-  fl.appendChild(header);
-
-  items.forEach((item, i) => {
-    const el = document.createElement("label");
-    el.className = "fitem-check";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = item.checked;
-    cb.onchange = () => onChange(i, cb.checked);
-    el.appendChild(cb);
-    if (item.iconSrc) {
-      const img = document.createElement("img");
-      img.className = "sicon";
-      img.src = item.iconSrc;
-      img.alt = "";
-      el.appendChild(img);
-    }
-    const span = document.createElement("span");
-    span.textContent = item.label;
-    el.appendChild(span);
-    fl.appendChild(el);
-  });
-}
-
 const RARITY_FILTER_VALUES: Rarity[] = ["gold", "purple", "blue"];
 
 function openFilterMultiFly(anchor: HTMLElement) {
-  const fl = $("fly-filter");
-  if (activeFlyout === fl) { closeFly(); return; }
-  closeFly();
-  fl.textContent = "";
   const refresh = () => { updateFilterBtnLabel(); renderGrid(); };
-
-  addFlySection(fl, t.ui.fly_rarity,
-    RARITY_FILTER_VALUES.map((r) => ({ label: t.rarity[r], checked: filterRarities.includes(r) })),
-    (i, checked) => {
-      const val = RARITY_FILTER_VALUES[i];
-      if (checked) filterRarities.push(val);
-      else { const idx = filterRarities.indexOf(val); if (idx >= 0) filterRarities.splice(idx, 1); }
-      refresh();
-    },
-  );
-
-  const typeEntries = MODULE_TYPE_PREFIXES.map((p) => ({ prefix: p, label: t.module_types[String(p)] ?? "" }));
-  addFlySection(fl, t.ui.fly_type,
-    typeEntries.map((te) => ({ label: te.label, checked: filterTypes.includes(te.prefix) })),
-    (i, checked) => {
-      const val = typeEntries[i].prefix;
-      if (checked) filterTypes.push(val);
-      else { const idx = filterTypes.indexOf(val); if (idx >= 0) filterTypes.splice(idx, 1); }
-      refresh();
-    },
-  );
-
-  addFlySection(fl, t.ui.fly_stat,
-    ALL_STAT_IDS.map((id) => {
-      const icon = STAT_ICONS[id];
-      return { label: statName(id), checked: filterStats.includes(id), iconSrc: icon ? `/icons/${icon}` : undefined };
-    }),
-    (i, checked) => {
-      const val = ALL_STAT_IDS[i];
-      if (checked) filterStats.push(val);
-      else { const idx = filterStats.indexOf(val); if (idx >= 0) filterStats.splice(idx, 1); }
-      refresh();
-    },
-  );
-
-  fl.classList.add("on");
-  positionFlyout(fl, anchor);
-  activeFlyout = fl;
-  activeFlyAnchor = anchor;
+  openFlyout(anchor, {
+    mode: "multi",
+    sections: [
+      {
+        title: t.ui.fly_rarity,
+        items: RARITY_FILTER_VALUES.map((r) => ({
+          value: r, label: t.rarity[r], checked: filterRarities.includes(r),
+        })),
+        onCheck: (value, checked) => {
+          const r = value as Rarity;
+          if (checked) filterRarities.push(r);
+          else { const idx = filterRarities.indexOf(r); if (idx >= 0) filterRarities.splice(idx, 1); }
+          refresh();
+        },
+      },
+      {
+        title: t.ui.fly_type,
+        items: MODULE_TYPE_PREFIXES.map((p) => ({
+          value: String(p), label: t.module_types[String(p)] ?? "", checked: filterTypes.includes(p),
+        })),
+        onCheck: (value, checked) => {
+          const v = Number(value);
+          if (checked) filterTypes.push(v);
+          else { const idx = filterTypes.indexOf(v); if (idx >= 0) filterTypes.splice(idx, 1); }
+          refresh();
+        },
+      },
+      {
+        title: t.ui.fly_stat,
+        items: ALL_STAT_IDS.map((id) => ({
+          value: String(id), label: statName(id),
+          icon: STAT_ICONS[id] ? `/icons/${STAT_ICONS[id]}` : undefined,
+          checked: filterStats.includes(id),
+        })),
+        onCheck: (value, checked) => {
+          const v = Number(value);
+          if (checked) filterStats.push(v);
+          else { const idx = filterStats.indexOf(v); if (idx >= 0) filterStats.splice(idx, 1); }
+          refresh();
+        },
+      },
+    ],
+  });
 }
 
 // ========== Sort chips ==========
@@ -702,51 +680,6 @@ function renderSChips() {
   });
 }
 
-// ========== Flyout system ==========
-
-function openFly(
-  flyId: string, anchor: HTMLElement,
-  items: { label: string; val: string; disabled: boolean; iconSrc?: string }[],
-  onPick: (item: { label: string; val: string }) => void,
-) {
-  closeFly();
-  const fl = $(flyId);
-  fl.textContent = "";
-  items.forEach((it) => {
-    const el = document.createElement("div");
-    el.className = "fitem" + (it.disabled ? " dim" : "");
-    if (it.iconSrc) {
-      const img = document.createElement("img");
-      img.className = "sicon";
-      img.src = it.iconSrc;
-      img.alt = "";
-      el.appendChild(img);
-      const span = document.createElement("span");
-      span.textContent = it.label;
-      el.appendChild(span);
-    } else {
-      el.textContent = it.label;
-    }
-    if (!it.disabled) el.onclick = () => { closeFly(); onPick(it); };
-    fl.appendChild(el);
-  });
-  fl.classList.add("on");
-  positionFlyout(fl, anchor);
-  activeFlyout = fl;
-  activeFlyAnchor = anchor;
-}
-
-function closeFly() {
-  if (activeFlyout) {
-    activeFlyout.classList.remove("on");
-    activeFlyout.style.top = "";
-    activeFlyout.style.bottom = "";
-    activeFlyout.style.maxHeight = "";
-    activeFlyout.style.minWidth = "";
-    activeFlyout = null;
-    activeFlyAnchor = null;
-  }
-}
 
 // ========== Optimizer UI ==========
 
@@ -780,7 +713,7 @@ function restoreOptState() {
     if (Array.isArray(s.required)) optRequired = migrateStatNamesToIds(s.required).filter((id) => ALL_STAT_IDS.includes(id));
     if (Array.isArray(s.desired)) optDesired = migrateStatNamesToIds(s.desired).filter((id) => ALL_STAT_IDS.includes(id));
     if (Array.isArray(s.excluded)) optExcluded = migrateStatNamesToIds(s.excluded).filter((id) => ALL_STAT_IDS.includes(id));
-    if (s.quality) setCustomDdValue($("opt-quality"), String(s.quality));
+    if (s.quality) setDropdownValue($("opt-quality"), String(s.quality));
     if (Array.isArray(s.min_required)) optMinRequired = (s.min_required as number[]).filter((id) => ALL_STAT_IDS.includes(id) && optRequired.includes(id));
     if (Array.isArray(s.min_desired)) optMinDesired = (s.min_desired as number[]).filter((id) => ALL_STAT_IDS.includes(id) && optDesired.includes(id));
   } catch { /* ignore */ }
@@ -811,7 +744,7 @@ function renderPatternSelect() {
   patterns.forEach((p, i) => {
     options.push({ value: String(i), label: p.name });
   });
-  updateCustomDdOptions(dd, options, "");
+  updateDropdownOptions(dd, options, "");
   updatePatternButtons();
 }
 
@@ -831,7 +764,7 @@ function loadPattern(idx: number) {
   optExcluded = p.excluded.filter((id) => ALL_STAT_IDS.includes(id));
   optMinRequired = Array.isArray(p.min_required) ? p.min_required.filter((id) => ALL_STAT_IDS.includes(id) && optRequired.includes(id)) : [];
   optMinDesired = Array.isArray(p.min_desired) ? p.min_desired.filter((id) => ALL_STAT_IDS.includes(id) && optDesired.includes(id)) : [];
-  if (p.quality) setCustomDdValue($("opt-quality"), String(p.quality));
+  if (p.quality) setDropdownValue($("opt-quality"), String(p.quality));
   updateOptBtnLabel("req");
   updateOptBtnLabel("des");
   updateOptBtnLabel("excl");
@@ -849,54 +782,30 @@ function updateOptBtnLabel(category: "req" | "des" | "excl") {
 }
 
 function openOptMultiFly(anchor: HTMLElement, category: "req" | "des" | "excl") {
-  const fl = $("fly-multi");
-  if (activeFlyout === fl && fl.dataset.category === category) { closeFly(); return; }
-  closeFly();
-  fl.dataset.category = category;
   const current = { req: optRequired, des: optDesired, excl: optExcluded }[category];
   const others = (["req", "des", "excl"] as const)
     .filter((k) => k !== category)
     .flatMap((k) => ({ req: optRequired, des: optDesired, excl: optExcluded }[k]));
   const otherSet = new Set(others);
 
-  fl.textContent = "";
-  ALL_STAT_IDS.forEach((id) => {
-    const isSelected = current.includes(id);
-    const isOther = otherSet.has(id);
-    const el = document.createElement("label");
-    el.className = "fitem-check" + (isOther ? " dim" : "");
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = isSelected;
-    cb.disabled = isOther;
-    if (!isOther) {
-      cb.onchange = () => {
-        if (cb.checked) current.push(id);
-        else { const idx = current.indexOf(id); if (idx >= 0) current.splice(idx, 1); }
-        updateOptBtnLabel(category);
-        updateOptRunBtn();
-        saveOptState();
-      };
-    }
-    el.appendChild(cb);
-    const icon = STAT_ICONS[id];
-    if (icon) {
-      const img = document.createElement("img");
-      img.className = "sicon";
-      img.src = `/icons/${icon}`;
-      img.alt = "";
-      el.appendChild(img);
-    }
-    const span = document.createElement("span");
-    span.textContent = statName(id);
-    el.appendChild(span);
-    fl.appendChild(el);
+  openFlyout(anchor, {
+    mode: "multi",
+    items: ALL_STAT_IDS.map((id) => ({
+      value: String(id),
+      label: statName(id),
+      icon: STAT_ICONS[id] ? `/icons/${STAT_ICONS[id]}` : undefined,
+      checked: current.includes(id),
+      disabled: otherSet.has(id),
+    })),
+    onCheck: (value, checked) => {
+      const id = Number(value);
+      if (checked) current.push(id);
+      else { const idx = current.indexOf(id); if (idx >= 0) current.splice(idx, 1); }
+      updateOptBtnLabel(category);
+      updateOptRunBtn();
+      saveOptState();
+    },
   });
-
-  fl.classList.add("on");
-  positionFlyout(fl, anchor);
-  activeFlyout = fl;
-  activeFlyAnchor = anchor;
 }
 
 function updateOptRunBtn() {
@@ -918,29 +827,14 @@ function updateDetailBtnLabels() {
   setBtn("detail-btn-min-des", optMinDesired);
 }
 
-let detailFlyActive = false;
-let detailFlyCategory = "";
-let detailFlyAnchor: HTMLElement | null = null;
-
-function closeDetailFly() {
-  const fl = $("fly-detail");
-  fl.classList.remove("on");
-  fl.style.top = "";
-  fl.style.bottom = "";
-  fl.style.maxHeight = "";
-  detailFlyActive = false;
-  detailFlyCategory = "";
-  detailFlyAnchor = null;
-}
-
 function openDetailModal() {
-  closeFly();
+  closeFlyout();
   updateDetailBtnLabels();
   $("detail-modal-bd").classList.add("on");
 }
 
 function closeDetailModal() {
-  closeDetailFly();
+  closeFlyout();
   $("detail-modal-bd").classList.remove("on");
   updateOptBtnLabel("req");
   updateOptRunBtn();
@@ -951,17 +845,6 @@ function openDetailFly(
   anchor: HTMLElement,
   category: "req" | "des" | "excl" | "min-req" | "min-des",
 ) {
-  const fl = $("fly-detail");
-  if (detailFlyActive && detailFlyCategory === category) {
-    closeDetailFly();
-    return;
-  }
-  closeDetailFly();
-  detailFlyCategory = category;
-  detailFlyActive = true;
-  detailFlyAnchor = anchor;
-  fl.textContent = "";
-
   if (category === "min-req" || category === "min-des") {
     let sourceArr: number[];
     const minArr = category === "min-req" ? optMinRequired : optMinDesired;
@@ -980,21 +863,22 @@ function openDetailFly(
     }
 
     if (sourceArr.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "fitem";
-      empty.style.opacity = "0.5";
-      empty.textContent = t.ui.filter_none;
-      fl.appendChild(empty);
+      openFlyout(anchor, {
+        mode: "multi",
+        items: [{ value: "_empty", label: t.ui.filter_none, disabled: true }],
+      });
     } else {
-      sourceArr.forEach((pid) => {
-        const isSelected = minArr.includes(pid);
-        const el = document.createElement("label");
-        el.className = "fitem-check";
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.checked = isSelected;
-        cb.onchange = () => {
-          if (cb.checked) {
+      openFlyout(anchor, {
+        mode: "multi",
+        items: sourceArr.map((pid) => ({
+          value: String(pid),
+          label: statName(pid),
+          icon: STAT_ICONS[pid] ? `/icons/${STAT_ICONS[pid]}` : undefined,
+          checked: minArr.includes(pid),
+        })),
+        onCheck: (value, checked) => {
+          const pid = Number(value);
+          if (checked) {
             if (!minArr.includes(pid)) minArr.push(pid);
             // +20に追加時、+16から除去
             if (category === "min-req") {
@@ -1006,20 +890,7 @@ function openDetailFly(
             if (idx >= 0) minArr.splice(idx, 1);
           }
           updateDetailBtnLabels();
-        };
-        el.appendChild(cb);
-        const icon = STAT_ICONS[pid];
-        if (icon) {
-          const img = document.createElement("img");
-          img.className = "sicon";
-          img.src = `/icons/${icon}`;
-          img.alt = "";
-          el.appendChild(img);
-        }
-        const span = document.createElement("span");
-        span.textContent = statName(pid);
-        el.appendChild(span);
-        fl.appendChild(el);
+        },
       });
     }
   } else {
@@ -1029,54 +900,37 @@ function openDetailFly(
       .flatMap((k) => ({ req: optRequired, des: optDesired, excl: optExcluded }[k]));
     const otherSet = new Set(others);
 
-    ALL_STAT_IDS.forEach((pid) => {
-      const isSelected = current.includes(pid);
-      const isOther = otherSet.has(pid);
-      const el = document.createElement("label");
-      el.className = "fitem-check" + (isOther ? " dim" : "");
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = isSelected;
-      cb.disabled = isOther;
-      if (!isOther) {
-        cb.onchange = () => {
-          if (cb.checked) {
-            current.push(pid);
-          } else {
-            const idx = current.indexOf(pid);
-            if (idx >= 0) current.splice(idx, 1);
-            if (category === "req") {
-              const mi = optMinRequired.indexOf(pid);
-              if (mi >= 0) optMinRequired.splice(mi, 1);
-            }
-            if (category === "des") {
-              const mi = optMinDesired.indexOf(pid);
-              if (mi >= 0) optMinDesired.splice(mi, 1);
-            }
+    openFlyout(anchor, {
+      mode: "multi",
+      items: ALL_STAT_IDS.map((pid) => ({
+        value: String(pid),
+        label: statName(pid),
+        icon: STAT_ICONS[pid] ? `/icons/${STAT_ICONS[pid]}` : undefined,
+        checked: current.includes(pid),
+        disabled: otherSet.has(pid),
+      })),
+      onCheck: (value, checked) => {
+        const pid = Number(value);
+        if (checked) {
+          current.push(pid);
+        } else {
+          const idx = current.indexOf(pid);
+          if (idx >= 0) current.splice(idx, 1);
+          if (category === "req") {
+            const mi = optMinRequired.indexOf(pid);
+            if (mi >= 0) optMinRequired.splice(mi, 1);
           }
-          updateDetailBtnLabels();
-          updateOptBtnLabel("req");
-          updateOptRunBtn();
-        };
-      }
-      el.appendChild(cb);
-      const icon = STAT_ICONS[pid];
-      if (icon) {
-        const img = document.createElement("img");
-        img.className = "sicon";
-        img.src = `/icons/${icon}`;
-        img.alt = "";
-        el.appendChild(img);
-      }
-      const span = document.createElement("span");
-      span.textContent = statName(pid);
-      el.appendChild(span);
-      fl.appendChild(el);
+          if (category === "des") {
+            const mi = optMinDesired.indexOf(pid);
+            if (mi >= 0) optMinDesired.splice(mi, 1);
+          }
+        }
+        updateDetailBtnLabels();
+        updateOptBtnLabel("req");
+        updateOptRunBtn();
+      },
     });
   }
-
-  fl.classList.add("on");
-  positionFlyout(fl, anchor);
 }
 
 // ========== Optimize (Web Workers) ==========
@@ -1290,7 +1144,7 @@ function openModal(comb: Combination) {
 
   body.textContent = "";
 
-  // Used modules section
+  // 使用モジュールセクション
   const modsSection = document.createElement("div");
   modsSection.className = "modal-section";
   const modsTitle = document.createElement("div");
@@ -1343,7 +1197,7 @@ function openModal(comb: Combination) {
   modsSection.appendChild(modsWrap);
   body.appendChild(modsSection);
 
-  // Stat totals section
+  // ステータス合計セクション
   const statTotalsMap = new Map<number, number>();
   comb.modules.forEach((m) => m.stats.forEach((s) => {
     statTotalsMap.set(s.part_id, (statTotalsMap.get(s.part_id) ?? 0) + s.value);
@@ -1590,7 +1444,8 @@ function renderOcrModalBody() {
 
   const hint = document.createElement("div");
   hint.className = "ocr-group-hint";
-  hint.textContent = t.ui.ocr_hint;
+  const isPointerFine = window.matchMedia("(pointer: fine)").matches;
+  hint.textContent = isPointerFine ? t.ui.ocr_hint_pc : t.ui.ocr_hint_mobile;
   header.appendChild(hint);
 
   const newCountEl = document.createElement("div");
@@ -1613,12 +1468,9 @@ function renderOcrModalBody() {
     row.dataset.mi = String(mi);
 
     const statsHtml = m.stats.map((s, si) => {
-      const valueOptions = Array.from({ length: 10 }, (_, i) => i + 1)
-        .map((v) => `<option value="${v}"${v === s.value ? " selected" : ""}>${v}</option>`)
-        .join("");
       return `<div class="ocr-stat-row">
         ${statDropdownHtml("ocr-stat-name", s.part_id, { gi: String(gi), mi: String(mi), si: String(si) })}
-        <select class="opt-multi-btn ocr-stat-value" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${valueOptions}</select>
+        ${valueDropdownHtml(s.value, "ocr-stat-value", { gi: String(gi), mi: String(mi), si: String(si) })}
         <button class="ocr-stat-remove" data-gi="${gi}" data-mi="${mi}" data-si="${si}">&times;</button>
       </div>`;
     }).join("");
@@ -1634,11 +1486,11 @@ function renderOcrModalBody() {
           `<div class="ocr-row-fields">`,
             `<label class="form-field">`,
               `<span class="cmd-lbl">${t.ui.type_label}</span>`,
-              `<select class="opt-multi-btn ocr-type" data-gi="${gi}" data-mi="${mi}">${typeSelectOptions(typeDigit)}</select>`,
+              `${typeDropdownHtml(typeDigit, "ocr-type", { gi: String(gi), mi: String(mi) })}`,
             `</label>`,
             `<label class="form-field">`,
               `<span class="cmd-lbl">${t.ui.rarity_sub_label}</span>`,
-              `<select class="opt-multi-btn ocr-rarity-sub" data-gi="${gi}" data-mi="${mi}">${raritySubSelectOptions(raritySub)}</select>`,
+              `${raritySubDropdownHtml(raritySub, "ocr-rarity-sub", { gi: String(gi), mi: String(mi) })}`,
             `</label>`,
           `</div>`,
           `<button class="ocr-row-remove" data-gi="${gi}" data-mi="${mi}">&times;</button>`,
@@ -1669,7 +1521,7 @@ function renderOcrModalBody() {
       const g = Number(btn.dataset.gi);
       const grp = pendingOcrGroups[g];
       grp.modules.push({
-        uuid: Date.now() + Math.floor(Math.random() * 1000),
+        uuid: nextUuid(),
         config_id: buildConfigId(1, 2),
         quality: 3,
         stats: [{ part_id: ALL_STAT_IDS[0], value: 1 }],
@@ -1686,12 +1538,12 @@ function renderOcrModalBody() {
   const newListEl = body.querySelector<HTMLElement>(".ocr-group-list");
   if (newListEl) newListEl.scrollTop = listScrollTop;
 
-  body.querySelectorAll<HTMLSelectElement>(".ocr-type, .ocr-rarity-sub").forEach((sel) => {
-    sel.onchange = () => {
-      onOcrFieldChange(Number(sel.dataset.gi), Number(sel.dataset.mi));
+  body.querySelectorAll<HTMLElement>(".ocr-type, .ocr-rarity-sub").forEach((dd) => {
+    dd.addEventListener("change", () => {
+      onOcrFieldChange(Number(dd.dataset.gi), Number(dd.dataset.mi));
       saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
       refreshOcrDuplicateState();
-    };
+    });
   });
   body.querySelectorAll<HTMLElement>(".ocr-stat-name").forEach((dd) => {
     dd.addEventListener("change", () => {
@@ -1700,12 +1552,12 @@ function renderOcrModalBody() {
       refreshOcrDuplicateState();
     });
   });
-  body.querySelectorAll<HTMLSelectElement>(".ocr-stat-value").forEach((sel) => {
-    sel.onchange = () => {
-      pendingOcrGroups[Number(sel.dataset.gi)].modules[Number(sel.dataset.mi)].stats[Number(sel.dataset.si)].value = Number(sel.value);
+  body.querySelectorAll<HTMLElement>(".ocr-stat-value").forEach((dd) => {
+    dd.addEventListener("change", () => {
+      pendingOcrGroups[Number(dd.dataset.gi)].modules[Number(dd.dataset.mi)].stats[Number(dd.dataset.si)].value = Number(dd.dataset.value);
       saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
       refreshOcrDuplicateState();
-    };
+    });
   });
   body.querySelectorAll<HTMLButtonElement>(".ocr-row-remove").forEach((btn) => {
     btn.onclick = () => {
@@ -1742,7 +1594,7 @@ function renderOcrModalBody() {
     };
   });
 
-  initStatDropdowns(body);
+  initDropdowns(body);
   updateOcrPager();
   applyOcrNewOnlyFilter();
 }
@@ -1751,8 +1603,8 @@ function onOcrFieldChange(gi: number, mi: number) {
   const m = pendingOcrGroups[gi]?.modules[mi];
   const row = document.querySelector(`.ocr-row[data-gi="${gi}"][data-mi="${mi}"]`);
   if (!row || !m) return;
-  const typeDigit = Number((row.querySelector(".ocr-type") as HTMLSelectElement).value);
-  const raritySub = Number((row.querySelector(".ocr-rarity-sub") as HTMLSelectElement).value);
+  const typeDigit = Number(row.querySelector<HTMLElement>(".ocr-type")!.dataset.value);
+  const raritySub = Number(row.querySelector<HTMLElement>(".ocr-rarity-sub")!.dataset.value);
   m.config_id = buildConfigId(typeDigit, raritySub);
   m.quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
   const iconEl = document.getElementById(`ocr-icon-${gi}-${mi}`);
@@ -1815,12 +1667,9 @@ function renderEditModalBody() {
   const statRows: string[] = [];
   for (let i = 0; i < editStatCount; i++) {
     const curStat = m.stats[i];
-    const valueOpts = Array.from({ length: 10 }, (_, v) => v + 1)
-      .map((v) => `<option value="${v}"${curStat && v === curStat.value ? " selected" : ""}>${v}</option>`)
-      .join("");
     statRows.push(`<div class="ocr-stat-row" data-si="${i}">
       ${statDropdownHtml("edit-stat-name", curStat?.part_id, undefined, curStat ? undefined : t.ui.select_placeholder)}
-      <select class="opt-multi-btn ocr-stat-value edit-stat-value">${valueOpts}</select>
+      ${valueDropdownHtml(curStat?.value ?? 1, "ocr-stat-value edit-stat-value")}
       <button class="ocr-stat-remove edit-remove-stat" data-si="${i}">&times;</button>
     </div>`);
   }
@@ -1831,11 +1680,11 @@ function renderEditModalBody() {
       <div class="ocr-row-fields">
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.type_label}</span>
-          <select class="opt-multi-btn" id="edit-type">${typeSelectOptions(typeDigit)}</select>
+          ${typeDropdownHtml(typeDigit, "", undefined, "edit-type")}
         </label>
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
-          <select class="opt-multi-btn" id="edit-rarity-sub">${raritySubSelectOptions(raritySub)}</select>
+          ${raritySubDropdownHtml(raritySub, "", undefined, "edit-rarity-sub")}
         </label>
       </div>
     </div>
@@ -1847,15 +1696,15 @@ function renderEditModalBody() {
   </div>`;
 
   const updateIconPreview = () => {
-    const td = Number($<HTMLSelectElement>("edit-type").value);
-    const rs = Number($<HTMLSelectElement>("edit-rarity-sub").value);
+    const td = Number($<HTMLElement>("edit-type").dataset.value);
+    const rs = Number($<HTMLElement>("edit-rarity-sub").dataset.value);
     const preview = document.getElementById("edit-icon-preview");
     if (preview) preview.innerHTML = moduleIconHtml(buildConfigId(td, rs));
   };
-  $<HTMLSelectElement>("edit-type").onchange = updateIconPreview;
-  $<HTMLSelectElement>("edit-rarity-sub").onchange = updateIconPreview;
+  $<HTMLElement>("edit-type").addEventListener("change", updateIconPreview);
+  $<HTMLElement>("edit-rarity-sub").addEventListener("change", updateIconPreview);
 
-  initStatDropdowns(body);
+  initDropdowns(body);
 
   const addBtn = document.getElementById("edit-add-stat");
   if (addBtn) addBtn.onclick = () => {
@@ -1887,11 +1736,11 @@ function syncEditStatsToModule() {
   const newStats: StatEntry[] = [];
   rows.forEach((row) => {
     const nameDd = row.querySelector<HTMLElement>(".edit-stat-name");
-    const valueSelect = row.querySelector<HTMLSelectElement>(".edit-stat-value");
-    if (!nameDd || !valueSelect) return;
+    const valueDd = row.querySelector<HTMLElement>(".edit-stat-value");
+    if (!nameDd || !valueDd) return;
     const partId = Number(nameDd.dataset.value);
     if (!partId) return;
-    newStats.push({ part_id: partId, value: Number(valueSelect.value) });
+    newStats.push({ part_id: partId, value: Number(valueDd.dataset.value) });
   });
   m.stats = newStats;
 }
@@ -1899,8 +1748,8 @@ function syncEditStatsToModule() {
 function saveEditModule() {
   const m = modules.find((mod) => mod.uuid === editingUuid);
   if (!m) return;
-  const typeDigit = Number($<HTMLSelectElement>("edit-type").value);
-  const raritySub = Number($<HTMLSelectElement>("edit-rarity-sub").value);
+  const typeDigit = Number($<HTMLElement>("edit-type").dataset.value);
+  const raritySub = Number($<HTMLElement>("edit-rarity-sub").dataset.value);
   m.config_id = buildConfigId(typeDigit, raritySub);
   m.quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
 
@@ -1909,13 +1758,13 @@ function saveEditModule() {
   const rows = document.querySelectorAll<HTMLElement>("#edit-stat-rows .ocr-stat-row");
   for (const row of rows) {
     const nameDd = row.querySelector<HTMLElement>(".edit-stat-name");
-    const valueSelect = row.querySelector<HTMLSelectElement>(".edit-stat-value");
-    if (!nameDd || !valueSelect) continue;
+    const valueDd = row.querySelector<HTMLElement>(".edit-stat-value");
+    if (!nameDd || !valueDd) continue;
     const partId = Number(nameDd.dataset.value);
     if (!partId) continue;
     if (usedIds.has(partId)) return;
     usedIds.add(partId);
-    stats.push({ part_id: partId, value: Number(valueSelect.value) });
+    stats.push({ part_id: partId, value: Number(valueDd.dataset.value) });
   }
   if (stats.length === 0) return;
   m.stats = stats;
@@ -1954,12 +1803,9 @@ function renderManualModalBody() {
 
   const statRows: string[] = [];
   for (let i = 0; i < manualStatCount; i++) {
-    const valueOpts = Array.from({ length: 10 }, (_, v) => v + 1)
-      .map((v) => `<option value="${v}">${v}</option>`)
-      .join("");
     statRows.push(`<div class="ocr-stat-row" data-si="${i}">
       ${statDropdownHtml("manual-stat-name", undefined, undefined, t.ui.select_placeholder)}
-      <select class="opt-multi-btn ocr-stat-value manual-stat-value">${valueOpts}</select>
+      ${valueDropdownHtml(1, "ocr-stat-value manual-stat-value")}
       <button class="ocr-stat-remove manual-remove-stat" data-si="${i}">&times;</button>
     </div>`);
   }
@@ -1971,11 +1817,11 @@ function renderManualModalBody() {
       <div class="ocr-row-fields">
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.type_label}</span>
-          <select class="opt-multi-btn" id="manual-type">${typeSelectOptions(1)}</select>
+          ${typeDropdownHtml(1, "", undefined, "manual-type")}
         </label>
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
-          <select class="opt-multi-btn" id="manual-rarity-sub">${raritySubSelectOptions(1)}</select>
+          ${raritySubDropdownHtml(1, "", undefined, "manual-rarity-sub")}
         </label>
       </div>
     </div>
@@ -1987,15 +1833,15 @@ function renderManualModalBody() {
   </div>`;
 
   const updateManualIconPreview = () => {
-    const td = Number($<HTMLSelectElement>("manual-type").value);
-    const rs = Number($<HTMLSelectElement>("manual-rarity-sub").value);
+    const td = Number($<HTMLElement>("manual-type").dataset.value);
+    const rs = Number($<HTMLElement>("manual-rarity-sub").dataset.value);
     const preview = document.getElementById("manual-icon-preview");
     if (preview) preview.innerHTML = moduleIconHtml(buildConfigId(td, rs));
   };
-  $<HTMLSelectElement>("manual-type").onchange = updateManualIconPreview;
-  $<HTMLSelectElement>("manual-rarity-sub").onchange = updateManualIconPreview;
+  $<HTMLElement>("manual-type").addEventListener("change", updateManualIconPreview);
+  $<HTMLElement>("manual-rarity-sub").addEventListener("change", updateManualIconPreview);
 
-  initStatDropdowns(body);
+  initDropdowns(body);
 
   const addBtn = document.getElementById("manual-add-stat");
   if (addBtn) addBtn.onclick = () => { manualStatCount++; renderManualModalBody(); };
@@ -2006,8 +1852,8 @@ function renderManualModalBody() {
 }
 
 function addManualModule() {
-  const typeDigit = Number($<HTMLSelectElement>("manual-type").value);
-  const raritySub = Number($<HTMLSelectElement>("manual-rarity-sub").value);
+  const typeDigit = Number($<HTMLElement>("manual-type").dataset.value);
+  const raritySub = Number($<HTMLElement>("manual-rarity-sub").dataset.value);
   const configId = buildConfigId(typeDigit, raritySub);
   const quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
 
@@ -2017,8 +1863,8 @@ function addManualModule() {
 
   for (const row of rows) {
     const nameDd = row.querySelector<HTMLElement>(".manual-stat-name");
-    const valueSelect = row.querySelector<HTMLSelectElement>(".manual-stat-value");
-    if (!nameDd || !valueSelect) continue;
+    const valueDd = row.querySelector<HTMLElement>(".manual-stat-value");
+    if (!nameDd || !valueDd) continue;
     const partId = Number(nameDd.dataset.value);
     if (!partId) continue;
     if (usedIds.has(partId)) {
@@ -2026,7 +1872,7 @@ function addManualModule() {
       return;
     }
     usedIds.add(partId);
-    stats.push({ part_id: partId, value: Number(valueSelect.value) });
+    stats.push({ part_id: partId, value: Number(valueDd.dataset.value) });
   }
 
   if (stats.length === 0) {
@@ -2035,7 +1881,7 @@ function addManualModule() {
   }
 
   const m: ModuleInput = {
-    uuid: Date.now() + Math.floor(Math.random() * 1000),
+    uuid: nextUuid(),
     config_id: configId,
     quality,
     stats,
@@ -2169,7 +2015,7 @@ function openOcrSetupModal() {
   ocrSetupSelectedRarities = [];
   ocrSetupSelectedTypes = [];
   ocrSetupRegion = null;
-  // Reset radio buttons
+  // ラジオボタンをリセット
   const autoRadio = document.querySelector<HTMLInputElement>('input[name="ocr-mode"][value="auto"]');
   if (autoRadio) autoRadio.checked = true;
   const mobileRadio = document.querySelector<HTMLInputElement>('input[name="ocr-platform"][value="mobile"]');
@@ -2256,59 +2102,37 @@ function renderOcrSetupFileList() {
 }
 
 function openOcrSetupFlyout(anchor: HTMLElement, category: "rarity" | "type") {
-  const fl = $("fly-ocr-setup");
-  if (activeFlyout === fl && fl.dataset.category === category) { closeFly(); return; }
-  closeFly();
-  fl.dataset.category = category;
-  fl.textContent = "";
-
   if (category === "rarity") {
-    const rarityValues = [3, 4]; // purple, gold
-    const rarityLabels: Record<number, string> = {
-      3: t.rarity.purple,
-      4: t.rarity.gold,
-    };
-    rarityValues.forEach((val) => {
-      const el = document.createElement("label");
-      el.className = "fitem-check";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = ocrSetupSelectedRarities.includes(val);
-      cb.onchange = () => {
-        if (cb.checked) ocrSetupSelectedRarities.push(val);
+    openFlyout(anchor, {
+      mode: "multi",
+      items: [3, 4].map((val) => ({
+        value: String(val),
+        label: ({ 3: t.rarity.purple, 4: t.rarity.gold } as Record<number, string>)[val] ?? String(val),
+        checked: ocrSetupSelectedRarities.includes(val),
+      })),
+      onCheck: (value, checked) => {
+        const val = Number(value);
+        if (checked) ocrSetupSelectedRarities.push(val);
         else { const idx = ocrSetupSelectedRarities.indexOf(val); if (idx >= 0) ocrSetupSelectedRarities.splice(idx, 1); }
         updateOcrSetupBtnLabels();
-      };
-      el.appendChild(cb);
-      const span = document.createElement("span");
-      span.textContent = rarityLabels[val] ?? String(val);
-      el.appendChild(span);
-      fl.appendChild(el);
+      },
     });
   } else {
-    MODULE_TYPE_PREFIXES.forEach((p) => {
-      const el = document.createElement("label");
-      el.className = "fitem-check";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = ocrSetupSelectedTypes.includes(p);
-      cb.onchange = () => {
-        if (cb.checked) ocrSetupSelectedTypes.push(p);
-        else { const idx = ocrSetupSelectedTypes.indexOf(p); if (idx >= 0) ocrSetupSelectedTypes.splice(idx, 1); }
+    openFlyout(anchor, {
+      mode: "multi",
+      items: MODULE_TYPE_PREFIXES.map((p) => ({
+        value: String(p),
+        label: t.module_types[String(p)] ?? "",
+        checked: ocrSetupSelectedTypes.includes(p),
+      })),
+      onCheck: (value, checked) => {
+        const val = Number(value);
+        if (checked) ocrSetupSelectedTypes.push(val);
+        else { const idx = ocrSetupSelectedTypes.indexOf(val); if (idx >= 0) ocrSetupSelectedTypes.splice(idx, 1); }
         updateOcrSetupBtnLabels();
-      };
-      el.appendChild(cb);
-      const span = document.createElement("span");
-      span.textContent = t.module_types[String(p)] ?? "";
-      el.appendChild(span);
-      fl.appendChild(el);
+      },
     });
   }
-
-  fl.classList.add("on");
-  positionFlyout(fl, anchor);
-  activeFlyout = fl;
-  activeFlyAnchor = anchor;
 }
 
 // MODULE_TYPE_PREFIXES → type名変換
@@ -2379,7 +2203,9 @@ async function startOcrFromSetup() {
         img.onerror = () => reject(new Error("Failed to load image"));
       });
       try {
-        const result = await processScreenshot(img, undefined, ocrWorker, customOptions);
+        const startId = uuidSeq + 1;
+        const result = await processScreenshot(img, undefined, ocrWorker, customOptions, startId);
+        uuidSeq += result.modules.length;
         const thumbnailUrl = createThumbnailDataUrl(img, result.rowPositions);
         groups.push({ imageUrl: thumbnailUrl, modules: result.modules, rowPositions: result.rowPositions });
       } catch {
@@ -2422,7 +2248,12 @@ let captureOcrRegionSnapshot: { x: number; y: number; w: number; h: number } | n
 let captureRegion: { x: number; y: number; w: number; h: number } | null = null;
 let captureDragStart: { x: number; y: number } | null = null;
 
-function openCaptureModal() {
+// Document Picture-in-Picture
+let capturePipWindow: Window | null = null;
+
+async function openCaptureModal() {
+  await openCapturePipModal();
+  // ステート初期化（PiPウィンドウに移動した後に$()で要素を取得）
   captureFiles = [];
   captureOcrGroups = [];
   captureOcrQueue = [];
@@ -2442,7 +2273,6 @@ function openCaptureModal() {
   // プラットフォームをPCソフトに切替
   const pcRadio = document.querySelector<HTMLInputElement>('input[name="ocr-platform"][value="pc"]');
   if (pcRadio) pcRadio.checked = true;
-  $("capture-modal-bd").classList.add("on");
 }
 
 function setCaptureStep(step: number) {
@@ -2466,6 +2296,7 @@ async function closeCaptureModal() {
     await captureOcrWorker.terminate();
     captureOcrWorker = null;
   }
+  closeCapturePip(); // PiPを閉じる（モーダルを元の位置に戻す）
   $("capture-modal-bd").classList.remove("on");
 }
 
@@ -2544,6 +2375,18 @@ function videoToDisplay(vx: number, vy: number): { cx: number; cy: number } {
   const cx = ox + (vx / video.videoWidth) * dw;
   const cy = oy + (vy / video.videoHeight) * dh;
   return { cx, cy };
+}
+
+// 領域矩形を映像ピクセル座標から表示座標に再描画
+function updateCaptureRegionRect() {
+  if (!captureRegion) return;
+  const regionRect = $("capture-region-rect");
+  const topLeft = videoToDisplay(captureRegion.x, captureRegion.y);
+  const bottomRight = videoToDisplay(captureRegion.x + captureRegion.w, captureRegion.y + captureRegion.h);
+  regionRect.style.left = topLeft.cx + "px";
+  regionRect.style.top = topLeft.cy + "px";
+  regionRect.style.width = (bottomRight.cx - topLeft.cx) + "px";
+  regionRect.style.height = (bottomRight.cy - topLeft.cy) + "px";
 }
 
 function initCaptureRegionDrag() {
@@ -2696,7 +2539,9 @@ async function processCaptureOcrQueue() {
           platform: "pc",
           region: { x: region.x, y: region.y, width: region.w, height: region.h },
         };
-        const result = await processScreenshot(img, undefined, captureOcrWorker, customOptions);
+        const startId = uuidSeq + 1;
+        const result = await processScreenshot(img, undefined, captureOcrWorker, customOptions, startId);
+        uuidSeq += result.modules.length;
         const thumbnailUrl = createThumbnailDataUrl(img, result.rowPositions);
         captureOcrGroups.push({ imageUrl: thumbnailUrl, modules: result.modules, rowPositions: result.rowPositions });
         img.src = "";
@@ -2735,6 +2580,7 @@ function updateCaptureStatus() {
 
 async function finishCapture() {
   stopCaptureStream();
+  closeCapturePip(); // PiPを閉じてモーダルを元に戻す
 
   // キューに残りがあれば処理完了を待つ
   if (captureOcrQueue.length > 0 || captureOcrProcessing) {
@@ -2764,6 +2610,82 @@ async function finishCapture() {
     $("ocr-setup-modal-bd").classList.add("on");
     addOcrSetupFiles(files);
   }
+}
+
+// ========== Document Picture-in-Picture ==========
+
+function closeCapturePip() {
+  if (!capturePipWindow) return;
+  // モーダル要素を元の親に戻す
+  const modal = capturePipWindow.document.querySelector(".capture-modal");
+  if (modal) $("capture-modal-bd").appendChild(modal);
+  const win = capturePipWindow;
+  capturePipWindow = null; // pagehideハンドラの重複実行を防止
+  if (!win.closed) win.close();
+}
+
+async function openCapturePipModal() {
+  const dpip = (window as any).documentPictureInPicture;
+  if (!dpip) return;
+
+  // モーダルの実際の高さを測定してPiPサイズを決定
+  const modal = document.querySelector<HTMLElement>(".capture-modal")!;
+  const bd = $("capture-modal-bd");
+  bd.style.visibility = "hidden";
+  bd.classList.add("on");
+  const pipH = Math.min(modal.scrollHeight, Math.round(window.screen.availHeight * 0.85));
+  bd.classList.remove("on");
+  bd.style.visibility = "";
+  const pipWin: Window = await dpip.requestWindow({ width: 640, height: pipH });
+  capturePipWindow = pipWin;
+
+  // メインページのスタイルシートをPiPにコピー
+  for (const sheet of document.styleSheets) {
+    try {
+      const css = [...sheet.cssRules].map((r) => r.cssText).join("\n");
+      const s = pipWin.document.createElement("style");
+      s.textContent = css;
+      pipWin.document.head.appendChild(s);
+    } catch {
+      if (sheet.href) {
+        const link = pipWin.document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = sheet.href;
+        pipWin.document.head.appendChild(link);
+      }
+    }
+  }
+
+  // PiP用のオーバーライドスタイル
+  const overrideStyle = pipWin.document.createElement("style");
+  overrideStyle.textContent = `
+    body { margin:0; background:var(--bg1,#1a1a2e); overflow:hidden; }
+    .capture-modal {
+      max-height:100vh; height:100vh; width:100%; max-width:100%;
+      margin:0; border:none; border-radius:0; box-shadow:none;
+      animation:none;
+    }
+  `;
+  pipWin.document.head.appendChild(overrideStyle);
+
+  // モーダル要素をPiPウィンドウに移動
+  pipWin.document.body.appendChild(modal);
+
+  // PiPウィンドウ内でリサイズ時に領域矩形を追従させる
+  const pipPreview = pipWin.document.getElementById("capture-preview-wrap");
+  if (pipPreview) {
+    new (pipWin as any).ResizeObserver(() => updateCaptureRegionRect()).observe(pipPreview);
+  }
+
+  // PiPウィンドウが閉じられた時（ユーザーが×ボタンで閉じた場合）
+  pipWin.addEventListener("pagehide", () => {
+    if (!capturePipWindow) return; // closeCapturePip経由の場合はスキップ
+    // モーダルを元に戻してからクリーンアップ
+    const modal = capturePipWindow.document.querySelector(".capture-modal");
+    if (modal) $("capture-modal-bd").appendChild(modal);
+    capturePipWindow = null;
+    closeCaptureModal();
+  }, { once: true });
 }
 
 // ========== OCR Region Selection ==========
@@ -2928,7 +2850,7 @@ function importJson() {
         const imported: ModuleInput[] = [];
         for (const item of raw) {
           if (typeof item !== "object" || item === null) continue;
-          // Extract stats: support both Tauri format ({name, part_id, value}) and Web format ({part_id, value})
+          // ステータス抽出: Tauri形式({name, part_id, value})とWeb形式({part_id, value})の両方に対応
           const stats: StatEntry[] = [];
           if (Array.isArray(item.stats)) {
             for (const s of item.stats) {
@@ -2938,7 +2860,7 @@ function importJson() {
             }
           }
           if (stats.length === 0) continue;
-          const uuid = Date.now() + Math.floor(Math.random() * 1000);
+          const uuid = nextUuid();
           const config_id = typeof item.config_id === "number" ? item.config_id : null;
           const quality = typeof item.quality === "number" ? item.quality : null;
           imported.push({ uuid, config_id, quality, stats });
@@ -3038,6 +2960,21 @@ function closeSidebar() {
   $("sidebar-bd").classList.remove("on");
 }
 
+/** 登録済みモジュールのuuidを1から連番に振り直す */
+function dataCleanup() {
+  if (modules.length === 0) {
+    showToast(t.ui.data_refresh_empty, "error");
+    return;
+  }
+  for (let i = 0; i < modules.length; i++) {
+    modules[i].uuid = i + 1;
+  }
+  uuidSeq = modules.length;
+  saveModulesToStorage();
+  renderGrid();
+  showToast(t.ui.data_refresh_done, "success");
+}
+
 function switchLanguage(code: string) {
   saveLang(code);
   applyI18n();
@@ -3048,12 +2985,12 @@ function switchLanguage(code: string) {
   updateOptBtnLabel("req");
   updateOptBtnLabel("des");
   updateOptBtnLabel("excl");
-  // Re-render opt results if visible
+  // 最適化結果が表示中なら再描画
   const resultsEl = $("opt-results");
   if (resultsEl.style.display !== "none") {
     restoreOptResults();
   }
-  // Update opt-empty
+  // 空状態メッセージを更新
   const emptyEl = $("opt-empty");
   if (emptyEl.style.display !== "none") {
     emptyEl.textContent = "";
@@ -3226,37 +3163,54 @@ function setupImagePinchZoom(container: HTMLElement, gi: number) {
     mouseDown = false;
     container.style.cursor = "";
     if (didDrag) return;
-    // click (no drag) → toggle zoom
+    // クリック（ドラッグなし）→ ズームの切替
     const rect = container.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
     if (scale <= 1) {
-      // zoom in to 2x, centering on click point
+      // クリック位置を中心に2倍に拡大
       const newScale = 2;
       translateX = clickX - clickX * newScale;
       translateY = clickY - clickY * newScale;
       scale = newScale;
       clampTranslate();
     } else {
-      // zoom out to 1x
+      // 等倍に戻す
       scale = 1;
       translateX = 0;
       translateY = 0;
     }
     applyTransform();
   });
+
+  // ---- PC: Ctrl + ホイールで拡大縮小 ----
+  container.addEventListener("wheel", (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const rect = container.getBoundingClientRect();
+    const cursorX = e.clientX - rect.left;
+    const cursorY = e.clientY - rect.top;
+    const oldScale = scale;
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    scale = Math.min(5, Math.max(1, scale * factor));
+    // カーソル位置を基準にズームするよう平行移動を補正
+    translateX = cursorX - (cursorX - translateX) * (scale / oldScale);
+    translateY = cursorY - (cursorY - translateY) * (scale / oldScale);
+    clampTranslate();
+    applyTransform();
+  }, { passive: false });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   initLang();
   applyI18n();
   document.documentElement.lang = getSavedLang() === "ko" ? "ko" : getSavedLang() === "en" ? "en" : "ja";
-  initCustomDds();
+  initDropdowns();
 
   loadModulesFromStorage();
   hasOcrGroups().then((v) => { hasStoredOcrData = v; }).catch(() => {});
 
-  // Tabs
+  // タブ切替
   document.querySelectorAll<HTMLElement>(".tab").forEach((tab) => {
     tab.onclick = () => {
       document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
@@ -3286,10 +3240,18 @@ document.addEventListener("DOMContentLoaded", () => {
       const icon = STAT_ICONS[id];
       return { label: statName(id), val: String(id), disabled: ex.has(String(id)), iconSrc: icon ? `/icons/${icon}` : undefined };
     });
-    openFly("fly-s", e.currentTarget as HTMLElement, [...extraItems, ...statItems], (it) => {
-      sortKeys.push({ k: it.val, d: 1 });
-      renderSChips();
-      renderGrid();
+    openFlyout(e.currentTarget as HTMLElement, {
+      mode: "single",
+      items: [...extraItems, ...statItems].map((it) => ({
+        value: it.val,
+        label: it.label,
+        icon: (it as any).iconSrc,
+        disabled: it.disabled,
+      })),
+      onSelect: (val) => {
+        const it = [...extraItems, ...statItems].find((x) => x.val === val);
+        if (it) { sortKeys.push({ k: it.val, d: 1 }); renderSChips(); renderGrid(); }
+      },
     });
   };
 
@@ -3361,7 +3323,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     options.push({ value: "new", label: t.ui.pattern_new });
 
-    updateCustomDdOptions(patsaveModeDd, options, options[0].value);
+    updateDropdownOptions(patsaveModeDd, options, options[0].value);
     patsaveInput.value = "";
     updatePatsaveNameRow();
     patsaveBd.classList.add("on");
@@ -3383,7 +3345,7 @@ document.addEventListener("DOMContentLoaded", () => {
       savePatterns(patterns);
       closePatsaveModal();
       renderPatternSelect();
-      setCustomDdValue($("pattern-select"), String(idx));
+      setDropdownValue($("pattern-select"), String(idx));
       updatePatternButtons();
     } else {
       const name = patsaveInput.value.trim();
@@ -3395,7 +3357,7 @@ document.addEventListener("DOMContentLoaded", () => {
       savePatterns(patterns);
       closePatsaveModal();
       renderPatternSelect();
-      setCustomDdValue($("pattern-select"), String(duplicateIdx >= 0 ? duplicateIdx : patterns.length - 1));
+      setDropdownValue($("pattern-select"), String(duplicateIdx >= 0 ? duplicateIdx : patterns.length - 1));
       updatePatternButtons();
     }
   };
@@ -3506,8 +3468,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (files.length > 0) addOcrSetupFiles(files);
   });
 
-  // Screen Capture modal + PC/モバイル判定
-  const isDesktop = !!(navigator.mediaDevices && "getDisplayMedia" in navigator.mediaDevices);
+  // Screen Capture（Chromium系 + Document PiP対応ブラウザのみ）
+  const isDesktop = !!(window as any).chrome
+    && !!(navigator.mediaDevices && "getDisplayMedia" in navigator.mediaDevices)
+    && "documentPictureInPicture" in window;
   if (isDesktop) {
     $("capture-open-btn").style.display = "";
   } else {
@@ -3526,6 +3490,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $("capture-done-btn").onclick = () => finishCapture();
   $("capture-region-reset-btn").onclick = () => resetCaptureRegion();
   initCaptureRegionDrag();
+  // リサイズ時に領域矩形を追従させる
+  new ResizeObserver(() => updateCaptureRegionRect()).observe($("capture-preview-wrap"));
 
   // OCR Region modal
   $("ocr-region-close").onclick = () => closeRegionModal();
@@ -3564,6 +3530,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Sidebar
   $("backup-export-btn").onclick = () => exportBackup();
+  $("data-cleanup-btn").onclick = () => dataCleanup();
   $("hamburger-btn").onclick = () => openSidebar();
   $("sidebar-close").onclick = () => closeSidebar();
   $("sidebar-bd").onclick = () => closeSidebar();

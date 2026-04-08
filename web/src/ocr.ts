@@ -270,7 +270,7 @@ async function loadTemplates(): Promise<void> {
         grayEqMat: grayEqTmpl,
       });
     } catch {
-      // User-provided OCR templates are optional.
+      // ユーザー提供のOCRテンプレートは任意
     }
   }
 
@@ -2885,6 +2885,7 @@ async function processCustomMode(
   externalWorker: any,
   customOptions: OcrCustomOptions | undefined,
   cv: any,
+  startUuid: number,
 ): Promise<ProcessScreenshotResult> {
   const filterRarities = customOptions?.rarities;
   const filterTypes = customOptions?.typeNames;
@@ -3099,7 +3100,7 @@ async function processCustomMode(
 
   const modules: ModuleInput[] = [];
   const rowPositions: RowPosition[] = [];
-  let uuidCounter = Date.now();
+  let uuidCounter = startUuid;
   const iconH1x = anchor.iconSize;
 
   try {
@@ -3143,6 +3144,7 @@ export async function processScreenshot(
   onProgress?: (p: OcrProgress) => void,
   externalWorker?: any,
   customOptions?: OcrCustomOptions,
+  startUuid?: number,
 ): Promise<ProcessScreenshotResult> {
   onProgress?.({ stage: "OpenCV.js 読み込み中...", percent: 0 });
   await loadOpenCV();
@@ -3206,6 +3208,7 @@ export async function processScreenshot(
       canvas, gray, grayEq, edgeMat, grayCl, edgeCl, colorMat,
       cropWidth, cropHeight, imgWidth, imgHeight,
       onProgress, externalWorker, customOptions, cv,
+      startUuid ?? 1,
     );
   }
 
@@ -3431,7 +3434,7 @@ export async function processScreenshot(
 
   const modules: ModuleInput[] = [];
   const rowPositions: RowPosition[] = [];
-  let uuidCounter = Date.now();
+  let uuidCounter = startUuid ?? 1;
   const iconH = anchoredRows[0]?.stats[0]?.h ?? Math.round(80 * scale);
 
   try {
