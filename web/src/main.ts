@@ -2146,7 +2146,7 @@ async function startOcrFromSetup() {
   const files = ocrSetupFiles;
   if (files.length === 0) return;
 
-  // 詳細設定モードオプション構築
+  // 精密モードオプション構築
   const mode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value ?? "auto";
   let customOptions: OcrCustomOptions | undefined;
   const platform = document.querySelector<HTMLInputElement>('input[name="ocr-platform"]:checked')?.value as "mobile" | "pc" | undefined;

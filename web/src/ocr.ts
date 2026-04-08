@@ -1,7 +1,7 @@
 import { STAT_ICONS, MODULE_ICONS } from "@shared/stats";
 import type { ModuleInput, StatEntry } from "@shared/types";
 
-// --- 詳細設定モードオプション ---
+// --- 精密モードオプション ---
 
 export interface OcrCustomOptions {
   platform: "mobile" | "pc";
@@ -2319,7 +2319,7 @@ function classifyModuleIconForRow(
 
 
 
-// ========== 詳細設定モード: グリッド交点ベース検出 ==========
+// ========== 精密モード: グリッド交点ベース検出 ==========
 
 // Step 1: スケールとアンカー位置を検出
 // 前回検出したスケールをキャッシュ（複数枚処理時に2枚目以降を高速化）
@@ -2633,7 +2633,7 @@ function customClassifyStatAtGrid(
   };
 }
 
-// confident判定（詳細設定モード用）
+// confident判定（精密モード用）
 function isCustomStatConfident(score: number, margin: number): boolean {
   return score >= 0.55 || (score >= 0.50 && margin >= 0.015);
 }
@@ -2867,7 +2867,7 @@ function classifyModuleIconByColor(
   return bestMatch;
 }
 
-// ========== 詳細設定モード メインパイプライン ==========
+// ========== 精密モード メインパイプライン ==========
 
 async function processCustomMode(
   canvas: HTMLCanvasElement,
@@ -3166,7 +3166,7 @@ export async function processScreenshot(
   const isCustomMode = !!customOptions?.region;
   const region = customOptions?.region;
 
-  // クロップ: 詳細設定モードはユーザー指定領域、autoモードは左40%
+  // クロップ: 精密モードはユーザー指定領域、autoモードは左40%
   let cropX: number, cropY: number, cropWidth: number, cropHeight: number;
   if (region) {
     cropX = Math.max(0, Math.round(region.x));
@@ -3202,7 +3202,7 @@ export async function processScreenshot(
   const edgeCl = new cv.Mat();
   cv.Canny(grayCl, edgeCl, 50, 150);
 
-  // --- 詳細設定モード: グリッド交点ベース検出 ---
+  // --- 精密モード: グリッド交点ベース検出 ---
   if (isCustomMode) {
     return processCustomMode(
       canvas, gray, grayEq, edgeMat, grayCl, edgeCl, colorMat,
