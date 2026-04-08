@@ -2593,7 +2593,7 @@ function customClassifyStatAtGrid(
   cv: any,
   excludePids?: Set<number>,
 ): { pid: number; score: number; margin: number } {
-  const pad = 3;
+  const pad = Math.max(4, Math.round(iconSide * 0.15));
   const roiX = Math.max(0, Math.round(cx - iconSide / 2 - pad));
   const roiY = Math.max(0, Math.round(cy - iconSide / 2 - pad));
   const roiS = iconSide + pad * 2;
@@ -2735,7 +2735,7 @@ function customClassifyStatByColor(
   cv: any,
   excludePids?: Set<number>,
 ): { pid: number; score: number; margin: number } {
-  const pad = 3;
+  const pad = Math.max(4, Math.round(iconSide * 0.15));
   const roiX = Math.max(0, Math.round(cx - iconSide / 2 - pad));
   const roiY = Math.max(0, Math.round(cy - iconSide / 2 - pad));
   const roiS = iconSide + pad * 2;
@@ -3013,6 +3013,8 @@ async function processCustomMode(
             margin: grayResult.margin,
           });
         }
+        // セル単位でUIスレッドに制御を返す
+        await new Promise<void>((r) => setTimeout(r, 0));
         continue;
       }
 
@@ -3025,11 +3027,13 @@ async function processCustomMode(
         score: result.score,
         margin: result.margin,
       });
+      // セル単位でUIスレッドに制御を返す
+      await new Promise<void>((r) => setTimeout(r, 0));
     }
 
     rows.push({ y: ry, stats });
-    // UIスレッドに制御を返す（撮影ボタンなどのイベントを処理可能にする）
-    await new Promise((r) => setTimeout(r, 0));
+    // UIスレッドに制御を返す（セル単位の重い matchTemplate 後にフレーム落ちを防ぐ）
+    await new Promise<void>((r) => setTimeout(r, 0));
   }
 
   // Step 4: モジュールアイコン分類（カラーマッチング）
