@@ -2593,7 +2593,7 @@ function customClassifyStatAtGrid(
   cv: any,
   excludePids?: Set<number>,
 ): { pid: number; score: number; margin: number } {
-  const pad = Math.max(4, Math.round(iconSide * 0.15));
+  const pad = Math.max(4, Math.round(iconSide * 0.20));
   const roiX = Math.max(0, Math.round(cx - iconSide / 2 - pad));
   const roiY = Math.max(0, Math.round(cy - iconSide / 2 - pad));
   const roiS = iconSide + pad * 2;
@@ -2735,7 +2735,7 @@ function customClassifyStatByColor(
   cv: any,
   excludePids?: Set<number>,
 ): { pid: number; score: number; margin: number } {
-  const pad = Math.max(4, Math.round(iconSide * 0.15));
+  const pad = Math.max(4, Math.round(iconSide * 0.20));
   const roiX = Math.max(0, Math.round(cx - iconSide / 2 - pad));
   const roiY = Math.max(0, Math.round(cy - iconSide / 2 - pad));
   const roiS = iconSide + pad * 2;
@@ -2956,8 +2956,8 @@ async function processCustomMode(
     canvas.width = 0; canvas.height = 0;
     return { modules: [], rowPositions: [] };
   }
-  // Step 2: アップスケール
-  const upscale = cropHeight < 700 ? 3 : 2;
+  // Step 2: アップスケール（アイコンサイズが約50pxになるよう倍率を可変）
+  const upscale = Math.max(2, Math.round(50 / anchor.iconSize));
   const grayUpscaled = new cv.Mat();
   cv.resize(gray, grayUpscaled, new cv.Size(0, 0), upscale, upscale, cv.INTER_CUBIC);
   gray.delete();

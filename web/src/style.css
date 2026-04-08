@@ -952,6 +952,9 @@ body {
 .capture-step-btn {
   flex-shrink:0;
 }
+#capture-step-2 .capture-step-content {
+  flex-direction:row; align-items:center; flex-wrap:wrap;
+}
 
 .capture-privacy {
   font-size:11px; color:var(--tx3);
