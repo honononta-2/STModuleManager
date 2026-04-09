@@ -2047,11 +2047,19 @@ function updateOcrSetupCustomPanel() {
 function updatePcAutoWarn() {
   const platform = document.querySelector<HTMLInputElement>('input[name="ocr-platform"]:checked')?.value ?? "mobile";
   const mode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value ?? "auto";
+  // PC autoモードは予測グリッドパイプラインを使用するため警告不要
   const warn = $("ocr-setup-pc-auto-warn");
-  if (platform === "pc" && mode === "auto") {
-    warn.classList.add("on");
-  } else {
-    warn.classList.remove("on");
+  warn.classList.remove("on");
+  // テストモード（予測グリッド）はモバイル専用: PC選択時は非表示
+  const predictedLabel = document.getElementById("ocr-mode-predicted-label");
+  if (predictedLabel) {
+    predictedLabel.style.display = platform === "pc" ? "none" : "";
+    // PC選択中にテストモードが選ばれていた場合、autoに戻す
+    if (platform === "pc" && mode === "predictedGrid") {
+      const autoRadio = document.querySelector<HTMLInputElement>('input[name="ocr-mode"][value="auto"]');
+      if (autoRadio) autoRadio.checked = true;
+      updateOcrSetupCustomPanel();
+    }
   }
 }
 
@@ -2146,11 +2154,25 @@ async function startOcrFromSetup() {
   const files = ocrSetupFiles;
   if (files.length === 0) return;
 
-  // 精密モードオプション構築
+  // OCRモード・プラットフォーム取得
   const mode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value ?? "auto";
   let customOptions: OcrCustomOptions | undefined;
   const platform = document.querySelector<HTMLInputElement>('input[name="ocr-platform"]:checked')?.value as "mobile" | "pc" | undefined;
-  if (mode === "custom") {
+  if (mode === "predictedGrid") {
+    // テストモード（予測グリッド）: 領域選択不要、選択中のプラットフォームを使用
+    customOptions = {
+      platform: platform ?? "mobile",
+      predictedGrid: true,
+    };
+    if (ocrSetupSelectedRarities.length > 0) {
+      customOptions.rarities = [...ocrSetupSelectedRarities];
+    }
+    if (ocrSetupSelectedTypes.length > 0) {
+      customOptions.typeNames = ocrSetupSelectedTypes
+        .map((p) => PREFIX_TO_TYPE_NAME[p])
+        .filter((n): n is string => !!n);
+    }
+  } else if (mode === "custom") {
     customOptions = {
       platform: platform ?? "mobile",
     };
@@ -2165,6 +2187,9 @@ async function startOcrFromSetup() {
         .map((p) => PREFIX_TO_TYPE_NAME[p])
         .filter((n): n is string => !!n);
     }
+  } else if (platform === "pc") {
+    // autoモードでもPC選択時はplatform情報を渡す（regionなし → autoパイプラインに入る）
+    customOptions = { platform: "pc" };
   }
 
   closeOcrSetupModal();
@@ -2236,17 +2261,11 @@ async function startOcrFromSetup() {
 // ========== Screen Capture ==========
 
 let captureStream: MediaStream | null = null;
-let captureFiles: File[] = [];
 let captureOcrGroups: OcrGroup[] = [];
 let captureOcrWorker: any = null;
 let captureOcrQueue: string[] = []; // dataURL のキュー
 let captureOcrProcessing = false;
 let captureOcrTotalShots = 0; // 撮影した総数
-let captureOcrRegionSnapshot: { x: number; y: number; w: number; h: number } | null = null;
-
-// 領域選択 (映像のピクセル座標で保持)
-let captureRegion: { x: number; y: number; w: number; h: number } | null = null;
-let captureDragStart: { x: number; y: number } | null = null;
 
 // Document Picture-in-Picture
 let capturePipWindow: Window | null = null;
@@ -2254,21 +2273,15 @@ let capturePipWindow: Window | null = null;
 async function openCaptureModal() {
   await openCapturePipModal();
   // ステート初期化（PiPウィンドウに移動した後に$()で要素を取得）
-  captureFiles = [];
   captureOcrGroups = [];
   captureOcrQueue = [];
   captureOcrProcessing = false;
   captureOcrTotalShots = 0;
-  captureOcrRegionSnapshot = null;
-  captureRegion = null;
   updateCaptureStatus();
   $<HTMLButtonElement>("capture-take-btn").disabled = true;
   $<HTMLButtonElement>("capture-done-btn").disabled = true;
   $<HTMLButtonElement>("capture-connect-btn").textContent = t.ui.capture_connect;
   $("capture-preview-wrap").classList.remove("connected");
-  $("capture-preview-wrap").classList.remove("has-region");
-  $("capture-region-rect").classList.remove("on");
-  $("capture-region-reset-btn").style.display = "none";
   setCaptureStep(1);
   // プラットフォームをPCソフトに切替
   const pcRadio = document.querySelector<HTMLInputElement>('input[name="ocr-platform"][value="pc"]');
@@ -2276,7 +2289,7 @@ async function openCaptureModal() {
 }
 
 function setCaptureStep(step: number) {
-  for (let i = 1; i <= 3; i++) {
+  for (let i = 1; i <= 2; i++) {
     const el = $(`capture-step-${i}`);
     el.classList.remove("active", "done");
     if (i < step) el.classList.add("done");
@@ -2286,12 +2299,10 @@ function setCaptureStep(step: number) {
 
 async function closeCaptureModal() {
   stopCaptureStream();
-  captureFiles = [];
   captureOcrGroups = [];
   captureOcrQueue = [];
   captureOcrProcessing = false;
   captureOcrTotalShots = 0;
-  captureRegion = null;
   if (captureOcrWorker) {
     await captureOcrWorker.terminate();
     captureOcrWorker = null;
@@ -2325,12 +2336,8 @@ async function connectCapture() {
     $("capture-preview-wrap").classList.add("connected");
     $<HTMLButtonElement>("capture-connect-btn").textContent = t.ui.capture_reconnect;
 
-    // 画面変更時は領域リセット → 撮影ボタンは領域選択後に有効化
-    captureRegion = null;
-    $<HTMLButtonElement>("capture-take-btn").disabled = true;
-    $("capture-preview-wrap").classList.remove("has-region");
-    $("capture-region-rect").classList.remove("on");
-    $("capture-region-reset-btn").style.display = "none";
+    // 接続完了 → 撮影可能（auto+PC予測グリッドのため領域選択不要）
+    $<HTMLButtonElement>("capture-take-btn").disabled = false;
     setCaptureStep(2);
 
     stream.getVideoTracks()[0].addEventListener("ended", () => {
@@ -2339,131 +2346,6 @@ async function connectCapture() {
   } catch {
     // ユーザーがキャンセル
   }
-}
-
-// --- 映像座標変換 ---
-// object-fit:contain の表示領域を計算
-function getVideoDisplayRect(): { ox: number; oy: number; dw: number; dh: number } {
-  const video = $<HTMLVideoElement>("capture-video");
-  const wrap = $("capture-preview-wrap");
-  const wrapW = wrap.clientWidth;
-  const wrapH = wrap.clientHeight;
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  if (vw === 0 || vh === 0) return { ox: 0, oy: 0, dw: wrapW, dh: wrapH };
-  const scale = Math.min(wrapW / vw, wrapH / vh);
-  const dw = vw * scale;
-  const dh = vh * scale;
-  const ox = (wrapW - dw) / 2;
-  const oy = (wrapH - dh) / 2;
-  return { ox, oy, dw, dh };
-}
-
-// 表示座標 → 映像ピクセル座標
-function displayToVideo(cx: number, cy: number): { vx: number; vy: number } {
-  const video = $<HTMLVideoElement>("capture-video");
-  const { ox, oy, dw, dh } = getVideoDisplayRect();
-  const vx = Math.round(((cx - ox) / dw) * video.videoWidth);
-  const vy = Math.round(((cy - oy) / dh) * video.videoHeight);
-  return { vx, vy };
-}
-
-// 映像ピクセル座標 → 表示CSS座標
-function videoToDisplay(vx: number, vy: number): { cx: number; cy: number } {
-  const video = $<HTMLVideoElement>("capture-video");
-  const { ox, oy, dw, dh } = getVideoDisplayRect();
-  const cx = ox + (vx / video.videoWidth) * dw;
-  const cy = oy + (vy / video.videoHeight) * dh;
-  return { cx, cy };
-}
-
-// 領域矩形を映像ピクセル座標から表示座標に再描画
-function updateCaptureRegionRect() {
-  if (!captureRegion) return;
-  const regionRect = $("capture-region-rect");
-  const topLeft = videoToDisplay(captureRegion.x, captureRegion.y);
-  const bottomRight = videoToDisplay(captureRegion.x + captureRegion.w, captureRegion.y + captureRegion.h);
-  regionRect.style.left = topLeft.cx + "px";
-  regionRect.style.top = topLeft.cy + "px";
-  regionRect.style.width = (bottomRight.cx - topLeft.cx) + "px";
-  regionRect.style.height = (bottomRight.cy - topLeft.cy) + "px";
-}
-
-function initCaptureRegionDrag() {
-  const overlay = $("capture-selection-overlay");
-
-  overlay.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-    const rect = overlay.getBoundingClientRect();
-    captureDragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    // ドラッグ中の矩形を表示
-    const regionRect = $("capture-region-rect");
-    regionRect.classList.add("on");
-    regionRect.style.left = captureDragStart.x + "px";
-    regionRect.style.top = captureDragStart.y + "px";
-    regionRect.style.width = "0px";
-    regionRect.style.height = "0px";
-  });
-
-  overlay.addEventListener("mousemove", (e) => {
-    if (!captureDragStart) return;
-    const rect = overlay.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
-    const regionRect = $("capture-region-rect");
-    const x = Math.min(captureDragStart.x, cx);
-    const y = Math.min(captureDragStart.y, cy);
-    const w = Math.abs(cx - captureDragStart.x);
-    const h = Math.abs(cy - captureDragStart.y);
-    regionRect.style.left = x + "px";
-    regionRect.style.top = y + "px";
-    regionRect.style.width = w + "px";
-    regionRect.style.height = h + "px";
-  });
-
-  overlay.addEventListener("mouseup", (e) => {
-    if (!captureDragStart) return;
-    const rect = overlay.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
-    const x1 = Math.min(captureDragStart.x, cx);
-    const y1 = Math.min(captureDragStart.y, cy);
-    const x2 = Math.max(captureDragStart.x, cx);
-    const y2 = Math.max(captureDragStart.y, cy);
-    captureDragStart = null;
-
-    // 小さすぎる選択は無視
-    if (x2 - x1 < 10 || y2 - y1 < 10) {
-      $("capture-region-rect").classList.remove("on");
-      return;
-    }
-
-    // 表示座標 → 映像ピクセル座標に変換
-    const topLeft = displayToVideo(x1, y1);
-    const bottomRight = displayToVideo(x2, y2);
-    const video = $<HTMLVideoElement>("capture-video");
-    captureRegion = {
-      x: Math.max(0, topLeft.vx),
-      y: Math.max(0, topLeft.vy),
-      w: Math.min(video.videoWidth, bottomRight.vx) - Math.max(0, topLeft.vx),
-      h: Math.min(video.videoHeight, bottomRight.vy) - Math.max(0, topLeft.vy),
-    };
-
-    $("capture-preview-wrap").classList.add("has-region");
-    $("capture-region-reset-btn").style.display = "";
-    $<HTMLButtonElement>("capture-take-btn").disabled = false;
-    setCaptureStep(3);
-  });
-}
-
-function resetCaptureRegion() {
-  captureRegion = null;
-  $("capture-preview-wrap").classList.remove("has-region");
-  $("capture-region-rect").classList.remove("on");
-  $("capture-region-reset-btn").style.display = "none";
-  $<HTMLButtonElement>("capture-take-btn").disabled = true;
-  setCaptureStep(2);
-  resetCustomScaleCache(); // 領域リセット時にスケール・列位置キャッシュもクリア
 }
 
 async function ensureCaptureOcrWorker() {
@@ -2493,24 +2375,12 @@ function takeCapture() {
   $("capture-preview-wrap").appendChild(flash);
   flash.addEventListener("animationend", () => flash.remove());
 
-  if (captureRegion) {
-    // 領域あり → キューに積んでバックグラウンドOCR
-    const dataUrl = canvas.toDataURL("image/png");
-    captureOcrQueue.push(dataUrl);
-    captureOcrTotalShots++;
-    captureOcrRegionSnapshot = { ...captureRegion };
-    updateCaptureStatus();
-    processCaptureOcrQueue();
-  } else {
-    // 領域なし → ファイルとして蓄積
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      const idx = captureFiles.length + 1;
-      const file = new File([blob], `capture-${idx}.png`, { type: "image/png" });
-      captureFiles.push(file);
-      updateCaptureStatus();
-    }, "image/png");
-  }
+  // キューに積んでバックグラウンドOCR（auto+PC予測グリッドパイプライン）
+  const dataUrl = canvas.toDataURL("image/png");
+  captureOcrQueue.push(dataUrl);
+  captureOcrTotalShots++;
+  updateCaptureStatus();
+  processCaptureOcrQueue();
 }
 
 async function processCaptureOcrQueue() {
@@ -2522,8 +2392,6 @@ async function processCaptureOcrQueue() {
 
     while (captureOcrQueue.length > 0) {
       const dataUrl = captureOcrQueue.shift()!;
-      const region = captureOcrRegionSnapshot;
-      if (!region) break;
 
       updateCaptureStatus();
 
@@ -2535,10 +2403,8 @@ async function processCaptureOcrQueue() {
           img.onerror = () => reject(new Error("Failed to load image"));
         });
 
-        const customOptions: OcrCustomOptions = {
-          platform: "pc",
-          region: { x: region.x, y: region.y, width: region.w, height: region.h },
-        };
+        // auto+PC: 予測グリッドパイプラインで処理（領域指定不要）
+        const customOptions: OcrCustomOptions = { platform: "pc" };
         const startId = uuidSeq + 1;
         const result = await processScreenshot(img, undefined, captureOcrWorker, customOptions, startId);
         uuidSeq += result.modules.length;
@@ -2563,19 +2429,16 @@ function updateCaptureStatus() {
   const total = captureOcrTotalShots;
   const pending = captureOcrQueue.length;
 
-  if (captureRegion && total > 0) {
+  if (total > 0) {
     const totalModules = captureOcrGroups.reduce((s, g) => s + g.modules.length, 0);
     el.textContent = fmt(t.ui.capture_result, { done, total, modules: totalModules });
-  } else if (captureFiles.length > 0) {
-    el.textContent = fmt(t.ui.capture_count, { count: captureFiles.length });
   } else {
     el.textContent = "";
   }
 
   // 未処理があれば編集ボタン無効
-  const hasDone = done > 0 || captureFiles.length > 0;
   const hasPending = pending > 0 || captureOcrProcessing;
-  $<HTMLButtonElement>("capture-done-btn").disabled = !hasDone || hasPending;
+  $<HTMLButtonElement>("capture-done-btn").disabled = done === 0 || hasPending;
 }
 
 async function finishCapture() {
@@ -2595,7 +2458,6 @@ async function finishCapture() {
   if (captureOcrGroups.length > 0) {
     const groups = [...captureOcrGroups];
     captureOcrGroups = [];
-    captureFiles = [];
     if (captureOcrWorker) {
       await captureOcrWorker.terminate();
       captureOcrWorker = null;
@@ -2603,12 +2465,6 @@ async function finishCapture() {
     $("capture-modal-bd").classList.remove("on");
     closeOcrSetupModal();
     openOcrConfirmationModal(groups);
-  } else if (captureFiles.length > 0) {
-    const files = [...captureFiles];
-    captureFiles = [];
-    $("capture-modal-bd").classList.remove("on");
-    $("ocr-setup-modal-bd").classList.add("on");
-    addOcrSetupFiles(files);
   }
 }
 
@@ -2670,12 +2526,6 @@ async function openCapturePipModal() {
 
   // モーダル要素をPiPウィンドウに移動
   pipWin.document.body.appendChild(modal);
-
-  // PiPウィンドウ内でリサイズ時に領域矩形を追従させる
-  const pipPreview = pipWin.document.getElementById("capture-preview-wrap");
-  if (pipPreview) {
-    new (pipWin as any).ResizeObserver(() => updateCaptureRegionRect()).observe(pipPreview);
-  }
 
   // PiPウィンドウが閉じられた時（ユーザーが×ボタンで閉じた場合）
   pipWin.addEventListener("pagehide", () => {
@@ -3488,10 +3338,6 @@ document.addEventListener("DOMContentLoaded", () => {
   $("capture-connect-btn").onclick = () => connectCapture();
   $("capture-take-btn").onclick = () => takeCapture();
   $("capture-done-btn").onclick = () => finishCapture();
-  $("capture-region-reset-btn").onclick = () => resetCaptureRegion();
-  initCaptureRegionDrag();
-  // リサイズ時に領域矩形を追従させる
-  new ResizeObserver(() => updateCaptureRegionRect()).observe($("capture-preview-wrap"));
 
   // OCR Region modal
   $("ocr-region-close").onclick = () => closeRegionModal();

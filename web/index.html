@@ -417,6 +417,13 @@
                   <span class="ocr-setup-radio-desc" data-i18n="ocr_setup_mode_custom_desc">領域やレアリティを指定して精度を向上</span>
                 </div>
               </label>
+              <label class="ocr-setup-radio" id="ocr-mode-predicted-label">
+                <input type="radio" name="ocr-mode" value="predictedGrid">
+                <div class="ocr-setup-radio-body">
+                  <span class="ocr-setup-radio-title">テストモード（予測グリッド）</span>
+                  <span class="ocr-setup-radio-desc">領域選択不要。画像サイズから列位置を自動計算</span>
+                </div>
+              </label>
             </div>
           </div>
           <div class="ocr-setup-custom-panel" id="ocr-setup-custom-panel">
@@ -461,8 +468,6 @@
         </div>
         <div class="capture-preview-wrap" id="capture-preview-wrap">
           <video id="capture-video" autoplay playsinline></video>
-          <div class="capture-selection-overlay" id="capture-selection-overlay"></div>
-          <div class="capture-region-rect" id="capture-region-rect"></div>
           <div class="capture-placeholder" id="capture-placeholder">
             <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
             <span data-i18n="capture_not_connected">接続されていません</span>
@@ -481,14 +486,6 @@
           </div>
           <div class="capture-step" id="capture-step-2">
             <span class="capture-step-num">2</span>
-            <div class="capture-step-content">
-              <span class="capture-step-text" data-i18n="capture_step2">プレビュー上でモジュール一覧の範囲をドラッグして選択</span>
-              <button class="addbtn capture-step-btn" id="capture-region-reset-btn" style="display:none" data-i18n="capture_region_reset">領域リセット</button>
-              <p class="capture-privacy" data-i18n="capture_region_hint">領域はモジュール一覧にできるだけ合わせると認識精度が上がります。</p>
-            </div>
-          </div>
-          <div class="capture-step" id="capture-step-3">
-            <span class="capture-step-num">3</span>
             <div class="capture-step-content">
               <span class="capture-step-text" data-i18n="capture_step3">ゲーム画面でモジュール一覧を表示して撮影</span>
             </div>
