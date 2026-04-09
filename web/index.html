@@ -398,55 +398,6 @@
                 <span class="ocr-setup-radio-title" data-i18n="ocr_setup_platform_pc">PC版</span>
               </label>
             </div>
-            <p class="ocr-setup-pc-auto-warn" id="ocr-setup-pc-auto-warn" data-i18n="ocr_setup_pc_auto_warn"></p>
-          </div>
-          <div class="ocr-setup-section">
-            <div class="ocr-setup-label" data-i18n="ocr_setup_mode">取込モード</div>
-            <div class="ocr-setup-radios">
-              <label class="ocr-setup-radio">
-                <input type="radio" name="ocr-mode" value="auto" checked>
-                <div class="ocr-setup-radio-body">
-                  <span class="ocr-setup-radio-title" data-i18n="ocr_setup_mode_auto">autoモード</span>
-                  <span class="ocr-setup-radio-desc" data-i18n="ocr_setup_mode_auto_desc">画像をそのまま自動解析します</span>
-                </div>
-              </label>
-              <label class="ocr-setup-radio">
-                <input type="radio" name="ocr-mode" value="custom">
-                <div class="ocr-setup-radio-body">
-                  <span class="ocr-setup-radio-title" data-i18n="ocr_setup_mode_custom">精密モード</span>
-                  <span class="ocr-setup-radio-desc" data-i18n="ocr_setup_mode_custom_desc">領域やレアリティを指定して精度を向上</span>
-                </div>
-              </label>
-              <label class="ocr-setup-radio" id="ocr-mode-predicted-label">
-                <input type="radio" name="ocr-mode" value="predictedGrid">
-                <div class="ocr-setup-radio-body">
-                  <span class="ocr-setup-radio-title">テストモード（予測グリッド）</span>
-                  <span class="ocr-setup-radio-desc">領域選択不要。画像サイズから列位置を自動計算</span>
-                </div>
-              </label>
-            </div>
-          </div>
-          <div class="ocr-setup-custom-panel" id="ocr-setup-custom-panel">
-            <div class="ocr-setup-section">
-              <span class="ocr-setup-filter-label"><span data-i18n="ocr_setup_region">領域選択</span><span class="ocr-required">*</span></span>
-              <p class="capture-privacy" data-i18n="ocr_region_hint_accuracy">領域はモジュール一覧にできるだけ合わせると認識精度が上がります。</p>
-              <div class="ocr-setup-filter-group">
-                <button class="addbtn ocr-setup-region-btn" id="ocr-setup-region-btn" type="button" data-i18n="ocr_setup_region_btn">選択</button>
-              </div>
-            </div>
-            <div class="ocr-setup-section">
-              <div class="ocr-setup-label" data-i18n="ocr_setup_custom_heading">画像に含まれている項目</div>
-              <div class="ocr-setup-custom-row">
-                <div class="ocr-setup-filter-group">
-                  <span class="ocr-setup-filter-label" data-i18n="ocr_setup_rarity">レアリティ</span>
-                  <button class="opt-multi-btn" id="ocr-setup-rarity-btn" type="button" data-i18n="filter_none">未選択</button>
-                </div>
-                <div class="ocr-setup-filter-group">
-                  <span class="ocr-setup-filter-label" data-i18n="ocr_setup_type">型</span>
-                  <button class="opt-multi-btn" id="ocr-setup-type-btn" type="button" data-i18n="filter_none">未選択</button>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -501,41 +452,7 @@
       </div>
     </div>
 
-    <!-- OCR Region Modal -->
-    <div class="modal-bd" id="ocr-region-modal-bd">
-      <div class="modal modal--form ocr-region-modal">
-        <div class="modal-head">
-          <span class="modal-title" data-i18n="ocr_region_title">読取領域の設定</span>
-          <button class="modal-close" id="ocr-region-close">&times;</button>
-        </div>
-        <div class="modal-body ocr-region-body">
-          <p class="ocr-region-hint" data-i18n="ocr_region_hint">モジュール一覧の範囲をドラッグで選択してください</p>
-          <div class="ocr-region-cropper-wrap" id="ocr-region-cropper-wrap">
-            <img id="ocr-region-img" alt="">
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="addbtn" id="ocr-region-cancel" data-i18n="btn_cancel">キャンセル</button>
-          <button class="opt-run-btn" id="ocr-region-confirm" data-i18n="ocr_region_confirm">確定</button>
-        </div>
-      </div>
-    </div>
 
-    <!-- OCR Region Preview Modal -->
-    <div class="modal-bd" id="ocr-region-preview-bd">
-      <div class="modal modal--info ocr-region-preview-modal">
-        <div class="modal-head">
-          <span class="modal-title" data-i18n="ocr_region_preview_title">切り取りプレビュー</span>
-          <button class="modal-close" id="ocr-region-preview-close">&times;</button>
-        </div>
-        <div class="modal-body ocr-region-preview-body">
-          <img id="ocr-region-preview-img" alt="">
-        </div>
-        <div class="modal-footer">
-          <button class="opt-run-btn" id="ocr-region-preview-ok">OK</button>
-        </div>
-      </div>
-    </div>
 
     <!-- License Modal -->
     <div class="modal-bd" id="license-modal-bd">

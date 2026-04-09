@@ -5,7 +5,7 @@ import type {
   Combination, CombinationModule, ModuleInput, OptimizeRequest,
   OptimizeResponse, StatEntry, StatTotal,
 } from "@shared/types";
-import { processScreenshot, resetCustomScaleCache, type OcrCustomOptions, type RowPosition } from "./ocr";
+import { processScreenshot, type OcrCustomOptions, type RowPosition } from "./ocr";
 import {
   saveOcrGroups, loadOcrGroups, deleteOcrGroups, hasOcrGroups,
   type OcrGroup,
@@ -14,7 +14,6 @@ import {
   t, fmt, statName, applyI18n, initLang, saveLang, getSavedLang,
   JA, migrateStatNamesToIds,
 } from "./i18n";
-import Cropper from "cropperjs";
 
 // --- Helpers ---
 const $ = <T extends HTMLElement>(id: string) =>
@@ -2006,22 +2005,12 @@ function startNewImport() {
 // ========== OCR Setup Modal ==========
 
 let ocrSetupFiles: File[] = [];
-let ocrSetupSelectedRarities: number[] = [];
-let ocrSetupSelectedTypes: number[] = [];
-let ocrSetupRegion: { x: number; y: number; width: number; height: number } | null = null;
 
 function openOcrSetupModal() {
   ocrSetupFiles = [];
-  ocrSetupSelectedRarities = [];
-  ocrSetupSelectedTypes = [];
-  ocrSetupRegion = null;
-  // ラジオボタンをリセット
-  const autoRadio = document.querySelector<HTMLInputElement>('input[name="ocr-mode"][value="auto"]');
-  if (autoRadio) autoRadio.checked = true;
+  // プラットフォーム選択をリセット
   const mobileRadio = document.querySelector<HTMLInputElement>('input[name="ocr-platform"][value="mobile"]');
   if (mobileRadio) mobileRadio.checked = true;
-  updateOcrSetupCustomPanel();
-  updateOcrSetupBtnLabels();
   renderOcrSetupFileList();
   $<HTMLButtonElement>("ocr-setup-start").disabled = true;
   $("ocr-setup-modal-bd").classList.add("on");
@@ -2032,72 +2021,12 @@ function closeOcrSetupModal() {
   ocrSetupFiles = [];
 }
 
-function updateOcrSetupCustomPanel() {
-  const mode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value ?? "auto";
-  const panel = $("ocr-setup-custom-panel");
-  if (mode === "custom") {
-    panel.classList.add("on");
-  } else {
-    panel.classList.remove("on");
-  }
-  updatePcAutoWarn();
-  updateOcrSetupStartBtn();
-}
-
-function updatePcAutoWarn() {
-  const platform = document.querySelector<HTMLInputElement>('input[name="ocr-platform"]:checked')?.value ?? "mobile";
-  const mode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value ?? "auto";
-  // PC autoモードは予測グリッドパイプラインを使用するため警告不要
-  const warn = $("ocr-setup-pc-auto-warn");
-  warn.classList.remove("on");
-  // テストモード（予測グリッド）はモバイル専用: PC選択時は非表示
-  const predictedLabel = document.getElementById("ocr-mode-predicted-label");
-  if (predictedLabel) {
-    predictedLabel.style.display = platform === "pc" ? "none" : "";
-    // PC選択中にテストモードが選ばれていた場合、autoに戻す
-    if (platform === "pc" && mode === "predictedGrid") {
-      const autoRadio = document.querySelector<HTMLInputElement>('input[name="ocr-mode"][value="auto"]');
-      if (autoRadio) autoRadio.checked = true;
-      updateOcrSetupCustomPanel();
-    }
-  }
-}
-
-function updateOcrSetupBtnLabels() {
-  const rarBtn = $("ocr-setup-rarity-btn");
-  rarBtn.textContent = ocrSetupSelectedRarities.length > 0
-    ? fmt(t.ui.filter_count, { count: ocrSetupSelectedRarities.length })
-    : t.ui.filter_none;
-  rarBtn.classList.toggle("has-items", ocrSetupSelectedRarities.length > 0);
-
-  const typeBtn = $("ocr-setup-type-btn");
-  typeBtn.textContent = ocrSetupSelectedTypes.length > 0
-    ? fmt(t.ui.filter_count, { count: ocrSetupSelectedTypes.length })
-    : t.ui.filter_none;
-  typeBtn.classList.toggle("has-items", ocrSetupSelectedTypes.length > 0);
-
-  const regionBtn = $("ocr-setup-region-btn");
-  if (ocrSetupRegion) {
-    regionBtn.textContent = t.ui.ocr_region_set;
-    regionBtn.classList.add("has-items");
-  } else {
-    regionBtn.textContent = t.ui.ocr_setup_region_btn;
-    regionBtn.classList.remove("has-items");
-  }
-}
-
 function addOcrSetupFiles(files: FileList | File[]) {
   for (const f of files) {
     if (f.type.startsWith("image/")) ocrSetupFiles.push(f);
   }
   renderOcrSetupFileList();
-  updateOcrSetupStartBtn();
-}
-
-function updateOcrSetupStartBtn() {
-  const mode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value ?? "auto";
-  const needsRegion = mode === "custom" && !ocrSetupRegion;
-  $<HTMLButtonElement>("ocr-setup-start").disabled = ocrSetupFiles.length === 0 || needsRegion;
+  $<HTMLButtonElement>("ocr-setup-start").disabled = ocrSetupFiles.length === 0;
 }
 
 function renderOcrSetupFileList() {
@@ -2109,86 +2038,14 @@ function renderOcrSetupFileList() {
   }
 }
 
-function openOcrSetupFlyout(anchor: HTMLElement, category: "rarity" | "type") {
-  if (category === "rarity") {
-    openFlyout(anchor, {
-      mode: "multi",
-      items: [3, 4].map((val) => ({
-        value: String(val),
-        label: ({ 3: t.rarity.purple, 4: t.rarity.gold } as Record<number, string>)[val] ?? String(val),
-        checked: ocrSetupSelectedRarities.includes(val),
-      })),
-      onCheck: (value, checked) => {
-        const val = Number(value);
-        if (checked) ocrSetupSelectedRarities.push(val);
-        else { const idx = ocrSetupSelectedRarities.indexOf(val); if (idx >= 0) ocrSetupSelectedRarities.splice(idx, 1); }
-        updateOcrSetupBtnLabels();
-      },
-    });
-  } else {
-    openFlyout(anchor, {
-      mode: "multi",
-      items: MODULE_TYPE_PREFIXES.map((p) => ({
-        value: String(p),
-        label: t.module_types[String(p)] ?? "",
-        checked: ocrSetupSelectedTypes.includes(p),
-      })),
-      onCheck: (value, checked) => {
-        const val = Number(value);
-        if (checked) ocrSetupSelectedTypes.push(val);
-        else { const idx = ocrSetupSelectedTypes.indexOf(val); if (idx >= 0) ocrSetupSelectedTypes.splice(idx, 1); }
-        updateOcrSetupBtnLabels();
-      },
-    });
-  }
-}
-
-// MODULE_TYPE_PREFIXES → type名変換
-const PREFIX_TO_TYPE_NAME: Record<number, string> = {
-  55001: "attack",
-  55002: "device",
-  55003: "protect",
-};
-
 async function startOcrFromSetup() {
   const files = ocrSetupFiles;
   if (files.length === 0) return;
 
-  // OCRモード・プラットフォーム取得
-  const mode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value ?? "auto";
+  // プラットフォーム取得
   let customOptions: OcrCustomOptions | undefined;
   const platform = document.querySelector<HTMLInputElement>('input[name="ocr-platform"]:checked')?.value as "mobile" | "pc" | undefined;
-  if (mode === "predictedGrid") {
-    // テストモード（予測グリッド）: 領域選択不要、選択中のプラットフォームを使用
-    customOptions = {
-      platform: platform ?? "mobile",
-      predictedGrid: true,
-    };
-    if (ocrSetupSelectedRarities.length > 0) {
-      customOptions.rarities = [...ocrSetupSelectedRarities];
-    }
-    if (ocrSetupSelectedTypes.length > 0) {
-      customOptions.typeNames = ocrSetupSelectedTypes
-        .map((p) => PREFIX_TO_TYPE_NAME[p])
-        .filter((n): n is string => !!n);
-    }
-  } else if (mode === "custom") {
-    customOptions = {
-      platform: platform ?? "mobile",
-    };
-    if (ocrSetupRegion) {
-      customOptions.region = { ...ocrSetupRegion };
-    }
-    if (ocrSetupSelectedRarities.length > 0) {
-      customOptions.rarities = [...ocrSetupSelectedRarities];
-    }
-    if (ocrSetupSelectedTypes.length > 0) {
-      customOptions.typeNames = ocrSetupSelectedTypes
-        .map((p) => PREFIX_TO_TYPE_NAME[p])
-        .filter((n): n is string => !!n);
-    }
-  } else if (platform === "pc") {
-    // autoモードでもPC選択時はplatform情報を渡す（regionなし → autoパイプラインに入る）
+  if (platform === "pc") {
     customOptions = { platform: "pc" };
   }
 
@@ -2208,7 +2065,6 @@ async function startOcrFromSetup() {
   progress.textContent = fmt(t.ui.ocr_progress, { current: 0, total });
   progress.style.display = "";
 
-  resetCustomScaleCache();
   let ocrWorker: any = null;
   try {
     const { createWorker } = await import("tesseract.js");
@@ -2538,85 +2394,6 @@ async function openCapturePipModal() {
   }, { once: true });
 }
 
-// ========== OCR Region Selection ==========
-
-let regionCropper: Cropper | null = null;
-
-function openRegionModal() {
-  if (ocrSetupFiles.length === 0) {
-    showToast(t.ui.ocr_region_no_image, "error");
-    return;
-  }
-  const file = ocrSetupFiles[0];
-  const img = $<HTMLImageElement>("ocr-region-img");
-  const url = URL.createObjectURL(file);
-  img.onload = () => {
-    $("ocr-region-modal-bd").classList.add("on");
-    requestAnimationFrame(() => {
-      if (regionCropper) { regionCropper.destroy(); regionCropper = null; }
-      regionCropper = new Cropper(img, {
-        container: $("ocr-region-cropper-wrap"),
-        template: `<cropper-canvas background>
-          <cropper-image scalable translatable></cropper-image>
-          <cropper-shade hidden></cropper-shade>
-          <cropper-handle action="move" plain></cropper-handle>
-          <cropper-selection movable resizable initial-coverage="0.5">
-            <cropper-grid role="grid" bordered covered></cropper-grid>
-            <cropper-crosshair centered></cropper-crosshair>
-            <cropper-handle action="move" theme-color="rgba(255,255,255,0.35)"></cropper-handle>
-            <cropper-handle action="n-resize"></cropper-handle>
-            <cropper-handle action="e-resize"></cropper-handle>
-            <cropper-handle action="s-resize"></cropper-handle>
-            <cropper-handle action="w-resize"></cropper-handle>
-            <cropper-handle action="ne-resize"></cropper-handle>
-            <cropper-handle action="nw-resize"></cropper-handle>
-            <cropper-handle action="se-resize"></cropper-handle>
-            <cropper-handle action="sw-resize"></cropper-handle>
-          </cropper-selection>
-        </cropper-canvas>`,
-      });
-    });
-  };
-  img.src = url;
-}
-
-function closeRegionModal() {
-  if (regionCropper) { regionCropper.destroy(); regionCropper = null; }
-  const img = $<HTMLImageElement>("ocr-region-img");
-  if (img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
-  img.src = "";
-  $("ocr-region-modal-bd").classList.remove("on");
-}
-
-async function confirmRegion() {
-  if (!regionCropper) return;
-  const selection = regionCropper.getCropperSelection();
-  const image = regionCropper.getCropperImage();
-  if (!selection || !image) return;
-
-  // 表示座標を元画像のピクセル座標に変換
-  // CSS transform-origin はデフォルトの 50% 50%（画像中心）なので
-  // canvas座標 = a * (img座標 - ox) + e + ox の逆変換が必要
-  const [a, , , d, e, f] = image.$getTransform();
-  const imgEl = $<HTMLImageElement>("ocr-region-img");
-  const ox = imgEl.naturalWidth / 2;
-  const oy = imgEl.naturalHeight / 2;
-  ocrSetupRegion = {
-    x: Math.round((selection.x - e - ox) / a + ox),
-    y: Math.round((selection.y - f - oy) / d + oy),
-    width: Math.round(selection.width / a),
-    height: Math.round(selection.height / d),
-  };
-
-
-  closeRegionModal();
-  updateOcrSetupBtnLabels();
-  updateOcrSetupStartBtn();
-}
-
-function closeRegionPreview() {
-  $("ocr-region-preview-bd").classList.remove("on");
-}
 
 // ========== License Modal ==========
 
@@ -3277,16 +3054,6 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ocr-setup-cancel").onclick = () => closeOcrSetupModal();
   $("ocr-setup-start").onclick = () => startOcrFromSetup();
   $("ocr-setup-modal-bd").onclick = (e) => { if (e.target === $("ocr-setup-modal-bd")) closeOcrSetupModal(); };
-  document.querySelectorAll<HTMLInputElement>('input[name="ocr-mode"]').forEach((radio) => {
-    radio.onchange = () => updateOcrSetupCustomPanel();
-  });
-  document.querySelectorAll<HTMLInputElement>('input[name="ocr-platform"]').forEach((radio) => {
-    radio.onchange = () => updatePcAutoWarn();
-  });
-  $("ocr-setup-rarity-btn").onclick = (e) => openOcrSetupFlyout(e.currentTarget as HTMLElement, "rarity");
-  $("ocr-setup-type-btn").onclick = (e) => openOcrSetupFlyout(e.currentTarget as HTMLElement, "type");
-  $("ocr-setup-region-btn").onclick = () => openRegionModal();
-
   // Dropzone
   const dropzone = $("ocr-setup-dropzone");
   dropzone.onclick = () => {
@@ -3338,17 +3105,6 @@ document.addEventListener("DOMContentLoaded", () => {
   $("capture-connect-btn").onclick = () => connectCapture();
   $("capture-take-btn").onclick = () => takeCapture();
   $("capture-done-btn").onclick = () => finishCapture();
-
-  // OCR Region modal
-  $("ocr-region-close").onclick = () => closeRegionModal();
-  $("ocr-region-cancel").onclick = () => closeRegionModal();
-  $("ocr-region-confirm").onclick = () => confirmRegion();
-  $("ocr-region-modal-bd").onclick = (e) => { if (e.target === $("ocr-region-modal-bd")) closeRegionModal(); };
-
-  // OCR Region Preview modal
-  $("ocr-region-preview-close").onclick = () => closeRegionPreview();
-  $("ocr-region-preview-ok").onclick = () => closeRegionPreview();
-  $("ocr-region-preview-bd").onclick = (e) => { if (e.target === $("ocr-region-preview-bd")) closeRegionPreview(); };
 
   // License modal
   $("btn-licenses").onclick = () => { closeSidebar(); showLicenseModal(); };
