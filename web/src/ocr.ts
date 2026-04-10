@@ -3,6 +3,8 @@ import type { ModuleInput, StatEntry } from "@shared/types";
 
 export interface OcrCustomOptions {
   platform: "mobile" | "pc";
+  filterRarities?: number[];   // rarity値 (2=青, 3=紫, 4=金A, 5=金B)
+  filterTypes?: string[];      // 型名 ("attack" | "device" | "protect")
 }
 
 // 極系ステータス (partId 2xxx) — 真ん中・右の列では出現しない
@@ -478,7 +480,7 @@ async function ocrNumbersForRow(
     }
     const val = parseInt(match[1], 10);
     return {
-      value: val >= 1 && val <= 20 ? val : 0,
+      value: val >= 1 && val <= 10 ? val : 0,
       hadPlus: match[0].startsWith("+"),
       rawText: text,
       normalized,
@@ -501,7 +503,8 @@ async function ocrNumbersForRow(
   ): HTMLCanvasElement => {
     ocrCanvas.width = cropW * upscale;
     ocrCanvas.height = cropH * upscale;
-    ocrCtx.imageSmoothingEnabled = false;
+    ocrCtx.imageSmoothingEnabled = true;
+    ocrCtx.imageSmoothingQuality = "high";
     ocrCtx.drawImage(
       sourceCanvas,
       cropX,
@@ -679,7 +682,11 @@ async function ocrNumbersForRow(
         { threshold: null, upscale: 5, mode: "gray" as const },
       ];
 
-      for (let cropIndex = 0; cropIndex < cropVariants.length; cropIndex++) {
+      // 「+」付き結果を優先し、「+」なし結果はフォールバックとして保持
+      let fallback: { value: number; debug: OcrDebugInfo } | null = null;
+      let confirmed = false;
+
+      for (let cropIndex = 0; cropIndex < cropVariants.length && !confirmed; cropIndex++) {
         const crop = cropVariants[cropIndex];
         for (const attempt of attempts) {
           const ocrInput = buildOcrCanvas(
@@ -694,8 +701,7 @@ async function ocrNumbersForRow(
           const { data } = await worker.recognize(ocrInput);
           const extracted = extractValue(data.text);
           if (extracted.value > 0) {
-            stat.value = extracted.value;
-            (stat as OcrResult)._ocrDebug = {
+            const debug: OcrDebugInfo = {
               hadPlus: extracted.hadPlus,
               rawText: extracted.rawText,
               normalized: extracted.normalized,
@@ -705,10 +711,24 @@ async function ocrNumbersForRow(
               threshold: attempt.threshold,
               upscale: attempt.upscale,
             };
-            break;
+            if (extracted.hadPlus) {
+              // 「+」付き → 高信頼、即採用
+              stat.value = extracted.value;
+              (stat as OcrResult)._ocrDebug = debug;
+              confirmed = true;
+              break;
+            } else if (!fallback) {
+              // 「+」なし → フォールバックとして保持し、残りのパターンも試す
+              fallback = { value: extracted.value, debug };
+            }
           }
         }
-        if (stat.value > 0) break;
+      }
+
+      // 「+」付き結果が見つからなかった場合、フォールバックを採用
+      if (!confirmed && fallback) {
+        stat.value = fallback.value;
+        (stat as OcrResult)._ocrDebug = fallback.debug;
       }
     } catch {
       // OCR失敗
@@ -1682,23 +1702,15 @@ async function processPredictedGridMode(
 ): Promise<ProcessScreenshotResult> {
   const { scale, iconSize, colXs, yMin, yMax } = predicted;
 
-  console.log(`[predictedGrid] base=${predicted.base.toFixed(0)} scale=${scale.toFixed(4)} icon=${iconSize}`);
-  console.log(`[predictedGrid] colXs=[${colXs.join(",")}] yRange=${yMin}〜${yMax}`);
-  const _t: Record<string, number> = {};
-  const _tick = (label: string) => { _t[label] = performance.now(); };
-  _tick("start");
-
   // Step 1: 行検出（Y範囲制限つき、列位置は計算済み）
   onProgress?.({ stage: "行検出中（予測グリッド）...", percent: 25 });
   const rowYs = predictedGridDetectRows(grayEq1x, colXs, iconSize, scale, yMin, yMax, cv).map(r => r.y);
-  _tick("rowDetect");
   if (rowYs.length === 0) {
     console.warn("[predictedGrid] 行検出失敗");
     gray.delete(); grayEq1x.delete(); _grayCl1x.delete(); colorMat1x.delete();
     canvas.width = 0; canvas.height = 0;
     return { modules: [], rowPositions: [] };
   }
-  console.log(`[predictedGrid] ${rowYs.length}行検出`);
 
   // Step 2: アップスケール
   const upscale = Math.max(2, Math.round(50 / iconSize));
@@ -1720,8 +1732,6 @@ async function processPredictedGridMode(
   // 1x画像は不要なので解放
   grayEq1x.delete();
   _grayCl1x.delete();
-  _tick("upscale");
-
   // Step 3: ステータス分類（カラーマッチング）
   onProgress?.({ stage: "ステータスアイコン分類中...", percent: 45 });
   const rows: ModuleRow[] = [];
@@ -1759,13 +1769,14 @@ async function processPredictedGridMode(
     rows.push({ y: ry, stats });
     await new Promise<void>((r) => setTimeout(r, 0));
   }
-  _tick("statClassify");
-
   // Step 4: モジュールアイコン分類（予測座標で最小探索 → スコア低時のみ広域フォールバック）
   onProgress?.({ stage: "モジュールアイコン検出中...", percent: 55 });
   const moduleScale = scaledScale * 0.675;
   const predictedModuleX = predicted.moduleIconX * upscale;
   const MODULE_ICON_RETRY_THRESHOLD = 0.70;
+
+  const ocrFilterRarities = customOptions?.filterRarities;
+  const ocrFilterTypes = customOptions?.filterTypes;
 
   const moduleIcons: (ModuleIconMatch | null)[] = [];
   for (let ri = 0; ri < scaledRowYs.length; ri++) {
@@ -1773,6 +1784,7 @@ async function processPredictedGridMode(
     let result = classifyModuleIconAtPoint(
       colorMatUp, predictedModuleX, scaledRowYs[ri],
       moduleScale, cv,
+      ocrFilterRarities, ocrFilterTypes,
     );
 
     // Step4-2: スコアが低い場合、広域探索にフォールバック
@@ -1780,6 +1792,7 @@ async function processPredictedGridMode(
       const widerResult = classifyModuleIconByColor(
         colorMatUp, predictedModuleX, scaledRowYs[ri],
         moduleScale, cv,
+        ocrFilterRarities, ocrFilterTypes,
       );
       if (widerResult && (!result || widerResult.score > result.score)) {
         result = widerResult;
@@ -1789,8 +1802,6 @@ async function processPredictedGridMode(
     moduleIcons.push(result);
     await new Promise((r) => setTimeout(r, 0));
   }
-  _tick("moduleIcon");
-
   colorMatUp.delete();
   colorMat1x.delete();
 
@@ -1867,17 +1878,6 @@ async function processPredictedGridMode(
       await worker.terminate();
     }
   }
-
-  _tick("ocr");
-
-  // 計測ログ出力
-  const _keys = Object.keys(_t);
-  const _lines: string[] = [];
-  for (let i = 1; i < _keys.length; i++) {
-    _lines.push(`  ${_keys[i]}: ${(_t[_keys[i]] - _t[_keys[i - 1]]).toFixed(0)}ms`);
-  }
-  _lines.push(`  合計: ${(_t[_keys[_keys.length - 1]] - _t[_keys[0]]).toFixed(0)}ms`);
-  console.log(`[predictedGrid] 処理時間:\n${_lines.join("\n")}`);
 
   onProgress?.({ stage: "完了", percent: 100 });
   return { modules, rowPositions };
@@ -1986,8 +1986,6 @@ export async function processScreenshot(
         yMax,
         platform: "mobile",
       };
-
-      console.log(`[mobileAuto] アイコン検出: ${iconHits.length}ヒット, ${colXs.length}列 [${colXs.map(x => x.toFixed(0)).join(",")}] gap=${gap.toFixed(1)} moduleX=${moduleIconX}`);
 
       const { pGray, pGrayEq, pColorMat, predictedCropWidth } = preparePredictedCanvas(predicted);
       const pGrayCl = new cv.Mat();

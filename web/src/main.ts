@@ -66,6 +66,7 @@ interface FlyoutItem {
   selected?: boolean;
   disabled?: boolean;
   checked?: boolean;
+  buildContent?: () => HTMLElement;
 }
 
 interface FlyoutSection {
@@ -107,16 +108,20 @@ function openFlyout(anchor: HTMLElement, opts: FlyoutOptions) {
         };
       }
       el.appendChild(cb);
-      if (it.icon) {
-        const img = document.createElement("img");
-        img.className = "sicon";
-        img.src = it.icon;
-        img.alt = "";
-        el.appendChild(img);
+      if (it.buildContent) {
+        el.appendChild(it.buildContent());
+      } else {
+        if (it.icon) {
+          const img = document.createElement("img");
+          img.className = "sicon";
+          img.src = it.icon;
+          img.alt = "";
+          el.appendChild(img);
+        }
+        const span = document.createElement("span");
+        span.textContent = it.label;
+        el.appendChild(span);
       }
-      const span = document.createElement("span");
-      span.textContent = it.label;
-      el.appendChild(span);
       fl.appendChild(el);
     } else {
       const el = document.createElement("div");
@@ -274,6 +279,25 @@ function moduleIconHtml(configId: number | null): string {
     <img class="mod-icon-bg" src="/icons/rarity${info.bgRarity}.png" alt="">
     <img class="mod-icon-fg" src="/icons/${info.icon}" alt="">
   </div>`;
+}
+
+/** モジュールアイコンのDOM要素を構築する（フライアウト内チェックボックス用） */
+function buildModuleIconEl(bgRarity: number, iconFile: string, size: number = 24): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "mod-icon-wrap";
+  wrap.style.width = size + "px";
+  wrap.style.height = size + "px";
+  const bg = document.createElement("img");
+  bg.className = "mod-icon-bg";
+  bg.src = `/icons/rarity${bgRarity}.png`;
+  bg.alt = "";
+  const fg = document.createElement("img");
+  fg.className = "mod-icon-fg";
+  fg.src = `/icons/${iconFile}`;
+  fg.alt = "";
+  wrap.appendChild(bg);
+  wrap.appendChild(fg);
+  return wrap;
 }
 
 function configIdToComponents(configId: number | null): { typeDigit: number; raritySub: number } | null {
@@ -2006,11 +2030,112 @@ function startNewImport() {
 
 let ocrSetupFiles: File[] = [];
 
+// OCRフィルター状態（モーダルを開くたびにリセット）
+let ocrSetupFilterRarities: number[] = [];  // rarity値: 2=青, 3=紫, 4=金A, 5=金B
+let ocrSetupFilterTypes: string[] = [];     // "attack" | "device" | "protect"
+
+/** レアリティフィルターの定義（rarity値, i18nキー, アイコンファイル, 背景rarity） */
+const OCR_RARITY_OPTIONS: { rarity: number; key: string; icon: string; bgRarity: number }[] = [
+  { rarity: 2, key: "rarity_sub_blue",   icon: "item_mod_attack2.png", bgRarity: 2 },
+  { rarity: 3, key: "rarity_sub_purple", icon: "item_mod_attack3.png", bgRarity: 3 },
+  { rarity: 4, key: "rarity_sub_gold_a", icon: "item_mod_attack4.png", bgRarity: 4 },
+  { rarity: 5, key: "rarity_sub_gold_b", icon: "item_mod_attack5.png", bgRarity: 4 },
+];
+
+/** 型フィルターの定義（型名, プレフィックス, アイコンファイル） */
+const OCR_TYPE_OPTIONS: { type: string; prefix: number; icon: string }[] = [
+  { type: "attack",  prefix: 55001, icon: "item_mod_attack4.png" },
+  { type: "device",  prefix: 55002, icon: "item_mod_device4.png" },
+  { type: "protect", prefix: 55003, icon: "item_mod_protect4.png" },
+];
+
+function updateOcrFilterBtn(btnId: string, count: number) {
+  const btn = $<HTMLButtonElement>(btnId);
+  if (count === 0) {
+    btn.textContent = t.ui.filter_none;
+    btn.classList.remove("has-items");
+  } else {
+    btn.textContent = fmt(t.ui.filter_count, { count });
+    btn.classList.add("has-items");
+  }
+}
+
+function updateOcrRarityFilterBtn() {
+  updateOcrFilterBtn("ocr-filter-rarity", ocrSetupFilterRarities.length);
+}
+
+function updateOcrTypeFilterBtn() {
+  updateOcrFilterBtn("ocr-filter-type", ocrSetupFilterTypes.length);
+}
+
+function openOcrRarityFlyout(anchor: HTMLElement) {
+  openFlyout(anchor, {
+    mode: "multi",
+    items: OCR_RARITY_OPTIONS.map((opt) => ({
+      value: String(opt.rarity),
+      label: t.ui[opt.key],
+      checked: ocrSetupFilterRarities.includes(opt.rarity),
+      buildContent: () => {
+        const frag = document.createElement("span");
+        frag.className = "fitem-check-content";
+        frag.appendChild(buildModuleIconEl(opt.bgRarity, opt.icon));
+        const span = document.createElement("span");
+        span.textContent = t.ui[opt.key];
+        frag.appendChild(span);
+        return frag;
+      },
+    })),
+    onCheck: (value, checked) => {
+      const r = Number(value);
+      if (checked) ocrSetupFilterRarities.push(r);
+      else {
+        const idx = ocrSetupFilterRarities.indexOf(r);
+        if (idx >= 0) ocrSetupFilterRarities.splice(idx, 1);
+      }
+      updateOcrRarityFilterBtn();
+    },
+  });
+}
+
+function openOcrTypeFlyout(anchor: HTMLElement) {
+  openFlyout(anchor, {
+    mode: "multi",
+    items: OCR_TYPE_OPTIONS.map((opt) => ({
+      value: opt.type,
+      label: t.module_types[String(opt.prefix)] ?? "",
+      checked: ocrSetupFilterTypes.includes(opt.type),
+      buildContent: () => {
+        const frag = document.createElement("span");
+        frag.className = "fitem-check-content";
+        frag.appendChild(buildModuleIconEl(4, opt.icon));
+        const span = document.createElement("span");
+        span.textContent = t.module_types[String(opt.prefix)] ?? "";
+        frag.appendChild(span);
+        return frag;
+      },
+    })),
+    onCheck: (value, checked) => {
+      if (checked) ocrSetupFilterTypes.push(value);
+      else {
+        const idx = ocrSetupFilterTypes.indexOf(value);
+        if (idx >= 0) ocrSetupFilterTypes.splice(idx, 1);
+      }
+      updateOcrTypeFilterBtn();
+    },
+  });
+}
+
 function openOcrSetupModal() {
   ocrSetupFiles = [];
+  // フィルター状態をリセット
+  ocrSetupFilterRarities = [];
+  ocrSetupFilterTypes = [];
   // プラットフォーム選択をリセット
   const mobileRadio = document.querySelector<HTMLInputElement>('input[name="ocr-platform"][value="mobile"]');
   if (mobileRadio) mobileRadio.checked = true;
+  // フィルターボタンのラベルをリセット
+  updateOcrRarityFilterBtn();
+  updateOcrTypeFilterBtn();
   renderOcrSetupFileList();
   $<HTMLButtonElement>("ocr-setup-start").disabled = true;
   $("ocr-setup-modal-bd").classList.add("on");
@@ -2042,12 +2167,13 @@ async function startOcrFromSetup() {
   const files = ocrSetupFiles;
   if (files.length === 0) return;
 
-  // プラットフォーム取得
-  let customOptions: OcrCustomOptions | undefined;
-  const platform = document.querySelector<HTMLInputElement>('input[name="ocr-platform"]:checked')?.value as "mobile" | "pc" | undefined;
-  if (platform === "pc") {
-    customOptions = { platform: "pc" };
-  }
+  // プラットフォーム・フィルター取得
+  const platform = (document.querySelector<HTMLInputElement>('input[name="ocr-platform"]:checked')?.value ?? "mobile") as "mobile" | "pc";
+  const customOptions: OcrCustomOptions = {
+    platform,
+    filterRarities: ocrSetupFilterRarities.length > 0 ? [...ocrSetupFilterRarities] : undefined,
+    filterTypes: ocrSetupFilterTypes.length > 0 ? [...ocrSetupFilterTypes] : undefined,
+  };
 
   closeOcrSetupModal();
 
@@ -2639,12 +2765,12 @@ document.addEventListener("gesturechange", (e) => e.preventDefault(), { passive:
 document.addEventListener("gestureend", (e) => e.preventDefault(), { passive: false } as any);
 document.addEventListener("dblclick", (e) => e.preventDefault());
 
-let lastTouchEnd = 0;
-document.addEventListener("touchend", (e) => {
-  const now = Date.now();
-  if (now - lastTouchEnd <= 300) e.preventDefault();
-  lastTouchEnd = now;
-}, { passive: false });
+// let lastTouchEnd = 0;
+// document.addEventListener("touchend", (e) => {
+//   const now = Date.now();
+//   if (now - lastTouchEnd <= 300) e.preventDefault();
+//   lastTouchEnd = now;
+// }, { passive: false });
 
 document.addEventListener("touchmove", (e) => {
   if (e.touches.length > 1) e.preventDefault();
@@ -3053,6 +3179,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ocr-setup-close").onclick = () => closeOcrSetupModal();
   $("ocr-setup-cancel").onclick = () => closeOcrSetupModal();
   $("ocr-setup-start").onclick = () => startOcrFromSetup();
+  $("ocr-filter-rarity").onclick = (e) => openOcrRarityFlyout(e.currentTarget as HTMLElement);
+  $("ocr-filter-type").onclick = (e) => openOcrTypeFlyout(e.currentTarget as HTMLElement);
   $("ocr-setup-modal-bd").onclick = (e) => { if (e.target === $("ocr-setup-modal-bd")) closeOcrSetupModal(); };
   // Dropzone
   const dropzone = $("ocr-setup-dropzone");

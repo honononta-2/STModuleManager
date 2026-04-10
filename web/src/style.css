@@ -44,13 +44,13 @@ body {
   color: var(--tx1);
   background: var(--mica);
   background-image: var(--mica-tint);
-  min-height: 100vh;
+  min-height: 100dvh;
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
 }
 
-.app { display:flex; flex-direction:column; height:100vh; overflow:hidden; position:relative; }
+.app { display:flex; flex-direction:column; height:100dvh; overflow:hidden; position:relative; }
 
 /* ===== Web Header ===== */
 .web-header {
@@ -280,7 +280,7 @@ body {
   transition:background 0.08s;
   display:flex; align-items:center; gap:6px;
 }
-.fitem:hover { background:var(--cf-subtle-h); }
+@media (hover:hover) { .fitem:hover { background:var(--cf-subtle-h); } }
 .fitem.selected { background:transparent; }
 .fitem.dim { opacity:0.36; pointer-events:none; }
 
@@ -301,7 +301,7 @@ body {
   display:flex; align-items:center; gap:6px;
   transition:background 0.08s;
 }
-.fitem-check:hover { background:var(--cf-subtle-h); }
+@media (hover:hover) { .fitem-check:hover { background:var(--cf-subtle-h); } }
 .fitem-check.dim { opacity:0.36; pointer-events:none; }
 .fitem-check input[type="checkbox"] {
   width:16px; height:16px;
@@ -603,7 +603,7 @@ body {
   border-radius:12px;
   box-shadow:var(--sh16);
   width:640px; max-width:90vw;
-  max-height:80vh;
+  max-height:80dvh;
   display:flex; flex-direction:column;
   animation:modalIn 0.18s cubic-bezier(0.1,0.9,0.2,1);
 }
@@ -643,8 +643,8 @@ body {
 /* ===== Modal size modifiers ===== */
 .modal--confirm { width:400px; }
 .modal--info    { width:640px; }
-.modal--form    { width:640px; height:85vh; }
-.modal--auto-h  { height:auto; max-height:70vh; }
+.modal--form    { width:640px; height:85dvh; }
+.modal--auto-h  { height:auto; max-height:70dvh; }
 
 /* Modal: module detail */
 .modal-section { margin-bottom:16px; }
@@ -769,6 +769,13 @@ body {
 }
 .ocr-setup-radio-desc {
   font-size:11px; color:var(--tx3); line-height:1.4;
+}
+
+.fitem-check-content {
+  display:flex; align-items:center; gap:6px;
+}
+.fitem-check-content .mod-icon-wrap {
+  width:24px; height:24px;
 }
 
 .ocr-setup-dropzone {
@@ -1264,7 +1271,7 @@ body {
   .modal {
     width: 100%;
     max-width: 96vw;
-    max-height: 90vh;
+    max-height: 90dvh;
     border-radius: 10px;
   }
   .modal-head {
@@ -1277,13 +1284,13 @@ body {
     padding: 10px 14px;
   }
 
-  .modal--form { height: 90vh; }
-  .modal--auto-h { height:auto; max-height:90vh; }
+  .modal--form { height: 90dvh; }
+  .modal--auto-h { height:auto; max-height:90dvh; }
 
   /* OCR modal: fit screen */
   .ocr-modal {
     width: 100%;
-    height: 90vh;
+    height: 90dvh;
   }
   .ocr-modal .modal-body {
     padding: 0;
