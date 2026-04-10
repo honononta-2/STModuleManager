@@ -25,3 +25,9 @@ CLAUDE.md
 
 # Release output
 release-v*/
+# CocoIndex Code (ccc)
+/.cocoindex_code/
+
+# Skills
+.agents/
+skills-lock.json

@@ -5,7 +5,7 @@ import type {
   Combination, CombinationModule, ModuleInput, OptimizeRequest,
   OptimizeResponse, StatEntry, StatTotal,
 } from "@shared/types";
-import { processScreenshot } from "./ocr";
+import { processScreenshot, type OcrCustomOptions, type RowPosition } from "./ocr";
 import {
   saveOcrGroups, loadOcrGroups, deleteOcrGroups, hasOcrGroups,
   type OcrGroup,
@@ -16,23 +16,31 @@ import {
 } from "./i18n";
 
 // --- Helpers ---
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const $ = <T extends HTMLElement>(id: string) =>
+  (document.getElementById(id) ?? capturePipWindow?.document?.getElementById(id)) as T;
 
-let activeFlyout: HTMLElement | null = null;
-let activeFlyAnchor: HTMLElement | null = null;
+// ========== Unified Flyout System ==========
+
+let _flyMenu: HTMLElement | null = null;
+let _flyAnchor: HTMLElement | null = null;
 
 function positionFlyout(fl: HTMLElement, anchor: HTMLElement) {
   const rect = anchor.getBoundingClientRect();
   const menuH = fl.scrollHeight;
-  const flyW = fl.offsetWidth || 176;
+  const vw = document.documentElement.clientWidth;
   const spaceBelow = window.innerHeight - rect.bottom - 4;
   const spaceAbove = rect.top - 4;
 
-  let left = rect.left;
-  if (left + flyW > window.innerWidth - 8) left = window.innerWidth - flyW - 8;
-  if (left < 8) left = 8;
-  fl.style.left = left + "px";
   fl.style.minWidth = rect.width + "px";
+
+  const triggerCenter = (rect.left + rect.right) / 2;
+  if (triggerCenter > vw / 2) {
+    fl.style.left = "auto";
+    fl.style.right = Math.max(8, vw - rect.right) + "px";
+  } else {
+    fl.style.right = "auto";
+    fl.style.left = Math.max(8, rect.left) + "px";
+  }
 
   if (spaceBelow >= menuH || spaceBelow >= spaceAbove) {
     fl.style.top = rect.bottom + 2 + "px";
@@ -44,6 +52,210 @@ function positionFlyout(fl: HTMLElement, anchor: HTMLElement) {
     fl.style.maxHeight = Math.min(240, spaceAbove) + "px";
   }
 }
+
+function closeFlyout() {
+  if (_flyMenu) { _flyMenu.remove(); _flyMenu = null; }
+  if (_flyAnchor) { _flyAnchor.classList.remove("open"); _flyAnchor = null; }
+}
+
+interface FlyoutItem {
+  value: string;
+  label: string;
+  icon?: string;
+  html?: string;
+  selected?: boolean;
+  disabled?: boolean;
+  checked?: boolean;
+  buildContent?: () => HTMLElement;
+}
+
+interface FlyoutSection {
+  title: string;
+  items: FlyoutItem[];
+  onCheck?: (value: string, checked: boolean) => void;
+}
+
+interface FlyoutOptions {
+  mode?: "single" | "multi";
+  items?: FlyoutItem[];
+  sections?: FlyoutSection[];
+  onSelect?: (value: string) => void;
+  onCheck?: (value: string, checked: boolean) => void;
+  scrollToSelected?: boolean;
+}
+
+function openFlyout(anchor: HTMLElement, opts: FlyoutOptions) {
+  const wasOpen = _flyAnchor === anchor;
+  closeFlyout();
+  if (wasOpen) return;
+
+  const mode = opts.mode ?? "single";
+  const fl = document.createElement("div");
+  fl.className = "flyout on";
+
+  const buildItem = (it: FlyoutItem, sectionOnCheck?: (v: string, c: boolean) => void) => {
+    if (mode === "multi") {
+      const el = document.createElement("label");
+      el.className = "fitem-check" + (it.disabled ? " dim" : "");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!it.checked;
+      cb.disabled = !!it.disabled;
+      if (!it.disabled) {
+        cb.onchange = () => {
+          const handler = sectionOnCheck ?? opts.onCheck;
+          if (handler) handler(it.value, cb.checked);
+        };
+      }
+      el.appendChild(cb);
+      if (it.buildContent) {
+        el.appendChild(it.buildContent());
+      } else {
+        if (it.icon) {
+          const img = document.createElement("img");
+          img.className = "sicon";
+          img.src = it.icon;
+          img.alt = "";
+          el.appendChild(img);
+        }
+        const span = document.createElement("span");
+        span.textContent = it.label;
+        el.appendChild(span);
+      }
+      fl.appendChild(el);
+    } else {
+      const el = document.createElement("div");
+      el.className = "fitem" + (it.selected ? " selected" : "") + (it.disabled ? " dim" : "");
+      if (it.html) {
+        el.innerHTML = it.html;
+      } else {
+        if (it.icon) {
+          const img = document.createElement("img");
+          img.className = "sicon";
+          img.src = it.icon;
+          img.alt = "";
+          el.appendChild(img);
+        }
+        const span = document.createElement("span");
+        span.textContent = it.label;
+        el.appendChild(span);
+      }
+      el.dataset.value = it.value;
+      if (!it.disabled) {
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          closeFlyout();
+          if (opts.onSelect) opts.onSelect(it.value);
+        });
+      }
+      fl.appendChild(el);
+    }
+  };
+
+  if (opts.sections) {
+    opts.sections.forEach((sec) => {
+      const hdr = document.createElement("div");
+      hdr.className = "fly-section-header";
+      hdr.textContent = sec.title;
+      fl.appendChild(hdr);
+      sec.items.forEach((it) => buildItem(it, sec.onCheck));
+    });
+  } else if (opts.items) {
+    opts.items.forEach((it) => buildItem(it));
+  }
+
+  document.body.appendChild(fl);
+  positionFlyout(fl, anchor);
+  _flyMenu = fl;
+  _flyAnchor = anchor;
+  anchor.classList.add("open");
+
+  if (opts.scrollToSelected !== false && mode === "single") {
+    const sel = fl.querySelector<HTMLElement>(".fitem.selected");
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function initDropdowns(container: HTMLElement | Document = document) {
+  container.querySelectorAll<HTMLElement>(".uni-dd").forEach((dd) => {
+    const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger")!;
+    const menuTpl = dd.querySelector<HTMLElement>(".uni-dd-menu")!;
+    if (!trigger || !menuTpl) return;
+
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const items: FlyoutItem[] = [];
+      menuTpl.querySelectorAll<HTMLElement>(".uni-dd-item").forEach((el) => {
+        items.push({
+          value: el.dataset.value ?? "",
+          label: el.textContent ?? "",
+          html: el.innerHTML,
+          selected: el.classList.contains("selected"),
+        });
+      });
+
+      openFlyout(trigger, {
+        mode: "single",
+        items,
+        scrollToSelected: true,
+        onSelect: (value) => {
+          dd.dataset.value = value;
+          menuTpl.querySelectorAll(".uni-dd-item.selected").forEach((s) => s.classList.remove("selected"));
+          const picked = menuTpl.querySelector<HTMLElement>(`.uni-dd-item[data-value="${value}"]`);
+          if (picked) {
+            picked.classList.add("selected");
+            trigger.innerHTML = picked.innerHTML;
+          }
+          dd.dispatchEvent(new Event("change", { bubbles: true }));
+        },
+      });
+    });
+  });
+}
+
+function setDropdownValue(dd: HTMLElement, value: string) {
+  dd.dataset.value = value;
+  const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger");
+  const menu = dd.querySelector<HTMLElement>(".uni-dd-menu");
+  if (!trigger || !menu) return;
+  menu.querySelectorAll(".uni-dd-item.selected").forEach((s) => s.classList.remove("selected"));
+  const item = menu.querySelector<HTMLElement>(`.uni-dd-item[data-value="${value}"]`);
+  if (item) {
+    item.classList.add("selected");
+    trigger.innerHTML = item.innerHTML;
+  }
+}
+
+function updateDropdownOptions(dd: HTMLElement, options: { value: string; label: string }[], selectedValue?: string) {
+  const menu = dd.querySelector<HTMLElement>(".uni-dd-menu");
+  const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger");
+  if (!menu || !trigger) return;
+  menu.textContent = "";
+  const sel = selectedValue ?? dd.dataset.value ?? "";
+  options.forEach((opt) => {
+    const item = document.createElement("div");
+    item.className = "fitem uni-dd-item";
+    item.dataset.value = opt.value;
+    item.textContent = opt.label;
+    if (opt.value === sel) {
+      item.classList.add("selected");
+      trigger.textContent = opt.label;
+      dd.dataset.value = opt.value;
+    }
+    menu.appendChild(item);
+  });
+}
+
+document.addEventListener("click", (e) => {
+  if (_flyMenu && !_flyMenu.contains(e.target as Node) &&
+      (!_flyAnchor || !_flyAnchor.contains(e.target as Node))) {
+    closeFlyout();
+  }
+});
+window.addEventListener("resize", () => closeFlyout());
+document.addEventListener("scroll", (e) => {
+  if (_flyMenu && !_flyMenu.contains(e.target as Node)) closeFlyout();
+}, true);
 
 function statIcon(partId: number): string {
   const icon = STAT_ICONS[partId];
@@ -69,6 +281,25 @@ function moduleIconHtml(configId: number | null): string {
   </div>`;
 }
 
+/** モジュールアイコンのDOM要素を構築する（フライアウト内チェックボックス用） */
+function buildModuleIconEl(bgRarity: number, iconFile: string, size: number = 24): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "mod-icon-wrap";
+  wrap.style.width = size + "px";
+  wrap.style.height = size + "px";
+  const bg = document.createElement("img");
+  bg.className = "mod-icon-bg";
+  bg.src = `/icons/rarity${bgRarity}.png`;
+  bg.alt = "";
+  const fg = document.createElement("img");
+  fg.className = "mod-icon-fg";
+  fg.src = `/icons/${iconFile}`;
+  fg.alt = "";
+  wrap.appendChild(bg);
+  wrap.appendChild(fg);
+  return wrap;
+}
+
 function configIdToComponents(configId: number | null): { typeDigit: number; raritySub: number } | null {
   if (configId == null) return null;
   const lower = configId % 1000;
@@ -85,6 +316,14 @@ const MODULE_TYPE_PREFIXES = [55001, 55002, 55003] as const;
 
 // --- State ---
 let modules: ModuleInput[] = [];
+
+/** UUIDカウンター（loadModulesFromStorage時に既存最大値で初期化） */
+let uuidSeq = 0;
+
+/** 新しいuuidを発行する。UUID生成は必ずこの関数を通すこと */
+function nextUuid(): number {
+  return ++uuidSeq;
+}
 
 let filterRarities: Rarity[] = [];
 let filterStats: number[] = [];
@@ -118,31 +357,57 @@ function loadModulesFromStorage() {
     const saved = localStorage.getItem("modules");
     if (saved) modules = JSON.parse(saved);
   } catch { /* ignore */ }
+  // 既存モジュールの最大uuidでカウンターを初期化
+  for (const m of modules) if (m.uuid > uuidSeq) uuidSeq = m.uuid;
 }
 
 // ========== Shared select option builders ==========
 
-function typeSelectOptions(selectedDigit: number): string {
-  return MODULE_TYPE_PREFIXES.map((p) => {
-    const digit = p % 10;
-    return `<option value="${digit}"${digit === selectedDigit ? " selected" : ""}>${t.module_types[String(p)]}</option>`;
-  }).join("");
+function ddAttrs(className?: string, dataAttrs?: Record<string, string>, id?: string): string {
+  const cls = ["uni-dd", className].filter(Boolean).join(" ");
+  const dataStr = dataAttrs ? " " + Object.entries(dataAttrs).map(([k, v]) => `data-${k}="${v}"`).join(" ") : "";
+  const idStr = id ? ` id="${id}"` : "";
+  return `class="${cls}"${idStr}${dataStr}`;
 }
 
-function raritySubSelectOptions(selectedSub: number): string {
+function typeDropdownHtml(selectedDigit: number, className?: string, dataAttrs?: Record<string, string>, id?: string): string {
+  const selectedLabel = MODULE_TYPE_PREFIXES.reduce((a, p) => p % 10 === selectedDigit ? t.module_types[String(p)] : a, "");
+  const items = MODULE_TYPE_PREFIXES.map((p) => {
+    const digit = p % 10;
+    return `<div class="fitem uni-dd-item${digit === selectedDigit ? " selected" : ""}" data-value="${digit}">${t.module_types[String(p)]}</div>`;
+  }).join("");
+  return `<div ${ddAttrs(className, dataAttrs, id)} data-value="${selectedDigit}">
+    <button type="button" class="opt-multi-btn uni-dd-trigger">${selectedLabel}</button>
+    <div class="uni-dd-menu">${items}</div>
+  </div>`;
+}
+
+function raritySubDropdownHtml(selectedSub: number, className?: string, dataAttrs?: Record<string, string>, id?: string): string {
   const opts = [
     { value: 1, key: "rarity_sub_blue" },
     { value: 2, key: "rarity_sub_purple" },
     { value: 3, key: "rarity_sub_gold_a" },
     { value: 4, key: "rarity_sub_gold_b" },
   ];
-  return opts.map((o) => `<option value="${o.value}"${o.value === selectedSub ? " selected" : ""}>${t.ui[o.key]}</option>`).join("");
+  const selectedLabel = opts.find((o) => o.value === selectedSub);
+  const label = selectedLabel ? t.ui[selectedLabel.key] : "";
+  const items = opts.map((o) =>
+    `<div class="fitem uni-dd-item${o.value === selectedSub ? " selected" : ""}" data-value="${o.value}">${t.ui[o.key]}</div>`
+  ).join("");
+  return `<div ${ddAttrs(className, dataAttrs, id)} data-value="${selectedSub}">
+    <button type="button" class="opt-multi-btn uni-dd-trigger">${label}</button>
+    <div class="uni-dd-menu">${items}</div>
+  </div>`;
 }
 
-function statSelectOptions(selectedId?: number): string {
-  return ALL_STAT_IDS.map((id) =>
-    `<option value="${id}"${id === selectedId ? " selected" : ""}>${statName(id)}</option>`
-  ).join("");
+function valueDropdownHtml(selectedValue: number, className?: string, dataAttrs?: Record<string, string>): string {
+  const items = Array.from({ length: 10 }, (_, i) => i + 1)
+    .map((v) => `<div class="fitem uni-dd-item${v === selectedValue ? " selected" : ""}" data-value="${v}">${v}</div>`)
+    .join("");
+  return `<div ${ddAttrs(className, dataAttrs)} data-value="${selectedValue}">
+    <button type="button" class="opt-multi-btn uni-dd-trigger">${selectedValue}</button>
+    <div class="uni-dd-menu">${items}</div>
+  </div>`;
 }
 
 function statDropdownHtml(
@@ -160,145 +425,38 @@ function statDropdownHtml(
 
   const triggerContent = hasSelection
     ? `<img class="sicon" src="/icons/${selectedIcon}" alt=""><span>${selectedName}</span>`
-    : `<span class="stat-dd-placeholder">${placeholder || ""}</span>`;
+    : `<span class="uni-dd-placeholder">${placeholder || ""}</span>`;
 
   const placeholderItem = placeholder
-    ? `<div class="stat-dd-item${!hasSelection ? " selected" : ""}" data-value="">${placeholder}</div>`
+    ? `<div class="fitem uni-dd-item${!hasSelection ? " selected" : ""}" data-value=""><span class="uni-dd-placeholder">${placeholder}</span></div>`
     : "";
   const items = ALL_STAT_IDS.map((id) => {
     const icon = STAT_ICONS[id];
     const name = statName(id);
-    return `<div class="stat-dd-item${id === selectedId ? " selected" : ""}" data-value="${id}">
+    return `<div class="fitem uni-dd-item${id === selectedId ? " selected" : ""}" data-value="${id}">
       <img class="sicon" src="/icons/${icon}" alt=""><span>${name}</span>
     </div>`;
   }).join("");
 
-  return `<div class="stat-dd ${className}" ${dataStr} data-value="${hasSelection ? selectedId : ""}">
-    <button type="button" class="stat-dd-trigger">${triggerContent}</button>
-    <div class="stat-dd-menu">${placeholderItem}${items}</div>
+  return `<div class="uni-dd ${className}" ${dataStr} data-value="${hasSelection ? selectedId : ""}">
+    <button type="button" class="opt-multi-btn uni-dd-trigger">${triggerContent}</button>
+    <div class="uni-dd-menu">${placeholderItem}${items}</div>
   </div>`;
 }
 
-let activeStatDdMenu: HTMLElement | null = null;
-let activeStatDd: HTMLElement | null = null;
 
-function positionStatDdMenu(dd: HTMLElement, menu: HTMLElement) {
-  const rect = dd.getBoundingClientRect();
-  const menuH = menu.scrollHeight;
-  const spaceBelow = window.innerHeight - rect.bottom - 4;
-  const spaceAbove = rect.top - 4;
-
-  menu.style.left = rect.left + "px";
-  menu.style.minWidth = rect.width + "px";
-
-  if (spaceBelow >= menuH || spaceBelow >= spaceAbove) {
-    menu.style.top = rect.bottom + 2 + "px";
-    menu.style.bottom = "";
-    menu.style.maxHeight = Math.min(240, spaceBelow) + "px";
-  } else {
-    menu.style.top = "";
-    menu.style.bottom = (window.innerHeight - rect.top + 2) + "px";
-    menu.style.maxHeight = Math.min(240, spaceAbove) + "px";
-  }
-}
-
-function closeAllStatDropdowns() {
-  if (activeStatDdMenu) {
-    activeStatDdMenu.remove();
-    activeStatDdMenu = null;
-  }
-  if (activeStatDd) {
-    activeStatDd.classList.remove("open");
-    activeStatDd = null;
-  }
-}
-
-function initStatDropdowns(container: HTMLElement) {
-  container.querySelectorAll<HTMLElement>(".stat-dd").forEach((dd) => {
-    const trigger = dd.querySelector<HTMLButtonElement>(".stat-dd-trigger")!;
-    const menuTemplate = dd.querySelector<HTMLElement>(".stat-dd-menu")!;
-    menuTemplate.remove();
-
-    trigger.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const wasOpen = activeStatDd === dd;
-      closeAllStatDropdowns();
-      if (wasOpen) return;
-
-      const menu = menuTemplate.cloneNode(true) as HTMLElement;
-      document.body.appendChild(menu);
-      menu.classList.add("stat-dd-menu-portal");
-      dd.classList.add("open");
-      activeStatDdMenu = menu;
-      activeStatDd = dd;
-
-      positionStatDdMenu(dd, menu);
-
-      const sel = menu.querySelector<HTMLElement>(".stat-dd-item.selected");
-      if (sel) sel.scrollIntoView({ block: "nearest" });
-
-      menu.querySelectorAll<HTMLElement>(".stat-dd-item").forEach((item) => {
-        item.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          const val = item.dataset.value || "";
-          dd.dataset.value = val;
-
-          menuTemplate.querySelectorAll(".stat-dd-item.selected").forEach((s) => s.classList.remove("selected"));
-          const origItem = menuTemplate.querySelector<HTMLElement>(`.stat-dd-item[data-value="${val}"]`);
-          if (origItem) origItem.classList.add("selected");
-
-          if (val) {
-            const id = Number(val);
-            const icon = STAT_ICONS[id];
-            trigger.innerHTML = `<img class="sicon" src="/icons/${icon}" alt=""><span>${statName(id)}</span>`;
-          } else {
-            trigger.innerHTML = `<span class="stat-dd-placeholder">${trigger.textContent || ""}</span>`;
-          }
-          closeAllStatDropdowns();
-          dd.dispatchEvent(new Event("change", { bubbles: true }));
-        });
-      });
-    });
-  });
-}
-
-document.addEventListener("click", (e) => {
-  closeAllStatDropdowns();
-  if (activeFlyout && !activeFlyout.contains(e.target as Node) &&
-      (!activeFlyAnchor || !activeFlyAnchor.contains(e.target as Node))) {
-    closeFly();
-  }
-  if (detailFlyActive) {
-    const fl = $("fly-detail");
-    if (!fl.contains(e.target as Node) &&
-        (!detailFlyAnchor || !detailFlyAnchor.contains(e.target as Node))) {
-      closeDetailFly();
-    }
-  }
-});
-window.addEventListener("resize", () => {
-  closeAllStatDropdowns();
-  closeFly();
-  closeDetailFly();
-});
-document.addEventListener("scroll", (e) => {
-  if (activeStatDdMenu && !activeStatDdMenu.contains(e.target as Node)) {
-    closeAllStatDropdowns();
-  }
-  if (activeFlyout && !activeFlyout.contains(e.target as Node)) {
-    closeFly();
-  }
-  if (detailFlyActive) {
-    const fl = $("fly-detail");
-    if (!fl.contains(e.target as Node)) {
-      closeDetailFly();
-    }
-  }
-}, true);
 
 // ========== Grid rendering ==========
 
+let _gridScrollCleanup: (() => void) | null = null;
+
 function renderGrid() {
+  // 前回のスクロールリスナーを確実に削除
+  if (_gridScrollCleanup) {
+    _gridScrollCleanup();
+    _gridScrollCleanup = null;
+  }
+
   let ms = [...modules];
 
   if (filterRarities.length > 0) {
@@ -357,13 +515,14 @@ function renderGrid() {
     return;
   }
 
-  ms.forEach((m, i) => {
+  const INITIAL_COUNT = 60;
+  let rendered = 0;
+
+  function buildCard(m: ModuleInput, i: number): HTMLDivElement {
     const c = document.createElement("div");
     c.className = "card";
     c.style.animationDelay = `${Math.min(i, 16) * 14}ms`;
-    const r = qualityToRarity(m.quality);
 
-    // card-head
     const head = document.createElement("div");
     head.className = "card-head";
     const iconWrap = document.createElement("span");
@@ -410,8 +569,37 @@ function renderGrid() {
       statsDiv.appendChild(srow);
     });
     c.appendChild(statsDiv);
-    g.appendChild(c);
-  });
+    return c;
+  }
+
+  function renderBatch() {
+    const end = Math.min(rendered + INITIAL_COUNT, ms.length);
+    for (let i = rendered; i < end; i++) {
+      g.appendChild(buildCard(ms[i], i));
+    }
+    rendered = end;
+  }
+
+  renderBatch();
+
+  // スクロールで残りを遅延描画
+  if (ms.length > INITIAL_COUNT) {
+    const scroll = g.closest(".scroll");
+    const onScroll = () => {
+      if (rendered >= ms.length) {
+        scroll?.removeEventListener("scroll", onScroll);
+        _gridScrollCleanup = null;
+        return;
+      }
+      if (!scroll) return;
+      const { scrollTop, scrollHeight, clientHeight } = scroll;
+      if (scrollTop + clientHeight >= scrollHeight - 200) {
+        renderBatch();
+      }
+    };
+    scroll?.addEventListener("scroll", onScroll);
+    _gridScrollCleanup = () => scroll?.removeEventListener("scroll", onScroll);
+  }
 
   $("sb-n").textContent = fmt(t.ui.n_modules, { count: ms.length });
   const info: string[] = [];
@@ -429,85 +617,53 @@ function updateFilterBtnLabel() {
   btn.classList.toggle("has-items", count > 0);
 }
 
-function addFlySection(
-  fl: HTMLElement, title: string,
-  items: { label: string; checked: boolean; iconSrc?: string }[],
-  onChange: (index: number, checked: boolean) => void,
-) {
-  const header = document.createElement("div");
-  header.className = "fly-section-header";
-  header.textContent = title;
-  fl.appendChild(header);
-
-  items.forEach((item, i) => {
-    const el = document.createElement("label");
-    el.className = "fitem-check";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = item.checked;
-    cb.onchange = () => onChange(i, cb.checked);
-    el.appendChild(cb);
-    if (item.iconSrc) {
-      const img = document.createElement("img");
-      img.className = "sicon";
-      img.src = item.iconSrc;
-      img.alt = "";
-      el.appendChild(img);
-    }
-    const span = document.createElement("span");
-    span.textContent = item.label;
-    el.appendChild(span);
-    fl.appendChild(el);
-  });
-}
-
 const RARITY_FILTER_VALUES: Rarity[] = ["gold", "purple", "blue"];
 
 function openFilterMultiFly(anchor: HTMLElement) {
-  const fl = $("fly-filter");
-  if (activeFlyout === fl) { closeFly(); return; }
-  closeFly();
-  fl.textContent = "";
   const refresh = () => { updateFilterBtnLabel(); renderGrid(); };
-
-  addFlySection(fl, t.ui.fly_rarity,
-    RARITY_FILTER_VALUES.map((r) => ({ label: t.rarity[r], checked: filterRarities.includes(r) })),
-    (i, checked) => {
-      const val = RARITY_FILTER_VALUES[i];
-      if (checked) filterRarities.push(val);
-      else { const idx = filterRarities.indexOf(val); if (idx >= 0) filterRarities.splice(idx, 1); }
-      refresh();
-    },
-  );
-
-  const typeEntries = MODULE_TYPE_PREFIXES.map((p) => ({ prefix: p, label: t.module_types[String(p)] ?? "" }));
-  addFlySection(fl, t.ui.fly_type,
-    typeEntries.map((te) => ({ label: te.label, checked: filterTypes.includes(te.prefix) })),
-    (i, checked) => {
-      const val = typeEntries[i].prefix;
-      if (checked) filterTypes.push(val);
-      else { const idx = filterTypes.indexOf(val); if (idx >= 0) filterTypes.splice(idx, 1); }
-      refresh();
-    },
-  );
-
-  addFlySection(fl, t.ui.fly_stat,
-    ALL_STAT_IDS.map((id) => {
-      const icon = STAT_ICONS[id];
-      return { label: statName(id), checked: filterStats.includes(id), iconSrc: icon ? `/icons/${icon}` : undefined };
-    }),
-    (i, checked) => {
-      const val = ALL_STAT_IDS[i];
-      if (checked) filterStats.push(val);
-      else { const idx = filterStats.indexOf(val); if (idx >= 0) filterStats.splice(idx, 1); }
-      refresh();
-    },
-  );
-
-  fl.classList.add("on");
-  positionFlyout(fl, anchor);
-  activeFlyout = fl;
-  activeFlyAnchor = anchor;
+  openFlyout(anchor, {
+    mode: "multi",
+    sections: [
+      {
+        title: t.ui.fly_rarity,
+        items: RARITY_FILTER_VALUES.map((r) => ({
+          value: r, label: t.rarity[r], checked: filterRarities.includes(r),
+        })),
+        onCheck: (value, checked) => {
+          const r = value as Rarity;
+          if (checked) filterRarities.push(r);
+          else { const idx = filterRarities.indexOf(r); if (idx >= 0) filterRarities.splice(idx, 1); }
+          refresh();
+        },
+      },
+      {
+        title: t.ui.fly_type,
+        items: MODULE_TYPE_PREFIXES.map((p) => ({
+          value: String(p), label: t.module_types[String(p)] ?? "", checked: filterTypes.includes(p),
+        })),
+        onCheck: (value, checked) => {
+          const v = Number(value);
+          if (checked) filterTypes.push(v);
+          else { const idx = filterTypes.indexOf(v); if (idx >= 0) filterTypes.splice(idx, 1); }
+          refresh();
+        },
+      },
+      {
+        title: t.ui.fly_stat,
+        items: ALL_STAT_IDS.map((id) => ({
+          value: String(id), label: statName(id),
+          icon: STAT_ICONS[id] ? `/icons/${STAT_ICONS[id]}` : undefined,
+          checked: filterStats.includes(id),
+        })),
+        onCheck: (value, checked) => {
+          const v = Number(value);
+          if (checked) filterStats.push(v);
+          else { const idx = filterStats.indexOf(v); if (idx >= 0) filterStats.splice(idx, 1); }
+          refresh();
+        },
+      },
+    ],
+  });
 }
 
 // ========== Sort chips ==========
@@ -547,51 +703,6 @@ function renderSChips() {
   });
 }
 
-// ========== Flyout system ==========
-
-function openFly(
-  flyId: string, anchor: HTMLElement,
-  items: { label: string; val: string; disabled: boolean; iconSrc?: string }[],
-  onPick: (item: { label: string; val: string }) => void,
-) {
-  closeFly();
-  const fl = $(flyId);
-  fl.textContent = "";
-  items.forEach((it) => {
-    const el = document.createElement("div");
-    el.className = "fitem" + (it.disabled ? " dim" : "");
-    if (it.iconSrc) {
-      const img = document.createElement("img");
-      img.className = "sicon";
-      img.src = it.iconSrc;
-      img.alt = "";
-      el.appendChild(img);
-      const span = document.createElement("span");
-      span.textContent = it.label;
-      el.appendChild(span);
-    } else {
-      el.textContent = it.label;
-    }
-    if (!it.disabled) el.onclick = () => { closeFly(); onPick(it); };
-    fl.appendChild(el);
-  });
-  fl.classList.add("on");
-  positionFlyout(fl, anchor);
-  activeFlyout = fl;
-  activeFlyAnchor = anchor;
-}
-
-function closeFly() {
-  if (activeFlyout) {
-    activeFlyout.classList.remove("on");
-    activeFlyout.style.top = "";
-    activeFlyout.style.bottom = "";
-    activeFlyout.style.maxHeight = "";
-    activeFlyout.style.minWidth = "";
-    activeFlyout = null;
-    activeFlyAnchor = null;
-  }
-}
 
 // ========== Optimizer UI ==========
 
@@ -610,7 +721,7 @@ interface OptPattern {
 }
 
 function saveOptState() {
-  const quality = Number($<HTMLSelectElement>("opt-quality").value);
+  const quality = Number($("opt-quality").dataset.value);
   localStorage.setItem(OPT_STATE_KEY, JSON.stringify({
     required: optRequired, desired: optDesired, excluded: optExcluded, quality,
     min_required: optMinRequired, min_desired: optMinDesired,
@@ -625,7 +736,7 @@ function restoreOptState() {
     if (Array.isArray(s.required)) optRequired = migrateStatNamesToIds(s.required).filter((id) => ALL_STAT_IDS.includes(id));
     if (Array.isArray(s.desired)) optDesired = migrateStatNamesToIds(s.desired).filter((id) => ALL_STAT_IDS.includes(id));
     if (Array.isArray(s.excluded)) optExcluded = migrateStatNamesToIds(s.excluded).filter((id) => ALL_STAT_IDS.includes(id));
-    if (s.quality) $<HTMLSelectElement>("opt-quality").value = String(s.quality);
+    if (s.quality) setDropdownValue($("opt-quality"), String(s.quality));
     if (Array.isArray(s.min_required)) optMinRequired = (s.min_required as number[]).filter((id) => ALL_STAT_IDS.includes(id) && optRequired.includes(id));
     if (Array.isArray(s.min_desired)) optMinDesired = (s.min_desired as number[]).filter((id) => ALL_STAT_IDS.includes(id) && optDesired.includes(id));
   } catch { /* ignore */ }
@@ -650,25 +761,19 @@ function savePatterns(patterns: OptPattern[]) {
 }
 
 function renderPatternSelect() {
-  const sel = $<HTMLSelectElement>("pattern-select");
+  const dd = $("pattern-select");
   const patterns = getPatterns();
-  sel.textContent = "";
-  const defaultOpt = document.createElement("option");
-  defaultOpt.value = "";
-  defaultOpt.textContent = t.ui.pattern_placeholder;
-  sel.appendChild(defaultOpt);
+  const options = [{ value: "", label: t.ui.pattern_placeholder }];
   patterns.forEach((p, i) => {
-    const opt = document.createElement("option");
-    opt.value = String(i);
-    opt.textContent = p.name;
-    sel.appendChild(opt);
+    options.push({ value: String(i), label: p.name });
   });
+  updateDropdownOptions(dd, options, "");
   updatePatternButtons();
 }
 
 function updatePatternButtons() {
-  const sel = $<HTMLSelectElement>("pattern-select");
-  const hasSelection = sel.value !== "";
+  const dd = $("pattern-select");
+  const hasSelection = (dd.dataset.value ?? "") !== "";
   ($("pattern-delete") as HTMLButtonElement).disabled = !hasSelection;
   ($("pattern-load") as HTMLButtonElement).disabled = !hasSelection;
 }
@@ -682,7 +787,7 @@ function loadPattern(idx: number) {
   optExcluded = p.excluded.filter((id) => ALL_STAT_IDS.includes(id));
   optMinRequired = Array.isArray(p.min_required) ? p.min_required.filter((id) => ALL_STAT_IDS.includes(id) && optRequired.includes(id)) : [];
   optMinDesired = Array.isArray(p.min_desired) ? p.min_desired.filter((id) => ALL_STAT_IDS.includes(id) && optDesired.includes(id)) : [];
-  if (p.quality) $<HTMLSelectElement>("opt-quality").value = String(p.quality);
+  if (p.quality) setDropdownValue($("opt-quality"), String(p.quality));
   updateOptBtnLabel("req");
   updateOptBtnLabel("des");
   updateOptBtnLabel("excl");
@@ -700,54 +805,30 @@ function updateOptBtnLabel(category: "req" | "des" | "excl") {
 }
 
 function openOptMultiFly(anchor: HTMLElement, category: "req" | "des" | "excl") {
-  const fl = $("fly-multi");
-  if (activeFlyout === fl && fl.dataset.category === category) { closeFly(); return; }
-  closeFly();
-  fl.dataset.category = category;
   const current = { req: optRequired, des: optDesired, excl: optExcluded }[category];
   const others = (["req", "des", "excl"] as const)
     .filter((k) => k !== category)
     .flatMap((k) => ({ req: optRequired, des: optDesired, excl: optExcluded }[k]));
   const otherSet = new Set(others);
 
-  fl.textContent = "";
-  ALL_STAT_IDS.forEach((id) => {
-    const isSelected = current.includes(id);
-    const isOther = otherSet.has(id);
-    const el = document.createElement("label");
-    el.className = "fitem-check" + (isOther ? " dim" : "");
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = isSelected;
-    cb.disabled = isOther;
-    if (!isOther) {
-      cb.onchange = () => {
-        if (cb.checked) current.push(id);
-        else { const idx = current.indexOf(id); if (idx >= 0) current.splice(idx, 1); }
-        updateOptBtnLabel(category);
-        updateOptRunBtn();
-        saveOptState();
-      };
-    }
-    el.appendChild(cb);
-    const icon = STAT_ICONS[id];
-    if (icon) {
-      const img = document.createElement("img");
-      img.className = "sicon";
-      img.src = `/icons/${icon}`;
-      img.alt = "";
-      el.appendChild(img);
-    }
-    const span = document.createElement("span");
-    span.textContent = statName(id);
-    el.appendChild(span);
-    fl.appendChild(el);
+  openFlyout(anchor, {
+    mode: "multi",
+    items: ALL_STAT_IDS.map((id) => ({
+      value: String(id),
+      label: statName(id),
+      icon: STAT_ICONS[id] ? `/icons/${STAT_ICONS[id]}` : undefined,
+      checked: current.includes(id),
+      disabled: otherSet.has(id),
+    })),
+    onCheck: (value, checked) => {
+      const id = Number(value);
+      if (checked) current.push(id);
+      else { const idx = current.indexOf(id); if (idx >= 0) current.splice(idx, 1); }
+      updateOptBtnLabel(category);
+      updateOptRunBtn();
+      saveOptState();
+    },
   });
-
-  fl.classList.add("on");
-  positionFlyout(fl, anchor);
-  activeFlyout = fl;
-  activeFlyAnchor = anchor;
 }
 
 function updateOptRunBtn() {
@@ -769,29 +850,14 @@ function updateDetailBtnLabels() {
   setBtn("detail-btn-min-des", optMinDesired);
 }
 
-let detailFlyActive = false;
-let detailFlyCategory = "";
-let detailFlyAnchor: HTMLElement | null = null;
-
-function closeDetailFly() {
-  const fl = $("fly-detail");
-  fl.classList.remove("on");
-  fl.style.top = "";
-  fl.style.bottom = "";
-  fl.style.maxHeight = "";
-  detailFlyActive = false;
-  detailFlyCategory = "";
-  detailFlyAnchor = null;
-}
-
 function openDetailModal() {
-  closeFly();
+  closeFlyout();
   updateDetailBtnLabels();
   $("detail-modal-bd").classList.add("on");
 }
 
 function closeDetailModal() {
-  closeDetailFly();
+  closeFlyout();
   $("detail-modal-bd").classList.remove("on");
   updateOptBtnLabel("req");
   updateOptRunBtn();
@@ -802,17 +868,6 @@ function openDetailFly(
   anchor: HTMLElement,
   category: "req" | "des" | "excl" | "min-req" | "min-des",
 ) {
-  const fl = $("fly-detail");
-  if (detailFlyActive && detailFlyCategory === category) {
-    closeDetailFly();
-    return;
-  }
-  closeDetailFly();
-  detailFlyCategory = category;
-  detailFlyActive = true;
-  detailFlyAnchor = anchor;
-  fl.textContent = "";
-
   if (category === "min-req" || category === "min-des") {
     let sourceArr: number[];
     const minArr = category === "min-req" ? optMinRequired : optMinDesired;
@@ -831,21 +886,22 @@ function openDetailFly(
     }
 
     if (sourceArr.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "fitem";
-      empty.style.opacity = "0.5";
-      empty.textContent = t.ui.filter_none;
-      fl.appendChild(empty);
+      openFlyout(anchor, {
+        mode: "multi",
+        items: [{ value: "_empty", label: t.ui.filter_none, disabled: true }],
+      });
     } else {
-      sourceArr.forEach((pid) => {
-        const isSelected = minArr.includes(pid);
-        const el = document.createElement("label");
-        el.className = "fitem-check";
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.checked = isSelected;
-        cb.onchange = () => {
-          if (cb.checked) {
+      openFlyout(anchor, {
+        mode: "multi",
+        items: sourceArr.map((pid) => ({
+          value: String(pid),
+          label: statName(pid),
+          icon: STAT_ICONS[pid] ? `/icons/${STAT_ICONS[pid]}` : undefined,
+          checked: minArr.includes(pid),
+        })),
+        onCheck: (value, checked) => {
+          const pid = Number(value);
+          if (checked) {
             if (!minArr.includes(pid)) minArr.push(pid);
             // +20に追加時、+16から除去
             if (category === "min-req") {
@@ -857,20 +913,7 @@ function openDetailFly(
             if (idx >= 0) minArr.splice(idx, 1);
           }
           updateDetailBtnLabels();
-        };
-        el.appendChild(cb);
-        const icon = STAT_ICONS[pid];
-        if (icon) {
-          const img = document.createElement("img");
-          img.className = "sicon";
-          img.src = `/icons/${icon}`;
-          img.alt = "";
-          el.appendChild(img);
-        }
-        const span = document.createElement("span");
-        span.textContent = statName(pid);
-        el.appendChild(span);
-        fl.appendChild(el);
+        },
       });
     }
   } else {
@@ -880,54 +923,37 @@ function openDetailFly(
       .flatMap((k) => ({ req: optRequired, des: optDesired, excl: optExcluded }[k]));
     const otherSet = new Set(others);
 
-    ALL_STAT_IDS.forEach((pid) => {
-      const isSelected = current.includes(pid);
-      const isOther = otherSet.has(pid);
-      const el = document.createElement("label");
-      el.className = "fitem-check" + (isOther ? " dim" : "");
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = isSelected;
-      cb.disabled = isOther;
-      if (!isOther) {
-        cb.onchange = () => {
-          if (cb.checked) {
-            current.push(pid);
-          } else {
-            const idx = current.indexOf(pid);
-            if (idx >= 0) current.splice(idx, 1);
-            if (category === "req") {
-              const mi = optMinRequired.indexOf(pid);
-              if (mi >= 0) optMinRequired.splice(mi, 1);
-            }
-            if (category === "des") {
-              const mi = optMinDesired.indexOf(pid);
-              if (mi >= 0) optMinDesired.splice(mi, 1);
-            }
+    openFlyout(anchor, {
+      mode: "multi",
+      items: ALL_STAT_IDS.map((pid) => ({
+        value: String(pid),
+        label: statName(pid),
+        icon: STAT_ICONS[pid] ? `/icons/${STAT_ICONS[pid]}` : undefined,
+        checked: current.includes(pid),
+        disabled: otherSet.has(pid),
+      })),
+      onCheck: (value, checked) => {
+        const pid = Number(value);
+        if (checked) {
+          current.push(pid);
+        } else {
+          const idx = current.indexOf(pid);
+          if (idx >= 0) current.splice(idx, 1);
+          if (category === "req") {
+            const mi = optMinRequired.indexOf(pid);
+            if (mi >= 0) optMinRequired.splice(mi, 1);
           }
-          updateDetailBtnLabels();
-          updateOptBtnLabel("req");
-          updateOptRunBtn();
-        };
-      }
-      el.appendChild(cb);
-      const icon = STAT_ICONS[pid];
-      if (icon) {
-        const img = document.createElement("img");
-        img.className = "sicon";
-        img.src = `/icons/${icon}`;
-        img.alt = "";
-        el.appendChild(img);
-      }
-      const span = document.createElement("span");
-      span.textContent = statName(pid);
-      el.appendChild(span);
-      fl.appendChild(el);
+          if (category === "des") {
+            const mi = optMinDesired.indexOf(pid);
+            if (mi >= 0) optMinDesired.splice(mi, 1);
+          }
+        }
+        updateDetailBtnLabels();
+        updateOptBtnLabel("req");
+        updateOptRunBtn();
+      },
     });
   }
-
-  fl.classList.add("on");
-  positionFlyout(fl, anchor);
 }
 
 // ========== Optimize (Web Workers) ==========
@@ -944,8 +970,8 @@ async function runOptimize() {
   optOverlay = createLoadingOverlay();
   $("opt-scroll").appendChild(optOverlay);
 
-  const quality = Number($<HTMLSelectElement>("opt-quality").value);
-  const speedMode = $<HTMLSelectElement>("opt-speed").value;
+  const quality = Number($("opt-quality").dataset.value);
+  const speedMode = $("opt-speed").dataset.value ?? "standard";
   const minThresholds: Record<number, number> = {};
   optMinRequired.forEach((pid) => { minThresholds[pid] = 20; });
   optMinDesired.forEach((pid) => { minThresholds[pid] = 16; });
@@ -1141,7 +1167,7 @@ function openModal(comb: Combination) {
 
   body.textContent = "";
 
-  // Used modules section
+  // 使用モジュールセクション
   const modsSection = document.createElement("div");
   modsSection.className = "modal-section";
   const modsTitle = document.createElement("div");
@@ -1194,7 +1220,7 @@ function openModal(comb: Combination) {
   modsSection.appendChild(modsWrap);
   body.appendChild(modsSection);
 
-  // Stat totals section
+  // ステータス合計セクション
   const statTotalsMap = new Map<number, number>();
   comb.modules.forEach((m) => m.stats.forEach((s) => {
     statTotalsMap.set(s.part_id, (statTotalsMap.get(s.part_id) ?? 0) + s.value);
@@ -1278,10 +1304,65 @@ let ocrImageZoomStates: { scale: number; translateX: number; translateY: number 
 let ocrCurrentPage = 0;
 let hasStoredOcrData = false;
 
+/** 登録済みモジュールと同一（config_id + stats完全一致）か判定 */
+function isModuleDuplicate(m: ModuleInput): boolean {
+  const key = moduleFingerprint(m);
+  return modules.some((existing) => moduleFingerprint(existing) === key);
+}
+
+function moduleFingerprint(m: ModuleInput): string {
+  const sortedStats = [...m.stats]
+    .map((s) => `${s.part_id}:${s.value}`)
+    .sort()
+    .join(",");
+  return `${m.config_id}|${sortedStats}`;
+}
+
+/** 全行の重複クラスを再評価してからフィルタを適用 */
+function refreshOcrDuplicateState() {
+  const body = $("ocr-modal-body");
+  body.querySelectorAll<HTMLElement>(".ocr-row").forEach((row) => {
+    const gi = Number(row.dataset.gi);
+    const mi = Number(row.dataset.mi);
+    const m = pendingOcrGroups[gi]?.modules[mi];
+    if (!m) return;
+    if (isModuleDuplicate(m)) {
+      row.classList.add("ocr-row--duplicate");
+    } else {
+      row.classList.remove("ocr-row--duplicate");
+    }
+  });
+  applyOcrNewOnlyFilter();
+}
+
+/** 新規のみチェック状態に応じて行の表示/非表示を切り替え、カウンターを更新 */
+function applyOcrNewOnlyFilter() {
+  const checked = ($("ocr-new-only") as HTMLInputElement).checked;
+  const body = $("ocr-modal-body");
+  const rows = body.querySelectorAll<HTMLElement>(".ocr-row");
+  let total = 0;
+  let newCount = 0;
+  rows.forEach((row) => {
+    total++;
+    const isDup = row.classList.contains("ocr-row--duplicate");
+    if (isDup && checked) {
+      row.classList.add("ocr-row--hidden");
+    } else {
+      row.classList.remove("ocr-row--hidden");
+    }
+    if (!isDup) newCount++;
+  });
+  const counter = body.querySelector<HTMLElement>(".ocr-new-count");
+  if (counter) {
+    counter.textContent = fmt(t.ui.ocr_new_count, { total: String(total), newCount: String(newCount) });
+  }
+}
+
 function openOcrConfirmationModal(groups: OcrGroup[], startPage = 0) {
   pendingOcrGroups = groups.map((g) => ({
     imageUrl: g.imageUrl,
     modules: g.modules.map((m) => ({ ...m, stats: m.stats.map((s) => ({ ...s })) })),
+    originalRowIndices: g.originalRowIndices ?? g.modules.map((_, i) => i + 1),
   }));
   ocrImageZoomStates = groups.map(() => ({ scale: 1, translateX: 0, translateY: 0 }));
   ocrCurrentPage = Math.min(startPage, groups.length - 1);
@@ -1349,7 +1430,7 @@ function renderOcrModalBody() {
   const body = $("ocr-modal-body");
   const allMods = allPendingModules();
 
-  if (allMods.length === 0) {
+  if (pendingOcrGroups.length === 0) {
     body.textContent = "";
     const emptyDiv = document.createElement("div");
     emptyDiv.className = "ocr-empty";
@@ -1386,8 +1467,13 @@ function renderOcrModalBody() {
 
   const hint = document.createElement("div");
   hint.className = "ocr-group-hint";
-  hint.textContent = t.ui.ocr_hint;
+  const isPointerFine = window.matchMedia("(pointer: fine)").matches;
+  hint.textContent = isPointerFine ? t.ui.ocr_hint_pc : t.ui.ocr_hint_mobile;
   header.appendChild(hint);
+
+  const newCountEl = document.createElement("div");
+  newCountEl.className = "ocr-new-count";
+  header.appendChild(newCountEl);
 
   section.appendChild(header);
 
@@ -1400,17 +1486,14 @@ function renderOcrModalBody() {
     const raritySub = comp?.raritySub ?? 2;
 
     const row = document.createElement("div");
-    row.className = "ocr-row";
+    row.className = "ocr-row" + (isModuleDuplicate(m) ? " ocr-row--duplicate" : "");
     row.dataset.gi = String(gi);
     row.dataset.mi = String(mi);
 
     const statsHtml = m.stats.map((s, si) => {
-      const valueOptions = Array.from({ length: 10 }, (_, i) => i + 1)
-        .map((v) => `<option value="${v}"${v === s.value ? " selected" : ""}>${v}</option>`)
-        .join("");
       return `<div class="ocr-stat-row">
         ${statDropdownHtml("ocr-stat-name", s.part_id, { gi: String(gi), mi: String(mi), si: String(si) })}
-        <select class="opt-select ocr-stat-value" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${valueOptions}</select>
+        ${valueDropdownHtml(s.value, "ocr-stat-value", { gi: String(gi), mi: String(mi), si: String(si) })}
         <button class="ocr-stat-remove" data-gi="${gi}" data-mi="${mi}" data-si="${si}">&times;</button>
       </div>`;
     }).join("");
@@ -1419,18 +1502,18 @@ function renderOcrModalBody() {
       : "";
 
     row.innerHTML = [
-      `<span class="ocr-row-index">${mi + 1}</span>`,
+      `<span class="ocr-row-index">R${group.originalRowIndices?.[mi] ?? mi + 1}</span>`,
       `<div class="ocr-row-content">`,
         `<div class="ocr-row-header">`,
           `<div class="ocr-row-icon" id="ocr-icon-${gi}-${mi}">${moduleIconHtml(m.config_id)}</div>`,
           `<div class="ocr-row-fields">`,
             `<label class="form-field">`,
               `<span class="cmd-lbl">${t.ui.type_label}</span>`,
-              `<select class="opt-select ocr-type" data-gi="${gi}" data-mi="${mi}">${typeSelectOptions(typeDigit)}</select>`,
+              `${typeDropdownHtml(typeDigit, "ocr-type", { gi: String(gi), mi: String(mi) })}`,
             `</label>`,
             `<label class="form-field">`,
               `<span class="cmd-lbl">${t.ui.rarity_sub_label}</span>`,
-              `<select class="opt-select ocr-rarity-sub" data-gi="${gi}" data-mi="${mi}">${raritySubSelectOptions(raritySub)}</select>`,
+              `${raritySubDropdownHtml(raritySub, "ocr-rarity-sub", { gi: String(gi), mi: String(mi) })}`,
             `</label>`,
           `</div>`,
           `<button class="ocr-row-remove" data-gi="${gi}" data-mi="${mi}">&times;</button>`,
@@ -1459,12 +1542,17 @@ function renderOcrModalBody() {
   body.querySelectorAll<HTMLButtonElement>(".ocr-group-add").forEach((btn) => {
     btn.onclick = () => {
       const g = Number(btn.dataset.gi);
-      pendingOcrGroups[g].modules.push({
-        uuid: Date.now() + Math.floor(Math.random() * 1000),
+      const grp = pendingOcrGroups[g];
+      grp.modules.push({
+        uuid: nextUuid(),
         config_id: buildConfigId(1, 2),
         quality: 3,
         stats: [{ part_id: ALL_STAT_IDS[0], value: 1 }],
       });
+      const nextIdx = (grp.originalRowIndices && grp.originalRowIndices.length > 0)
+        ? Math.max(...grp.originalRowIndices) + 1
+        : grp.modules.length;
+      (grp.originalRowIndices ??= []).push(nextIdx);
       saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
       renderOcrModalBody();
     };
@@ -1473,29 +1561,33 @@ function renderOcrModalBody() {
   const newListEl = body.querySelector<HTMLElement>(".ocr-group-list");
   if (newListEl) newListEl.scrollTop = listScrollTop;
 
-  body.querySelectorAll<HTMLSelectElement>(".ocr-type, .ocr-rarity-sub").forEach((sel) => {
-    sel.onchange = () => {
-      onOcrFieldChange(Number(sel.dataset.gi), Number(sel.dataset.mi));
+  body.querySelectorAll<HTMLElement>(".ocr-type, .ocr-rarity-sub").forEach((dd) => {
+    dd.addEventListener("change", () => {
+      onOcrFieldChange(Number(dd.dataset.gi), Number(dd.dataset.mi));
       saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
-    };
+      refreshOcrDuplicateState();
+    });
   });
   body.querySelectorAll<HTMLElement>(".ocr-stat-name").forEach((dd) => {
     dd.addEventListener("change", () => {
       pendingOcrGroups[Number(dd.dataset.gi)].modules[Number(dd.dataset.mi)].stats[Number(dd.dataset.si)].part_id = Number(dd.dataset.value);
       saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+      refreshOcrDuplicateState();
     });
   });
-  body.querySelectorAll<HTMLSelectElement>(".ocr-stat-value").forEach((sel) => {
-    sel.onchange = () => {
-      pendingOcrGroups[Number(sel.dataset.gi)].modules[Number(sel.dataset.mi)].stats[Number(sel.dataset.si)].value = Number(sel.value);
+  body.querySelectorAll<HTMLElement>(".ocr-stat-value").forEach((dd) => {
+    dd.addEventListener("change", () => {
+      pendingOcrGroups[Number(dd.dataset.gi)].modules[Number(dd.dataset.mi)].stats[Number(dd.dataset.si)].value = Number(dd.dataset.value);
       saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
-    };
+      refreshOcrDuplicateState();
+    });
   });
   body.querySelectorAll<HTMLButtonElement>(".ocr-row-remove").forEach((btn) => {
     btn.onclick = () => {
       const g = Number(btn.dataset.gi);
       const mi = Number(btn.dataset.mi);
       pendingOcrGroups[g].modules.splice(mi, 1);
+      pendingOcrGroups[g].originalRowIndices?.splice(mi, 1);
       if (pendingOcrGroups[g].modules.length === 0) {
         ocrImageZoomStates.splice(g, 1);
         pendingOcrGroups.splice(g, 1);
@@ -1525,16 +1617,17 @@ function renderOcrModalBody() {
     };
   });
 
-  initStatDropdowns(body);
+  initDropdowns(body);
   updateOcrPager();
+  applyOcrNewOnlyFilter();
 }
 
 function onOcrFieldChange(gi: number, mi: number) {
   const m = pendingOcrGroups[gi]?.modules[mi];
   const row = document.querySelector(`.ocr-row[data-gi="${gi}"][data-mi="${mi}"]`);
   if (!row || !m) return;
-  const typeDigit = Number((row.querySelector(".ocr-type") as HTMLSelectElement).value);
-  const raritySub = Number((row.querySelector(".ocr-rarity-sub") as HTMLSelectElement).value);
+  const typeDigit = Number(row.querySelector<HTMLElement>(".ocr-type")!.dataset.value);
+  const raritySub = Number(row.querySelector<HTMLElement>(".ocr-rarity-sub")!.dataset.value);
   m.config_id = buildConfigId(typeDigit, raritySub);
   m.quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
   const iconEl = document.getElementById(`ocr-icon-${gi}-${mi}`);
@@ -1543,7 +1636,9 @@ function onOcrFieldChange(gi: number, mi: number) {
 
 function registerOcrModules() {
   const all = allPendingModules();
-  if (all.length === 0) {
+  const newOnly = ($("ocr-new-only") as HTMLInputElement).checked;
+  const toRegister = newOnly ? all.filter((m) => !isModuleDuplicate(m)) : all;
+  if (toRegister.length === 0) {
     hasStoredOcrData = false;
     deleteOcrGroups().catch(() => {});
     $("ocr-modal-bd").classList.remove("on");
@@ -1552,7 +1647,7 @@ function registerOcrModules() {
     ocrCurrentPage = 0;
     return;
   }
-  modules.push(...all);
+  modules.push(...toRegister);
   saveModulesToStorage();
   renderGrid();
   updateOptRunBtn();
@@ -1595,12 +1690,9 @@ function renderEditModalBody() {
   const statRows: string[] = [];
   for (let i = 0; i < editStatCount; i++) {
     const curStat = m.stats[i];
-    const valueOpts = Array.from({ length: 10 }, (_, v) => v + 1)
-      .map((v) => `<option value="${v}"${curStat && v === curStat.value ? " selected" : ""}>${v}</option>`)
-      .join("");
     statRows.push(`<div class="ocr-stat-row" data-si="${i}">
       ${statDropdownHtml("edit-stat-name", curStat?.part_id, undefined, curStat ? undefined : t.ui.select_placeholder)}
-      <select class="opt-select ocr-stat-value edit-stat-value">${valueOpts}</select>
+      ${valueDropdownHtml(curStat?.value ?? 1, "ocr-stat-value edit-stat-value")}
       <button class="ocr-stat-remove edit-remove-stat" data-si="${i}">&times;</button>
     </div>`);
   }
@@ -1611,11 +1703,11 @@ function renderEditModalBody() {
       <div class="ocr-row-fields">
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.type_label}</span>
-          <select class="opt-select" id="edit-type">${typeSelectOptions(typeDigit)}</select>
+          ${typeDropdownHtml(typeDigit, "", undefined, "edit-type")}
         </label>
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
-          <select class="opt-select" id="edit-rarity-sub">${raritySubSelectOptions(raritySub)}</select>
+          ${raritySubDropdownHtml(raritySub, "", undefined, "edit-rarity-sub")}
         </label>
       </div>
     </div>
@@ -1627,15 +1719,15 @@ function renderEditModalBody() {
   </div>`;
 
   const updateIconPreview = () => {
-    const td = Number($<HTMLSelectElement>("edit-type").value);
-    const rs = Number($<HTMLSelectElement>("edit-rarity-sub").value);
+    const td = Number($<HTMLElement>("edit-type").dataset.value);
+    const rs = Number($<HTMLElement>("edit-rarity-sub").dataset.value);
     const preview = document.getElementById("edit-icon-preview");
     if (preview) preview.innerHTML = moduleIconHtml(buildConfigId(td, rs));
   };
-  $<HTMLSelectElement>("edit-type").onchange = updateIconPreview;
-  $<HTMLSelectElement>("edit-rarity-sub").onchange = updateIconPreview;
+  $<HTMLElement>("edit-type").addEventListener("change", updateIconPreview);
+  $<HTMLElement>("edit-rarity-sub").addEventListener("change", updateIconPreview);
 
-  initStatDropdowns(body);
+  initDropdowns(body);
 
   const addBtn = document.getElementById("edit-add-stat");
   if (addBtn) addBtn.onclick = () => {
@@ -1667,11 +1759,11 @@ function syncEditStatsToModule() {
   const newStats: StatEntry[] = [];
   rows.forEach((row) => {
     const nameDd = row.querySelector<HTMLElement>(".edit-stat-name");
-    const valueSelect = row.querySelector<HTMLSelectElement>(".edit-stat-value");
-    if (!nameDd || !valueSelect) return;
+    const valueDd = row.querySelector<HTMLElement>(".edit-stat-value");
+    if (!nameDd || !valueDd) return;
     const partId = Number(nameDd.dataset.value);
     if (!partId) return;
-    newStats.push({ part_id: partId, value: Number(valueSelect.value) });
+    newStats.push({ part_id: partId, value: Number(valueDd.dataset.value) });
   });
   m.stats = newStats;
 }
@@ -1679,8 +1771,8 @@ function syncEditStatsToModule() {
 function saveEditModule() {
   const m = modules.find((mod) => mod.uuid === editingUuid);
   if (!m) return;
-  const typeDigit = Number($<HTMLSelectElement>("edit-type").value);
-  const raritySub = Number($<HTMLSelectElement>("edit-rarity-sub").value);
+  const typeDigit = Number($<HTMLElement>("edit-type").dataset.value);
+  const raritySub = Number($<HTMLElement>("edit-rarity-sub").dataset.value);
   m.config_id = buildConfigId(typeDigit, raritySub);
   m.quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
 
@@ -1689,13 +1781,13 @@ function saveEditModule() {
   const rows = document.querySelectorAll<HTMLElement>("#edit-stat-rows .ocr-stat-row");
   for (const row of rows) {
     const nameDd = row.querySelector<HTMLElement>(".edit-stat-name");
-    const valueSelect = row.querySelector<HTMLSelectElement>(".edit-stat-value");
-    if (!nameDd || !valueSelect) continue;
+    const valueDd = row.querySelector<HTMLElement>(".edit-stat-value");
+    if (!nameDd || !valueDd) continue;
     const partId = Number(nameDd.dataset.value);
     if (!partId) continue;
     if (usedIds.has(partId)) return;
     usedIds.add(partId);
-    stats.push({ part_id: partId, value: Number(valueSelect.value) });
+    stats.push({ part_id: partId, value: Number(valueDd.dataset.value) });
   }
   if (stats.length === 0) return;
   m.stats = stats;
@@ -1734,12 +1826,9 @@ function renderManualModalBody() {
 
   const statRows: string[] = [];
   for (let i = 0; i < manualStatCount; i++) {
-    const valueOpts = Array.from({ length: 10 }, (_, v) => v + 1)
-      .map((v) => `<option value="${v}">${v}</option>`)
-      .join("");
     statRows.push(`<div class="ocr-stat-row" data-si="${i}">
       ${statDropdownHtml("manual-stat-name", undefined, undefined, t.ui.select_placeholder)}
-      <select class="opt-select ocr-stat-value manual-stat-value">${valueOpts}</select>
+      ${valueDropdownHtml(1, "ocr-stat-value manual-stat-value")}
       <button class="ocr-stat-remove manual-remove-stat" data-si="${i}">&times;</button>
     </div>`);
   }
@@ -1751,11 +1840,11 @@ function renderManualModalBody() {
       <div class="ocr-row-fields">
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.type_label}</span>
-          <select class="opt-select" id="manual-type">${typeSelectOptions(1)}</select>
+          ${typeDropdownHtml(1, "", undefined, "manual-type")}
         </label>
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
-          <select class="opt-select" id="manual-rarity-sub">${raritySubSelectOptions(1)}</select>
+          ${raritySubDropdownHtml(1, "", undefined, "manual-rarity-sub")}
         </label>
       </div>
     </div>
@@ -1767,15 +1856,15 @@ function renderManualModalBody() {
   </div>`;
 
   const updateManualIconPreview = () => {
-    const td = Number($<HTMLSelectElement>("manual-type").value);
-    const rs = Number($<HTMLSelectElement>("manual-rarity-sub").value);
+    const td = Number($<HTMLElement>("manual-type").dataset.value);
+    const rs = Number($<HTMLElement>("manual-rarity-sub").dataset.value);
     const preview = document.getElementById("manual-icon-preview");
     if (preview) preview.innerHTML = moduleIconHtml(buildConfigId(td, rs));
   };
-  $<HTMLSelectElement>("manual-type").onchange = updateManualIconPreview;
-  $<HTMLSelectElement>("manual-rarity-sub").onchange = updateManualIconPreview;
+  $<HTMLElement>("manual-type").addEventListener("change", updateManualIconPreview);
+  $<HTMLElement>("manual-rarity-sub").addEventListener("change", updateManualIconPreview);
 
-  initStatDropdowns(body);
+  initDropdowns(body);
 
   const addBtn = document.getElementById("manual-add-stat");
   if (addBtn) addBtn.onclick = () => { manualStatCount++; renderManualModalBody(); };
@@ -1786,8 +1875,8 @@ function renderManualModalBody() {
 }
 
 function addManualModule() {
-  const typeDigit = Number($<HTMLSelectElement>("manual-type").value);
-  const raritySub = Number($<HTMLSelectElement>("manual-rarity-sub").value);
+  const typeDigit = Number($<HTMLElement>("manual-type").dataset.value);
+  const raritySub = Number($<HTMLElement>("manual-rarity-sub").dataset.value);
   const configId = buildConfigId(typeDigit, raritySub);
   const quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
 
@@ -1797,8 +1886,8 @@ function addManualModule() {
 
   for (const row of rows) {
     const nameDd = row.querySelector<HTMLElement>(".manual-stat-name");
-    const valueSelect = row.querySelector<HTMLSelectElement>(".manual-stat-value");
-    if (!nameDd || !valueSelect) continue;
+    const valueDd = row.querySelector<HTMLElement>(".manual-stat-value");
+    if (!nameDd || !valueDd) continue;
     const partId = Number(nameDd.dataset.value);
     if (!partId) continue;
     if (usedIds.has(partId)) {
@@ -1806,7 +1895,7 @@ function addManualModule() {
       return;
     }
     usedIds.add(partId);
-    stats.push({ part_id: partId, value: Number(valueSelect.value) });
+    stats.push({ part_id: partId, value: Number(valueDd.dataset.value) });
   }
 
   if (stats.length === 0) {
@@ -1815,7 +1904,7 @@ function addManualModule() {
   }
 
   const m: ModuleInput = {
-    uuid: Date.now() + Math.floor(Math.random() * 1000),
+    uuid: nextUuid(),
     config_id: configId,
     quality,
     stats,
@@ -1832,7 +1921,11 @@ function addManualModule() {
 
 // ========== Screenshot Import ==========
 
-function createThumbnailDataUrl(img: HTMLImageElement, maxWidth = 1920): string {
+function createThumbnailDataUrl(
+  img: HTMLImageElement,
+  rowPositions?: RowPosition[],
+  maxWidth = 1920,
+): string {
   const scale = Math.min(1, maxWidth / img.naturalWidth);
   const w = Math.round(img.naturalWidth * scale);
   const h = Math.round(img.naturalHeight * scale);
@@ -1841,6 +1934,35 @@ function createThumbnailDataUrl(img: HTMLImageElement, maxWidth = 1920): string 
   c.height = h;
   const ctx = c.getContext("2d")!;
   ctx.drawImage(img, 0, 0, w, h);
+
+  if (rowPositions && rowPositions.length > 0) {
+    for (let i = 0; i < rowPositions.length; i++) {
+      const pos = rowPositions[i];
+      const lx = pos.x * scale;
+      const ly = pos.y * scale;
+      const fontSize = Math.max(14, Math.round(pos.h * scale * 0.45));
+      const label = `R${i + 1}`;
+
+      ctx.font = `bold ${fontSize}px sans-serif`;
+      ctx.textBaseline = "middle";
+      const tm = ctx.measureText(label);
+      const pad = Math.round(fontSize * 0.25);
+      const bgW = tm.width + pad * 2;
+      const bgH = fontSize + pad * 2;
+      const bx = Math.max(0, lx - bgW - 2);
+      const by = ly - bgH / 2;
+
+      ctx.fillStyle = "rgba(0,0,0,0.65)";
+      ctx.beginPath();
+      const r = Math.round(fontSize * 0.2);
+      ctx.roundRect(bx, by, bgW, bgH, r);
+      ctx.fill();
+
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, bx + pad, ly);
+    }
+  }
+
   const dataUrl = c.toDataURL("image/webp", 0.8);
   c.width = 0;
   c.height = 0;
@@ -1901,81 +2023,551 @@ function startNewImport() {
   $("ocr-prev-modal-bd").classList.remove("on");
   hasStoredOcrData = false;
   deleteOcrGroups().catch(() => {});
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = "image/*";
-  input.multiple = true;
-  input.addEventListener("change", async () => {
-    const files = input.files;
-    if (!files || files.length === 0) return;
+  openOcrSetupModal();
+}
 
-    const btn = $<HTMLButtonElement>("screenshot-btn");
-    btn.classList.add("loading");
-    btn.textContent = t.ui.ocr_reading;
-    const overlay = createLoadingOverlay();
-    const appEl = document.querySelector(".app")!;
-    const statusbar = appEl.querySelector(".statusbar")!;
-    appEl.insertBefore(overlay, statusbar);
+// ========== OCR Setup Modal ==========
 
-    const groups: OcrGroup[] = [];
-    const progress = $("sb-progress");
-    const total = files.length;
-    progress.textContent = fmt(t.ui.ocr_progress, { current: 0, total });
-    progress.style.display = "";
+let ocrSetupFiles: File[] = [];
 
-    let ocrWorker: any = null;
-    try {
-      const { createWorker } = await import("tesseract.js");
-      ocrWorker = await createWorker("eng");
-      await ocrWorker.setParameters({
-        tessedit_char_whitelist: "+0123456789",
-        tessedit_pageseg_mode: "7" as any,
+// OCRフィルター状態（モーダルを開くたびにリセット）
+let ocrSetupFilterRarities: number[] = [];  // rarity値: 2=青, 3=紫, 4=金A, 5=金B
+let ocrSetupFilterTypes: string[] = [];     // "attack" | "device" | "protect"
+
+/** レアリティフィルターの定義（rarity値, i18nキー, アイコンファイル, 背景rarity） */
+const OCR_RARITY_OPTIONS: { rarity: number; key: string; icon: string; bgRarity: number }[] = [
+  { rarity: 2, key: "rarity_sub_blue",   icon: "item_mod_attack2.png", bgRarity: 2 },
+  { rarity: 3, key: "rarity_sub_purple", icon: "item_mod_attack3.png", bgRarity: 3 },
+  { rarity: 4, key: "rarity_sub_gold_a", icon: "item_mod_attack4.png", bgRarity: 4 },
+  { rarity: 5, key: "rarity_sub_gold_b", icon: "item_mod_attack5.png", bgRarity: 4 },
+];
+
+/** 型フィルターの定義（型名, プレフィックス, アイコンファイル） */
+const OCR_TYPE_OPTIONS: { type: string; prefix: number; icon: string }[] = [
+  { type: "attack",  prefix: 55001, icon: "item_mod_attack4.png" },
+  { type: "device",  prefix: 55002, icon: "item_mod_device4.png" },
+  { type: "protect", prefix: 55003, icon: "item_mod_protect4.png" },
+];
+
+function updateOcrFilterBtn(btnId: string, count: number) {
+  const btn = $<HTMLButtonElement>(btnId);
+  if (count === 0) {
+    btn.textContent = t.ui.filter_none;
+    btn.classList.remove("has-items");
+  } else {
+    btn.textContent = fmt(t.ui.filter_count, { count });
+    btn.classList.add("has-items");
+  }
+}
+
+function updateOcrRarityFilterBtn() {
+  updateOcrFilterBtn("ocr-filter-rarity", ocrSetupFilterRarities.length);
+}
+
+function updateOcrTypeFilterBtn() {
+  updateOcrFilterBtn("ocr-filter-type", ocrSetupFilterTypes.length);
+}
+
+function openOcrRarityFlyout(anchor: HTMLElement) {
+  openFlyout(anchor, {
+    mode: "multi",
+    items: OCR_RARITY_OPTIONS.map((opt) => ({
+      value: String(opt.rarity),
+      label: t.ui[opt.key],
+      checked: ocrSetupFilterRarities.includes(opt.rarity),
+      buildContent: () => {
+        const frag = document.createElement("span");
+        frag.className = "fitem-check-content";
+        frag.appendChild(buildModuleIconEl(opt.bgRarity, opt.icon));
+        const span = document.createElement("span");
+        span.textContent = t.ui[opt.key];
+        frag.appendChild(span);
+        return frag;
+      },
+    })),
+    onCheck: (value, checked) => {
+      const r = Number(value);
+      if (checked) ocrSetupFilterRarities.push(r);
+      else {
+        const idx = ocrSetupFilterRarities.indexOf(r);
+        if (idx >= 0) ocrSetupFilterRarities.splice(idx, 1);
+      }
+      updateOcrRarityFilterBtn();
+    },
+  });
+}
+
+function openOcrTypeFlyout(anchor: HTMLElement) {
+  openFlyout(anchor, {
+    mode: "multi",
+    items: OCR_TYPE_OPTIONS.map((opt) => ({
+      value: opt.type,
+      label: t.module_types[String(opt.prefix)] ?? "",
+      checked: ocrSetupFilterTypes.includes(opt.type),
+      buildContent: () => {
+        const frag = document.createElement("span");
+        frag.className = "fitem-check-content";
+        frag.appendChild(buildModuleIconEl(4, opt.icon));
+        const span = document.createElement("span");
+        span.textContent = t.module_types[String(opt.prefix)] ?? "";
+        frag.appendChild(span);
+        return frag;
+      },
+    })),
+    onCheck: (value, checked) => {
+      if (checked) ocrSetupFilterTypes.push(value);
+      else {
+        const idx = ocrSetupFilterTypes.indexOf(value);
+        if (idx >= 0) ocrSetupFilterTypes.splice(idx, 1);
+      }
+      updateOcrTypeFilterBtn();
+    },
+  });
+}
+
+function openOcrSetupModal() {
+  ocrSetupFiles = [];
+  // フィルター状態をリセット
+  ocrSetupFilterRarities = [];
+  ocrSetupFilterTypes = [];
+  // プラットフォーム選択をリセット
+  const mobileRadio = document.querySelector<HTMLInputElement>('input[name="ocr-platform"][value="mobile"]');
+  if (mobileRadio) mobileRadio.checked = true;
+  // フィルターボタンのラベルをリセット
+  updateOcrRarityFilterBtn();
+  updateOcrTypeFilterBtn();
+  renderOcrSetupFileList();
+  $<HTMLButtonElement>("ocr-setup-start").disabled = true;
+  $("ocr-setup-modal-bd").classList.add("on");
+}
+
+function closeOcrSetupModal() {
+  $("ocr-setup-modal-bd").classList.remove("on");
+  ocrSetupFiles = [];
+}
+
+function addOcrSetupFiles(files: FileList | File[]) {
+  for (const f of files) {
+    if (f.type.startsWith("image/")) ocrSetupFiles.push(f);
+  }
+  renderOcrSetupFileList();
+  $<HTMLButtonElement>("ocr-setup-start").disabled = ocrSetupFiles.length === 0;
+}
+
+function renderOcrSetupFileList() {
+  const el = $("ocr-setup-file-count");
+  if (ocrSetupFiles.length === 0) {
+    el.textContent = "";
+  } else {
+    el.textContent = fmt(t.ui.ocr_setup_file_count, { count: ocrSetupFiles.length });
+  }
+}
+
+async function startOcrFromSetup() {
+  const files = ocrSetupFiles;
+  if (files.length === 0) return;
+
+  // プラットフォーム・フィルター取得
+  const platform = (document.querySelector<HTMLInputElement>('input[name="ocr-platform"]:checked')?.value ?? "mobile") as "mobile" | "pc";
+  const customOptions: OcrCustomOptions = {
+    platform,
+    filterRarities: ocrSetupFilterRarities.length > 0 ? [...ocrSetupFilterRarities] : undefined,
+    filterTypes: ocrSetupFilterTypes.length > 0 ? [...ocrSetupFilterTypes] : undefined,
+  };
+
+  closeOcrSetupModal();
+
+  const btn = $<HTMLButtonElement>("screenshot-btn");
+  btn.classList.add("loading");
+  btn.textContent = t.ui.ocr_reading;
+  const overlay = createLoadingOverlay();
+  const appEl = document.querySelector(".app")!;
+  const statusbar = appEl.querySelector(".statusbar")!;
+  appEl.insertBefore(overlay, statusbar);
+
+  const groups: OcrGroup[] = [];
+  const progress = $("sb-progress");
+  const total = files.length;
+  progress.textContent = fmt(t.ui.ocr_progress, { current: 0, total });
+  progress.style.display = "";
+
+  let ocrWorker: any = null;
+  try {
+    const { createWorker } = await import("tesseract.js");
+    ocrWorker = await createWorker("eng");
+    await ocrWorker.setParameters({
+      tessedit_char_whitelist: "+0123456789",
+      tessedit_pageseg_mode: "7" as any,
+    });
+
+    for (let fi = 0; fi < files.length; fi++) {
+      const file = files[fi];
+      const imageUrl = URL.createObjectURL(file);
+      const img = new Image();
+      img.src = imageUrl;
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("Failed to load image"));
       });
+      try {
+        const startId = uuidSeq + 1;
+        const result = await processScreenshot(img, undefined, ocrWorker, customOptions, startId);
+        uuidSeq += result.modules.length;
+        const thumbnailUrl = createThumbnailDataUrl(img, result.rowPositions);
+        groups.push({ imageUrl: thumbnailUrl, modules: result.modules, rowPositions: result.rowPositions });
+      } catch {
+        throw new Error(t.ui.ocr_failed);
+      } finally {
+        URL.revokeObjectURL(imageUrl);
+        img.src = "";
+      }
+      progress.textContent = fmt(t.ui.ocr_progress, { current: fi + 1, total });
+    }
 
-      for (let fi = 0; fi < files.length; fi++) {
-        const file = files[fi];
-        const imageUrl = URL.createObjectURL(file);
+    overlay.remove();
+    btn.classList.remove("loading");
+    btn.textContent = t.ui.btn_screenshot;
+    progress.style.display = "none";
+    openOcrConfirmationModal(groups);
+  } catch (err) {
+    overlay.remove();
+    btn.classList.remove("loading");
+    btn.textContent = t.ui.btn_screenshot;
+    progress.style.display = "none";
+    showToast(err instanceof Error ? err.message : t.ui.ocr_failed, "error");
+  } finally {
+    if (ocrWorker) await ocrWorker.terminate();
+  }
+}
+
+// ========== Screen Capture ==========
+
+let captureStream: MediaStream | null = null;
+let captureOcrGroups: OcrGroup[] = [];
+let captureOcrWorker: any = null;
+let captureOcrQueue: string[] = []; // dataURL のキュー
+let captureOcrProcessing = false;
+let captureOcrTotalShots = 0; // 撮影した総数
+
+// Document Picture-in-Picture
+let capturePipWindow: Window | null = null;
+
+async function openCaptureModal() {
+  await openCapturePipModal();
+  // ステート初期化（PiPウィンドウに移動した後に$()で要素を取得）
+  captureOcrGroups = [];
+  captureOcrQueue = [];
+  captureOcrProcessing = false;
+  captureOcrTotalShots = 0;
+  updateCaptureStatus();
+  $<HTMLButtonElement>("capture-take-btn").disabled = true;
+  $<HTMLButtonElement>("capture-done-btn").disabled = true;
+  $<HTMLButtonElement>("capture-connect-btn").textContent = t.ui.capture_connect;
+  $("capture-preview-wrap").classList.remove("connected");
+  setCaptureStep(1);
+  // プラットフォームをPCソフトに切替
+  const pcRadio = document.querySelector<HTMLInputElement>('input[name="ocr-platform"][value="pc"]');
+  if (pcRadio) pcRadio.checked = true;
+}
+
+function setCaptureStep(step: number) {
+  for (let i = 1; i <= 2; i++) {
+    const el = $(`capture-step-${i}`);
+    el.classList.remove("active", "done");
+    if (i < step) el.classList.add("done");
+    else if (i === step) el.classList.add("active");
+  }
+}
+
+async function closeCaptureModal() {
+  stopCaptureStream();
+  captureOcrGroups = [];
+  captureOcrQueue = [];
+  captureOcrProcessing = false;
+  captureOcrTotalShots = 0;
+  if (captureOcrWorker) {
+    await captureOcrWorker.terminate();
+    captureOcrWorker = null;
+  }
+  closeCapturePip(); // PiPを閉じる（モーダルを元の位置に戻す）
+  $("capture-modal-bd").classList.remove("on");
+}
+
+function stopCaptureStream() {
+  if (captureStream) {
+    captureStream.getTracks().forEach((tr) => tr.stop());
+    captureStream = null;
+  }
+  const video = $<HTMLVideoElement>("capture-video");
+  video.srcObject = null;
+  $("capture-preview-wrap").classList.remove("connected");
+  $<HTMLButtonElement>("capture-take-btn").disabled = true;
+  $<HTMLButtonElement>("capture-connect-btn").textContent = t.ui.capture_connect;
+}
+
+async function connectCapture() {
+  try {
+    stopCaptureStream();
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: false,
+    });
+    captureStream = stream;
+    const video = $<HTMLVideoElement>("capture-video");
+    video.srcObject = stream;
+    $("capture-preview-wrap").classList.add("connected");
+    $<HTMLButtonElement>("capture-connect-btn").textContent = t.ui.capture_reconnect;
+
+    // 接続完了 → 撮影可能（auto+PC予測グリッドのため領域選択不要）
+    $<HTMLButtonElement>("capture-take-btn").disabled = false;
+    setCaptureStep(2);
+
+    stream.getVideoTracks()[0].addEventListener("ended", () => {
+      stopCaptureStream();
+    });
+  } catch {
+    // ユーザーがキャンセル
+  }
+}
+
+async function ensureCaptureOcrWorker() {
+  if (captureOcrWorker) return;
+  const { createWorker } = await import("tesseract.js");
+  captureOcrWorker = await createWorker("eng");
+  await captureOcrWorker.setParameters({
+    tessedit_char_whitelist: "+0123456789",
+    tessedit_pageseg_mode: "7" as any,
+  });
+}
+
+function takeCapture() {
+  if (!captureStream) return;
+  const video = $<HTMLVideoElement>("capture-video");
+  if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
+  // フレームをキャプチャ
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext("2d")!.drawImage(video, 0, 0);
+
+  // フラッシュ演出
+  const flash = document.createElement("div");
+  flash.className = "capture-flash";
+  $("capture-preview-wrap").appendChild(flash);
+  flash.addEventListener("animationend", () => flash.remove());
+
+  // キューに積んでバックグラウンドOCR（auto+PC予測グリッドパイプライン）
+  const dataUrl = canvas.toDataURL("image/png");
+  captureOcrQueue.push(dataUrl);
+  captureOcrTotalShots++;
+  updateCaptureStatus();
+  processCaptureOcrQueue();
+}
+
+async function processCaptureOcrQueue() {
+  if (captureOcrProcessing) return; // 既に処理中なら何もしない
+  captureOcrProcessing = true;
+
+  try {
+    await ensureCaptureOcrWorker();
+
+    while (captureOcrQueue.length > 0) {
+      const dataUrl = captureOcrQueue.shift()!;
+
+      updateCaptureStatus();
+
+      try {
         const img = new Image();
-        img.src = imageUrl;
+        img.src = dataUrl;
         await new Promise<void>((resolve, reject) => {
           img.onload = () => resolve();
-          img.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
+          img.onerror = () => reject(new Error("Failed to load image"));
         });
-        try {
-          const detected = await processScreenshot(img, undefined, ocrWorker);
-          if (detected.length > 0) {
-            const thumbnailUrl = createThumbnailDataUrl(img);
-            groups.push({ imageUrl: thumbnailUrl, modules: detected });
-          }
-        } catch {
-          throw new Error(t.ui.ocr_failed);
-        } finally {
-          URL.revokeObjectURL(imageUrl);
-          img.src = "";
-        }
-        progress.textContent = fmt(t.ui.ocr_progress, { current: fi + 1, total });
+
+        // auto+PC: 予測グリッドパイプラインで処理（領域指定不要）
+        const customOptions: OcrCustomOptions = { platform: "pc" };
+        const startId = uuidSeq + 1;
+        const result = await processScreenshot(img, undefined, captureOcrWorker, customOptions, startId);
+        uuidSeq += result.modules.length;
+        const thumbnailUrl = createThumbnailDataUrl(img, result.rowPositions);
+        captureOcrGroups.push({ imageUrl: thumbnailUrl, modules: result.modules, rowPositions: result.rowPositions });
+        img.src = "";
+      } catch {
+        // 1枚失敗しても続行
       }
 
-      overlay.remove();
-      btn.classList.remove("loading");
-      btn.textContent = t.ui.btn_screenshot;
-      progress.style.display = "none";
-      if (groups.length === 0) {
-        showToast(t.ui.ocr_no_detect, "error");
-      } else {
-        openOcrConfirmationModal(groups);
-      }
-    } catch (err) {
-      overlay.remove();
-      btn.classList.remove("loading");
-      btn.textContent = t.ui.btn_screenshot;
-      progress.style.display = "none";
-      showToast(err instanceof Error ? err.message : t.ui.ocr_failed, "error");
-    } finally {
-      if (ocrWorker) await ocrWorker.terminate();
+      updateCaptureStatus();
     }
-  });
-  input.click();
+  } finally {
+    captureOcrProcessing = false;
+    updateCaptureStatus();
+  }
+}
+
+function updateCaptureStatus() {
+  const el = $("capture-status");
+  const done = captureOcrGroups.length;
+  const total = captureOcrTotalShots;
+  const pending = captureOcrQueue.length;
+
+  if (total > 0) {
+    const totalModules = captureOcrGroups.reduce((s, g) => s + g.modules.length, 0);
+    el.textContent = fmt(t.ui.capture_result, { done, total, modules: totalModules });
+  } else {
+    el.textContent = "";
+  }
+
+  // 未処理があれば編集ボタン無効
+  const hasPending = pending > 0 || captureOcrProcessing;
+  $<HTMLButtonElement>("capture-done-btn").disabled = done === 0 || hasPending;
+}
+
+async function finishCapture() {
+  stopCaptureStream();
+  closeCapturePip(); // PiPを閉じてモーダルを元に戻す
+
+  // キューに残りがあれば処理完了を待つ
+  if (captureOcrQueue.length > 0 || captureOcrProcessing) {
+    $<HTMLButtonElement>("capture-done-btn").disabled = true;
+    $<HTMLButtonElement>("capture-take-btn").disabled = true;
+    // 処理完了を待機
+    while (captureOcrQueue.length > 0 || captureOcrProcessing) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
+  if (captureOcrGroups.length > 0) {
+    const groups = [...captureOcrGroups];
+    captureOcrGroups = [];
+    if (captureOcrWorker) {
+      await captureOcrWorker.terminate();
+      captureOcrWorker = null;
+    }
+    $("capture-modal-bd").classList.remove("on");
+    closeOcrSetupModal();
+    openOcrConfirmationModal(groups);
+  }
+}
+
+// ========== Document Picture-in-Picture ==========
+
+function closeCapturePip() {
+  if (!capturePipWindow) return;
+  // モーダル要素を元の親に戻す
+  const modal = capturePipWindow.document.querySelector(".capture-modal");
+  if (modal) $("capture-modal-bd").appendChild(modal);
+  const win = capturePipWindow;
+  capturePipWindow = null; // pagehideハンドラの重複実行を防止
+  if (!win.closed) win.close();
+}
+
+async function openCapturePipModal() {
+  const dpip = (window as any).documentPictureInPicture;
+  if (!dpip) return;
+
+  // モーダルの実際の高さを測定してPiPサイズを決定
+  const modal = document.querySelector<HTMLElement>(".capture-modal")!;
+  const bd = $("capture-modal-bd");
+  bd.style.visibility = "hidden";
+  bd.classList.add("on");
+  const pipH = Math.min(modal.scrollHeight, Math.round(window.screen.availHeight * 0.85));
+  bd.classList.remove("on");
+  bd.style.visibility = "";
+  const pipWin: Window = await dpip.requestWindow({ width: 640, height: pipH });
+  capturePipWindow = pipWin;
+
+  // メインページのスタイルシートをPiPにコピー
+  for (const sheet of document.styleSheets) {
+    try {
+      const css = [...sheet.cssRules].map((r) => r.cssText).join("\n");
+      const s = pipWin.document.createElement("style");
+      s.textContent = css;
+      pipWin.document.head.appendChild(s);
+    } catch {
+      if (sheet.href) {
+        const link = pipWin.document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = sheet.href;
+        pipWin.document.head.appendChild(link);
+      }
+    }
+  }
+
+  // PiP用のオーバーライドスタイル
+  const overrideStyle = pipWin.document.createElement("style");
+  overrideStyle.textContent = `
+    body { margin:0; background:var(--bg1,#1a1a2e); overflow:hidden; }
+    .capture-modal {
+      max-height:100vh; height:100vh; width:100%; max-width:100%;
+      margin:0; border:none; border-radius:0; box-shadow:none;
+      animation:none;
+    }
+  `;
+  pipWin.document.head.appendChild(overrideStyle);
+
+  // モーダル要素をPiPウィンドウに移動
+  pipWin.document.body.appendChild(modal);
+
+  // PiPウィンドウが閉じられた時（ユーザーが×ボタンで閉じた場合）
+  pipWin.addEventListener("pagehide", () => {
+    if (!capturePipWindow) return; // closeCapturePip経由の場合はスキップ
+    // モーダルを元に戻してからクリーンアップ
+    const modal = capturePipWindow.document.querySelector(".capture-modal");
+    if (modal) $("capture-modal-bd").appendChild(modal);
+    capturePipWindow = null;
+    closeCaptureModal();
+  }, { once: true });
+}
+
+
+// ========== License Modal ==========
+
+async function showLicenseModal() {
+  const body = $("license-modal-body");
+  body.textContent = "";
+  const loading = document.createElement("div");
+  loading.textContent = "Loading...";
+  loading.style.cssText = "text-align:center;padding:20px;color:var(--tx3)";
+  body.appendChild(loading);
+  $("license-modal-bd").classList.add("on");
+
+  try {
+    const res = await fetch("/licenses.json");
+    if (!res.ok) throw new Error("Failed to load");
+    const data: { name: string; version?: string; license?: string; repository?: string }[] = await res.json();
+    body.textContent = "";
+    data.forEach((pkg) => {
+      const item = document.createElement("div");
+      item.className = "license-item";
+      const nameEl = document.createElement("div");
+      nameEl.className = "license-item-name";
+      if (pkg.repository) {
+        const a = document.createElement("a");
+        a.href = pkg.repository;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = pkg.name + (pkg.version ? ` v${pkg.version}` : "");
+        nameEl.appendChild(a);
+      } else {
+        nameEl.textContent = pkg.name + (pkg.version ? ` v${pkg.version}` : "");
+      }
+      item.appendChild(nameEl);
+      if (pkg.license) {
+        const typeEl = document.createElement("div");
+        typeEl.className = "license-item-type";
+        typeEl.textContent = pkg.license;
+        item.appendChild(typeEl);
+      }
+      body.appendChild(item);
+    });
+  } catch {
+    body.textContent = "";
+    const err = document.createElement("div");
+    err.textContent = "Failed to load license information.";
+    err.style.cssText = "text-align:center;padding:20px;color:var(--tx3)";
+    body.appendChild(err);
+  }
 }
 
 // ========== Loading overlay ==========
@@ -2011,7 +2603,7 @@ function importJson() {
         const imported: ModuleInput[] = [];
         for (const item of raw) {
           if (typeof item !== "object" || item === null) continue;
-          // Extract stats: support both Tauri format ({name, part_id, value}) and Web format ({part_id, value})
+          // ステータス抽出: Tauri形式({name, part_id, value})とWeb形式({part_id, value})の両方に対応
           const stats: StatEntry[] = [];
           if (Array.isArray(item.stats)) {
             for (const s of item.stats) {
@@ -2021,7 +2613,7 @@ function importJson() {
             }
           }
           if (stats.length === 0) continue;
-          const uuid = Date.now() + Math.floor(Math.random() * 1000);
+          const uuid = nextUuid();
           const config_id = typeof item.config_id === "number" ? item.config_id : null;
           const quality = typeof item.quality === "number" ? item.quality : null;
           imported.push({ uuid, config_id, quality, stats });
@@ -2121,6 +2713,21 @@ function closeSidebar() {
   $("sidebar-bd").classList.remove("on");
 }
 
+/** 登録済みモジュールのuuidを1から連番に振り直す */
+function dataCleanup() {
+  if (modules.length === 0) {
+    showToast(t.ui.data_refresh_empty, "error");
+    return;
+  }
+  for (let i = 0; i < modules.length; i++) {
+    modules[i].uuid = i + 1;
+  }
+  uuidSeq = modules.length;
+  saveModulesToStorage();
+  renderGrid();
+  showToast(t.ui.data_refresh_done, "success");
+}
+
 function switchLanguage(code: string) {
   saveLang(code);
   applyI18n();
@@ -2131,12 +2738,12 @@ function switchLanguage(code: string) {
   updateOptBtnLabel("req");
   updateOptBtnLabel("des");
   updateOptBtnLabel("excl");
-  // Re-render opt results if visible
+  // 最適化結果が表示中なら再描画
   const resultsEl = $("opt-results");
   if (resultsEl.style.display !== "none") {
     restoreOptResults();
   }
-  // Update opt-empty
+  // 空状態メッセージを更新
   const emptyEl = $("opt-empty");
   if (emptyEl.style.display !== "none") {
     emptyEl.textContent = "";
@@ -2158,12 +2765,12 @@ document.addEventListener("gesturechange", (e) => e.preventDefault(), { passive:
 document.addEventListener("gestureend", (e) => e.preventDefault(), { passive: false } as any);
 document.addEventListener("dblclick", (e) => e.preventDefault());
 
-let lastTouchEnd = 0;
-document.addEventListener("touchend", (e) => {
-  const now = Date.now();
-  if (now - lastTouchEnd <= 300) e.preventDefault();
-  lastTouchEnd = now;
-}, { passive: false });
+// let lastTouchEnd = 0;
+// document.addEventListener("touchend", (e) => {
+//   const now = Date.now();
+//   if (now - lastTouchEnd <= 300) e.preventDefault();
+//   lastTouchEnd = now;
+// }, { passive: false });
 
 document.addEventListener("touchmove", (e) => {
   if (e.touches.length > 1) e.preventDefault();
@@ -2309,36 +2916,54 @@ function setupImagePinchZoom(container: HTMLElement, gi: number) {
     mouseDown = false;
     container.style.cursor = "";
     if (didDrag) return;
-    // click (no drag) → toggle zoom
+    // クリック（ドラッグなし）→ ズームの切替
     const rect = container.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
     if (scale <= 1) {
-      // zoom in to 2x, centering on click point
+      // クリック位置を中心に2倍に拡大
       const newScale = 2;
       translateX = clickX - clickX * newScale;
       translateY = clickY - clickY * newScale;
       scale = newScale;
       clampTranslate();
     } else {
-      // zoom out to 1x
+      // 等倍に戻す
       scale = 1;
       translateX = 0;
       translateY = 0;
     }
     applyTransform();
   });
+
+  // ---- PC: Ctrl + ホイールで拡大縮小 ----
+  container.addEventListener("wheel", (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const rect = container.getBoundingClientRect();
+    const cursorX = e.clientX - rect.left;
+    const cursorY = e.clientY - rect.top;
+    const oldScale = scale;
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    scale = Math.min(5, Math.max(1, scale * factor));
+    // カーソル位置を基準にズームするよう平行移動を補正
+    translateX = cursorX - (cursorX - translateX) * (scale / oldScale);
+    translateY = cursorY - (cursorY - translateY) * (scale / oldScale);
+    clampTranslate();
+    applyTransform();
+  }, { passive: false });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   initLang();
   applyI18n();
   document.documentElement.lang = getSavedLang() === "ko" ? "ko" : getSavedLang() === "en" ? "en" : "ja";
+  initDropdowns();
 
   loadModulesFromStorage();
   hasOcrGroups().then((v) => { hasStoredOcrData = v; }).catch(() => {});
 
-  // Tabs
+  // タブ切替
   document.querySelectorAll<HTMLElement>(".tab").forEach((tab) => {
     tab.onclick = () => {
       document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
@@ -2368,10 +2993,18 @@ document.addEventListener("DOMContentLoaded", () => {
       const icon = STAT_ICONS[id];
       return { label: statName(id), val: String(id), disabled: ex.has(String(id)), iconSrc: icon ? `/icons/${icon}` : undefined };
     });
-    openFly("fly-s", e.currentTarget as HTMLElement, [...extraItems, ...statItems], (it) => {
-      sortKeys.push({ k: it.val, d: 1 });
-      renderSChips();
-      renderGrid();
+    openFlyout(e.currentTarget as HTMLElement, {
+      mode: "single",
+      items: [...extraItems, ...statItems].map((it) => ({
+        value: it.val,
+        label: it.label,
+        icon: (it as any).iconSrc,
+        disabled: it.disabled,
+      })),
+      onSelect: (val) => {
+        const it = [...extraItems, ...statItems].find((x) => x.val === val);
+        if (it) { sortKeys.push({ k: it.val, d: 1 }); renderSChips(); renderGrid(); }
+      },
     });
   };
 
@@ -2390,7 +3023,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target === $("detail-modal-bd")) closeDetailModal();
   };
 
-  $("opt-quality").onchange = () => { minQuality = Number($<HTMLSelectElement>("opt-quality").value); saveOptState(); };
+  $("opt-quality").addEventListener("change", () => { minQuality = Number($("opt-quality").dataset.value); saveOptState(); });
   $("opt-run").onclick = () => runOptimize();
 
   $("speed-info-btn").onclick = () => {
@@ -2415,40 +3048,35 @@ document.addEventListener("DOMContentLoaded", () => {
   $("speed-info-bd").onclick = (e) => { if (e.target === $("speed-info-bd")) $("speed-info-bd").classList.remove("on"); };
 
   renderPatternSelect();
-  $("pattern-select").onchange = () => updatePatternButtons();
+  $("pattern-select").addEventListener("change", () => updatePatternButtons());
   $("pattern-load").onclick = () => {
-    const idx = Number($<HTMLSelectElement>("pattern-select").value);
+    const idx = Number($("pattern-select").dataset.value);
     if (!isNaN(idx) && idx >= 0) loadPattern(idx);
   };
   const patsaveBd = $("patsave-modal-bd");
   const patsaveInput = $<HTMLInputElement>("patsave-name");
-  const patsaveMode = $<HTMLSelectElement>("patsave-mode");
+  const patsaveModeDd = $("patsave-mode");
   const patsaveNameRow = $("patsave-name-row");
 
   const updatePatsaveNameRow = () => {
-    const isNew = patsaveMode.value === "new";
+    const isNew = (patsaveModeDd.dataset.value ?? "") === "new";
     patsaveNameRow.style.display = isNew ? "block" : "none";
   };
-  patsaveMode.onchange = updatePatsaveNameRow;
+  patsaveModeDd.addEventListener("change", updatePatsaveNameRow);
 
   const openPatsaveModal = () => {
-    const patSel = $<HTMLSelectElement>("pattern-select");
-    const selectedIdx = patSel.value;
+    const patSelDd = $("pattern-select");
+    const selectedIdx = patSelDd.dataset.value ?? "";
     const patterns = getPatterns();
-    patsaveMode.textContent = "";
+    const options: { value: string; label: string }[] = [];
 
     if (selectedIdx !== "" && patterns[Number(selectedIdx)]) {
       const p = patterns[Number(selectedIdx)];
-      const overwriteOpt = document.createElement("option");
-      overwriteOpt.value = "overwrite";
-      overwriteOpt.textContent = fmt(t.ui.pattern_overwrite, { name: p.name });
-      patsaveMode.appendChild(overwriteOpt);
+      options.push({ value: "overwrite", label: fmt(t.ui.pattern_overwrite, { name: p.name }) });
     }
-    const newOpt = document.createElement("option");
-    newOpt.value = "new";
-    newOpt.textContent = t.ui.pattern_new;
-    patsaveMode.appendChild(newOpt);
+    options.push({ value: "new", label: t.ui.pattern_new });
 
+    updateDropdownOptions(patsaveModeDd, options, options[0].value);
     patsaveInput.value = "";
     updatePatsaveNameRow();
     patsaveBd.classList.add("on");
@@ -2457,12 +3085,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const closePatsaveModal = () => { patsaveBd.classList.remove("on"); };
 
   const confirmPatsave = () => {
-    const mode = patsaveMode.value;
-    const quality = Number($<HTMLSelectElement>("opt-quality").value);
+    const mode = patsaveModeDd.dataset.value ?? "";
+    const quality = Number($("opt-quality").dataset.value);
     const patterns = getPatterns();
 
     if (mode === "overwrite") {
-      const idx = Number($<HTMLSelectElement>("pattern-select").value);
+      const idx = Number($("pattern-select").dataset.value);
       const existing = patterns[idx];
       if (!existing) return;
       const entry: OptPattern = { name: existing.name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality, min_required: [...optMinRequired], min_desired: [...optMinDesired] };
@@ -2470,7 +3098,7 @@ document.addEventListener("DOMContentLoaded", () => {
       savePatterns(patterns);
       closePatsaveModal();
       renderPatternSelect();
-      $<HTMLSelectElement>("pattern-select").value = String(idx);
+      setDropdownValue($("pattern-select"), String(idx));
       updatePatternButtons();
     } else {
       const name = patsaveInput.value.trim();
@@ -2482,7 +3110,7 @@ document.addEventListener("DOMContentLoaded", () => {
       savePatterns(patterns);
       closePatsaveModal();
       renderPatternSelect();
-      $<HTMLSelectElement>("pattern-select").value = String(duplicateIdx >= 0 ? duplicateIdx : patterns.length - 1);
+      setDropdownValue($("pattern-select"), String(duplicateIdx >= 0 ? duplicateIdx : patterns.length - 1));
       updatePatternButtons();
     }
   };
@@ -2498,9 +3126,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const closePatdelModal = () => { patdelBd.classList.remove("on"); };
   let patdelIdx = -1;
   $("pattern-delete").onclick = () => {
-    const sel = $<HTMLSelectElement>("pattern-select");
-    const idx = Number(sel.value);
-    if (sel.value === "" || isNaN(idx) || idx < 0) return;
+    const selVal = $("pattern-select").dataset.value ?? "";
+    const idx = Number(selVal);
+    if (selVal === "" || isNaN(idx) || idx < 0) return;
     const patterns = getPatterns();
     const p = patterns[idx];
     if (!p) return;
@@ -2528,6 +3156,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ocr-register").onclick = registerOcrModules;
   $("ocr-cancel").onclick = cancelOcrModal;
   $("ocr-modal-close").onclick = closeOcrModal;
+  ($("ocr-new-only") as HTMLInputElement).onchange = applyOcrNewOnlyFilter;
   $("ocr-prev").onclick = () => { ocrCurrentPage--; renderOcrModalBody(); $("ocr-modal-body").querySelector(".ocr-group-list")?.scrollTo(0, 0); };
   $("ocr-next").onclick = () => { ocrCurrentPage++; renderOcrModalBody(); $("ocr-modal-body").querySelector(".ocr-group-list")?.scrollTo(0, 0); };
 
@@ -2545,6 +3174,69 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   $("ocr-prev-modal-close").onclick = () => $("ocr-prev-modal-bd").classList.remove("on");
   $("ocr-prev-modal-bd").onclick = (e) => { if (e.target === $("ocr-prev-modal-bd")) $("ocr-prev-modal-bd").classList.remove("on"); };
+
+  // OCR Setup modal
+  $("ocr-setup-close").onclick = () => closeOcrSetupModal();
+  $("ocr-setup-cancel").onclick = () => closeOcrSetupModal();
+  $("ocr-setup-start").onclick = () => startOcrFromSetup();
+  $("ocr-filter-rarity").onclick = (e) => openOcrRarityFlyout(e.currentTarget as HTMLElement);
+  $("ocr-filter-type").onclick = (e) => openOcrTypeFlyout(e.currentTarget as HTMLElement);
+  $("ocr-setup-modal-bd").onclick = (e) => { if (e.target === $("ocr-setup-modal-bd")) closeOcrSetupModal(); };
+  // Dropzone
+  const dropzone = $("ocr-setup-dropzone");
+  dropzone.onclick = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.multiple = true;
+    input.onchange = () => { if (input.files) addOcrSetupFiles(input.files); };
+    input.click();
+  };
+  dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("dragover"); });
+  dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+  dropzone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropzone.classList.remove("dragover");
+    if (e.dataTransfer?.files) addOcrSetupFiles(e.dataTransfer.files);
+  });
+  document.addEventListener("paste", (e) => {
+    if (!$("ocr-setup-modal-bd").classList.contains("on")) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length > 0) addOcrSetupFiles(files);
+  });
+
+  // Screen Capture（Chromium系 + Document PiP対応ブラウザのみ）
+  const isDesktop = !!(window as any).chrome
+    && !!(navigator.mediaDevices && "getDisplayMedia" in navigator.mediaDevices)
+    && "documentPictureInPicture" in window;
+  if (isDesktop) {
+    $("capture-open-btn").style.display = "";
+  } else {
+    const dropText = document.querySelector<HTMLElement>(".ocr-setup-dropzone-text");
+    if (dropText) dropText.textContent = t.ui.ocr_setup_drop_text_mobile;
+  }
+  $("capture-open-btn").onclick = () => {
+    $("ocr-setup-modal-bd").classList.remove("on");
+    openCaptureModal();
+  };
+  $("capture-cancel-btn").onclick = () => closeCaptureModal();
+  $("capture-modal-bd").onclick = (e) => { if (e.target === $("capture-modal-bd")) closeCaptureModal(); };
+  $("capture-connect-btn").onclick = () => connectCapture();
+  $("capture-take-btn").onclick = () => takeCapture();
+  $("capture-done-btn").onclick = () => finishCapture();
+
+  // License modal
+  $("btn-licenses").onclick = () => { closeSidebar(); showLicenseModal(); };
+  $("license-modal-close").onclick = () => $("license-modal-bd").classList.remove("on");
+  $("license-modal-bd").onclick = (e) => { if (e.target === $("license-modal-bd")) $("license-modal-bd").classList.remove("on"); };
 
   $("manual-btn").onclick = () => openManualInputModal();
   $("manual-modal-close").onclick = closeManualModal;
@@ -2567,6 +3259,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Sidebar
   $("backup-export-btn").onclick = () => exportBackup();
+  $("data-cleanup-btn").onclick = () => dataCleanup();
   $("hamburger-btn").onclick = () => openSidebar();
   $("sidebar-close").onclick = () => closeSidebar();
   $("sidebar-bd").onclick = () => closeSidebar();
