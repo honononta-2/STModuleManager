@@ -1452,8 +1452,8 @@ function predictedGridDetectRows(
 ): { y: number; score: number }[] {
   if (colXs.length === 0) return [];
 
-  // Y範囲でROIを切り出し（マージン付き）
-  const roiY0 = Math.max(0, yMin - iconSize);
+  // Y範囲でROIを切り出し（下端のみマージン付き）
+  const roiY0 = yMin;
   const roiY1 = Math.min(grayEq.rows, yMax + iconSize);
   const roiH = roiY1 - roiY0;
   if (roiH < iconSize * 2) return [];
