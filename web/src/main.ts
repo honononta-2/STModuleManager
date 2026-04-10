@@ -3099,7 +3099,6 @@ document.addEventListener("DOMContentLoaded", () => {
     $("ocr-setup-modal-bd").classList.remove("on");
     openCaptureModal();
   };
-  $("capture-modal-close").onclick = () => closeCaptureModal();
   $("capture-cancel-btn").onclick = () => closeCaptureModal();
   $("capture-modal-bd").onclick = (e) => { if (e.target === $("capture-modal-bd")) closeCaptureModal(); };
   $("capture-connect-btn").onclick = () => connectCapture();
