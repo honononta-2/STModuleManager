@@ -143,10 +143,10 @@ The candidate count N can be adjusted via the search precision setting.
 
 After filtering, **multi-core parallel search** via Rayon and **branch pruning** (cutting off when the optimistic upper-bound score — adding +20 to remaining stats after choosing 2 — falls below the current best) are combined to complete the search within a practical time on CPU.
 
-## License
-
-The code in this repository is released under the [MIT License + Commons Clause](LICENSE). You are free to use, modify, and redistribute it, but **selling it is prohibited**.
+## Copyright Notice
 
 Copyrights for in-game images and assets included in this tool belong to the game company.
+
+## Contact
 
 Bug reports, requests, and inquiries: please use [Issues](../../issues).
