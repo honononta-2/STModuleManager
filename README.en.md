@@ -145,7 +145,7 @@ After filtering, **multi-core parallel search** via Rayon and **branch pruning**
 
 ## License
 
-The code in this repository may be freely used, modified, and redistributed. No attribution required. However, selling it for profit is prohibited.
+The code in this repository is released under the [MIT License + Commons Clause](LICENSE). You are free to use, modify, and redistribute it, but **selling it is prohibited**.
 
 Copyrights for in-game images and assets included in this tool belong to the game company.
 
