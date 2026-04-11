@@ -262,12 +262,11 @@ function statIcon(partId: number): string {
   return icon ? `<img class="sicon" src="/icons/${icon}" alt="">` : "";
 }
 
-type Rarity = "orange" | "gold" | "purple" | "blue";
-const RARITY_ORDER: Record<Rarity, number> = { orange: 4, gold: 3, purple: 2, blue: 1 };
+type Rarity = "gold" | "purple" | "blue";
+const RARITY_ORDER: Record<Rarity, number> = { gold: 3, purple: 2, blue: 1 };
 
 function qualityToRarity(q: number | null): Rarity {
-  if (q === 5) return "gold";
-  if (q === 4) return "gold";
+  if (q === 5 || q === 4) return "gold";
   if (q === 3) return "purple";
   return "blue";
 }
@@ -336,8 +335,6 @@ let optDesired: number[] = [];
 let optExcluded: number[] = [];
 let optMinRequired: number[] = [];
 let optMinDesired: number[] = [];
-let minQuality = 3;
-
 // --- Multi Web Worker ---
 const numWorkers = Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) * 0.9));
 const workers: Worker[] = [];
@@ -789,8 +786,6 @@ function loadPattern(idx: number) {
   optMinDesired = Array.isArray(p.min_desired) ? p.min_desired.filter((id) => ALL_STAT_IDS.includes(id) && optDesired.includes(id)) : [];
   if (p.quality) setDropdownValue($("opt-quality"), String(p.quality));
   updateOptBtnLabel("req");
-  updateOptBtnLabel("des");
-  updateOptBtnLabel("excl");
   updateOptRunBtn();
   saveOptState();
 }
@@ -1428,7 +1423,6 @@ function updateOcrPager() {
 
 function renderOcrModalBody() {
   const body = $("ocr-modal-body");
-  const allMods = allPendingModules();
 
   if (pendingOcrGroups.length === 0) {
     body.textContent = "";
@@ -2890,8 +2884,6 @@ function switchLanguage(code: string) {
   renderPatternSelect();
   updateFilterBtnLabel();
   updateOptBtnLabel("req");
-  updateOptBtnLabel("des");
-  updateOptBtnLabel("excl");
   // 最適化結果が表示中なら再描画
   const resultsEl = $("opt-results");
   if (resultsEl.style.display !== "none") {
@@ -2918,13 +2910,6 @@ document.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: 
 document.addEventListener("gesturechange", (e) => e.preventDefault(), { passive: false } as any);
 document.addEventListener("gestureend", (e) => e.preventDefault(), { passive: false } as any);
 document.addEventListener("dblclick", (e) => e.preventDefault());
-
-// let lastTouchEnd = 0;
-// document.addEventListener("touchend", (e) => {
-//   const now = Date.now();
-//   if (now - lastTouchEnd <= 300) e.preventDefault();
-//   lastTouchEnd = now;
-// }, { passive: false });
 
 document.addEventListener("touchmove", (e) => {
   if (e.touches.length > 1) e.preventDefault();
@@ -3177,7 +3162,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target === $("detail-modal-bd")) closeDetailModal();
   };
 
-  $("opt-quality").addEventListener("change", () => { minQuality = Number($("opt-quality").dataset.value); saveOptState(); });
+  $("opt-quality").addEventListener("change", () => { saveOptState(); });
   $("opt-run").onclick = () => runOptimize();
 
   $("speed-info-btn").onclick = () => {
@@ -3443,8 +3428,6 @@ document.addEventListener("DOMContentLoaded", () => {
   restoreOptState();
   restoreOptResults();
   updateOptBtnLabel("req");
-  updateOptBtnLabel("des");
-  updateOptBtnLabel("excl");
   updateOptRunBtn();
   updateFilterBtnLabel();
   renderSChips();
