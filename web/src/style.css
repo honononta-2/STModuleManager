@@ -1063,7 +1063,7 @@ body {
   width:100%;
 }
 .ocr-stat-row .uni-dd { flex:1; min-width:0; }
-.ocr-stat-value { width:70px; flex:0 0 70px; }
+.ocr-stat-row .ocr-stat-value { width:70px; flex:0 0 70px; }
 
 .ocr-stat-remove {
   width:24px; height:24px; border-radius:4px;
@@ -1075,6 +1075,16 @@ body {
   padding:0;
 }
 .ocr-stat-remove:hover, .ocr-row-remove:hover { background:rgba(196,43,28,0.08); color:#c42b1c; }
+
+.ocr-stat-warn {
+  width:24px; height:24px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  color:#e8a000;
+}
+.ocr-stat-warn.hidden { visibility:hidden; }
+.ocr-row.ocr-row--warn { border-color:#e8a000; }
+.ocr-add-stat-row { display:flex; align-items:center; gap:6px; width:100%; }
+.ocr-add-stat-row .addbtn { flex:0 0 calc(100% - 30px); }
 
 .ocr-row-remove {
   width:24px; height:24px; border-radius:4px;

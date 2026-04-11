@@ -95,6 +95,40 @@ export function configIdToIcon(configId: number | null): { icon: string; bgRarit
   };
 }
 
+/**
+ * 型(typeDigit) × 位置(slot) ごとに付くことができるステータスのpart_idセット
+ * typeDigit: 1=攻撃, 2=支援, 3=防御
+ * slot: "1st" = 左列(1st Link Effect), "2nd3rd" = 中央・右列(2nd & 3rd Link Effect)
+ */
+export const VALID_STATS_BY_TYPE_SLOT: Record<number, { "1st": Set<number>; "2nd3rd": Set<number> }> = {
+  // 攻撃型
+  1: {
+    "1st": new Set([1110, 1111, 1112, 1113, 1114, 1407, 1408, 1409, 1410, 2104, 2105, 2404, 2405]),
+    "2nd3rd": new Set([1110, 1111, 1112, 1113, 1114, 1407, 1408, 1409, 1410]),
+  },
+  // 支援型
+  2: {
+    "1st": new Set([1205, 1206, 1407, 1408, 1409, 1410, 2204, 2205, 2404, 2405, 2406]),
+    "2nd3rd": new Set([1205, 1206, 1407, 1408, 1409, 1410]),
+  },
+  // 防御型
+  3: {
+    "1st": new Set([1307, 1308, 1407, 1408, 1409, 1410, 2304, 2404, 2405]),
+    "2nd3rd": new Set([1307, 1308, 1407, 1408, 1409, 1410]),
+  },
+};
+
+/** 指定の型・位置でそのステータスが有効かチェック */
+export function isStatValidForTypeSlot(typeDigit: number, slotIndex: number, partId: number): boolean {
+  const entry = VALID_STATS_BY_TYPE_SLOT[typeDigit];
+  if (!entry) return true; // 型不明なら警告しない
+  const slot = slotIndex === 0 ? "1st" : "2nd3rd";
+  return entry[slot].has(partId);
+}
+
+/** レアリティ(raritySub)ごとの期待ステータス数 */
+export const EXPECTED_STAT_COUNT: Record<number, number> = { 1: 1, 2: 2, 3: 3, 4: 3 };
+
 /** モジュールアイコン: 型(英名) × レアリティ → ファイル名 */
 export const MODULE_ICONS: { type: string; rarity: number; file: string }[] = [];
 for (const [typeDigit, typeName] of Object.entries(CONFIG_TYPE_MAP)) {

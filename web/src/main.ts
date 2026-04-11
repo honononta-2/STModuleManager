@@ -1,5 +1,5 @@
 import {
-  STAT_ICONS, ALL_STAT_IDS, configIdToIcon,
+  STAT_ICONS, ALL_STAT_IDS, configIdToIcon, isStatValidForTypeSlot, EXPECTED_STAT_COUNT,
 } from "@shared/stats";
 import type {
   Combination, CombinationModule, ModuleInput, OptimizeRequest,
@@ -1486,19 +1486,33 @@ function renderOcrModalBody() {
     const raritySub = comp?.raritySub ?? 2;
 
     const row = document.createElement("div");
-    row.className = "ocr-row" + (isModuleDuplicate(m) ? " ocr-row--duplicate" : "");
     row.dataset.gi = String(gi);
     row.dataset.mi = String(mi);
 
+    const expected = EXPECTED_STAT_COUNT[raritySub] ?? 3;
+    const tooFew = m.stats.length < expected;
+    const hasInvalidStat = tooFew || m.stats.some((s, si) => si >= expected || !isStatValidForTypeSlot(typeDigit, si, s.part_id));
+    row.className = "ocr-row"
+      + (isModuleDuplicate(m) ? " ocr-row--duplicate" : "")
+      + (hasInvalidStat ? " ocr-row--warn" : "");
+
     const statsHtml = m.stats.map((s, si) => {
+      const tooMany = si >= expected;
+      const typeMismatch = !tooMany && !isStatValidForTypeSlot(typeDigit, si, s.part_id);
+      const warn = tooMany || typeMismatch;
+      const warnTitle = tooMany ? t.ui.stat_count_mismatch : t.ui.stat_type_mismatch;
       return `<div class="ocr-stat-row">
         ${statDropdownHtml("ocr-stat-name", s.part_id, { gi: String(gi), mi: String(mi), si: String(si) })}
         ${valueDropdownHtml(s.value, "ocr-stat-value", { gi: String(gi), mi: String(mi), si: String(si) })}
         <button class="ocr-stat-remove" data-gi="${gi}" data-mi="${mi}" data-si="${si}">&times;</button>
+        <span class="ocr-stat-warn${warn ? "" : " hidden"}" data-gi="${gi}" data-mi="${mi}" data-si="${si}" title="${warnTitle}"><img src="icons/triangle-alert.svg" width="18" height="18"></span>
       </div>`;
     }).join("");
+    const countWarnHtml = tooFew
+      ? `<span class="ocr-stat-warn" title="${t.ui.stat_count_mismatch}"><img src="icons/triangle-alert.svg" width="18" height="18"></span>`
+      : "";
     const addStatHtml = m.stats.length < 3
-      ? `<button class="addbtn ocr-add-stat" data-gi="${gi}" data-mi="${mi}">${t.ui.add_stat}</button>`
+      ? `<div class="ocr-add-stat-row"><button class="addbtn ocr-add-stat" data-gi="${gi}" data-mi="${mi}">${t.ui.add_stat}</button>${countWarnHtml}</div>`
       : "";
 
     row.innerHTML = [
@@ -1570,9 +1584,11 @@ function renderOcrModalBody() {
   });
   body.querySelectorAll<HTMLElement>(".ocr-stat-name").forEach((dd) => {
     dd.addEventListener("change", () => {
-      pendingOcrGroups[Number(dd.dataset.gi)].modules[Number(dd.dataset.mi)].stats[Number(dd.dataset.si)].part_id = Number(dd.dataset.value);
+      const gi = Number(dd.dataset.gi), mi = Number(dd.dataset.mi);
+      pendingOcrGroups[gi].modules[mi].stats[Number(dd.dataset.si)].part_id = Number(dd.dataset.value);
       saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
       refreshOcrDuplicateState();
+      updateStatWarnings(gi, mi);
     });
   });
   body.querySelectorAll<HTMLElement>(".ocr-stat-value").forEach((dd) => {
@@ -1631,7 +1647,71 @@ function onOcrFieldChange(gi: number, mi: number) {
   m.config_id = buildConfigId(typeDigit, raritySub);
   m.quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
   const iconEl = document.getElementById(`ocr-icon-${gi}-${mi}`);
-  if (iconEl) iconEl.innerHTML = moduleIconHtml(m.config_id);
+  if (iconEl) iconEl.innerHTML = moduleIconHtml(m.config_id); // moduleIconHtmlは内部定義の安全な文字列
+  updateStatWarnings(gi, mi);
+}
+
+/** 指定モジュール行のステータス警告アイコンを更新 */
+function updateStatWarnings(gi: number, mi: number) {
+  const m = pendingOcrGroups[gi]?.modules[mi];
+  if (!m) return;
+  const comp = configIdToComponents(m.config_id);
+  const typeDigit = comp?.typeDigit ?? 1;
+  const raritySub = comp?.raritySub ?? 2;
+  const expected = EXPECTED_STAT_COUNT[raritySub] ?? 3;
+
+  let hasInvalid = false;
+  m.stats.forEach((s, si) => {
+    const warn = document.querySelector<HTMLElement>(`.ocr-stat-warn[data-gi="${gi}"][data-mi="${mi}"][data-si="${si}"]`);
+    if (!warn) return;
+    const tooMany = si >= expected;
+    const invalid = tooMany || !isStatValidForTypeSlot(typeDigit, si, s.part_id);
+    warn.classList.toggle("hidden", !invalid);
+    if (invalid) hasInvalid = true;
+  });
+  const tooFew = m.stats.length < expected;
+  if (tooFew) hasInvalid = true;
+  const row = document.querySelector<HTMLElement>(`.ocr-row[data-gi="${gi}"][data-mi="${mi}"]`);
+  row?.classList.toggle("ocr-row--warn", hasInvalid);
+
+  // 追加ボタン横のステータス数不足警告を更新
+  const addStatRow = row?.querySelector<HTMLElement>(".ocr-add-stat-row");
+  if (addStatRow) {
+    const countWarn = addStatRow.querySelector<HTMLElement>(".ocr-stat-warn");
+    if (tooFew && !countWarn) {
+      const span = document.createElement("span");
+      span.className = "ocr-stat-warn";
+      span.title = t.ui.stat_count_mismatch;
+      const img = document.createElement("img");
+      img.src = "icons/triangle-alert.svg";
+      img.width = 18;
+      img.height = 18;
+      span.appendChild(img);
+      addStatRow.appendChild(span);
+    } else if (!tooFew && countWarn) {
+      countWarn.remove();
+    }
+  }
+}
+
+/** 全ページの警告があるモジュールを収集 */
+function collectOcrWarnings(): { gi: number; mi: number; rLabel: string }[] {
+  const warnings: { gi: number; mi: number; rLabel: string }[] = [];
+  pendingOcrGroups.forEach((group, gi) => {
+    group.modules.forEach((m, mi) => {
+      const comp = configIdToComponents(m.config_id);
+      const typeDigit = comp?.typeDigit ?? 1;
+      const raritySub = comp?.raritySub ?? 2;
+      const expected = EXPECTED_STAT_COUNT[raritySub] ?? 3;
+      const countMismatch = m.stats.length !== expected;
+      const statInvalid = m.stats.some((s, si) => !isStatValidForTypeSlot(typeDigit, si, s.part_id));
+      if (countMismatch || statInvalid) {
+        const rLabel = `R${group.originalRowIndices?.[mi] ?? mi + 1}`;
+        warnings.push({ gi, mi, rLabel });
+      }
+    });
+  });
+  return warnings;
 }
 
 function registerOcrModules() {
@@ -1647,6 +1727,18 @@ function registerOcrModules() {
     ocrCurrentPage = 0;
     return;
   }
+
+  // 警告チェック
+  const warnings = collectOcrWarnings();
+  if (warnings.length > 0) {
+    showOcrWarnModal(warnings);
+    return;
+  }
+
+  doRegisterOcrModules(toRegister);
+}
+
+function doRegisterOcrModules(toRegister: ModuleInput[]) {
   modules.push(...toRegister);
   saveModulesToStorage();
   renderGrid();
@@ -1657,6 +1749,14 @@ function registerOcrModules() {
   pendingOcrGroups = [];
   ocrImageZoomStates = [];
   ocrCurrentPage = 0;
+}
+
+/** 最初の警告箇所を保持 */
+let firstOcrWarning: { gi: number; mi: number } | null = null;
+
+function showOcrWarnModal(warnings: { gi: number; mi: number; rLabel: string }[]) {
+  firstOcrWarning = warnings[0];
+  $("ocr-warn-modal-bd").classList.add("on");
 }
 
 // ========== Edit Module Modal ==========
@@ -1830,6 +1930,7 @@ function renderManualModalBody() {
       ${statDropdownHtml("manual-stat-name", undefined, undefined, t.ui.select_placeholder)}
       ${valueDropdownHtml(1, "ocr-stat-value manual-stat-value")}
       <button class="ocr-stat-remove manual-remove-stat" data-si="${i}">&times;</button>
+      <span class="ocr-stat-warn hidden" data-si="${i}"><img src="icons/triangle-alert.svg" width="18" height="18"></span>
     </div>`);
   }
 
@@ -1851,7 +1952,7 @@ function renderManualModalBody() {
     <div class="ocr-row-stats">
       <div class="ocr-stat-divider"></div>
       <div id="manual-stat-rows">${statRows.join("")}</div>
-      ${manualStatCount < 3 ? `<button class="addbtn" id="manual-add-stat">${t.ui.add_stat}</button>` : ""}
+      ${manualStatCount < 3 ? `<div class="ocr-add-stat-row" id="manual-add-stat-row"><button class="addbtn" id="manual-add-stat">${t.ui.add_stat}</button></div>` : ""}
     </div>
   </div>`;
 
@@ -1861,8 +1962,8 @@ function renderManualModalBody() {
     const preview = document.getElementById("manual-icon-preview");
     if (preview) preview.innerHTML = moduleIconHtml(buildConfigId(td, rs));
   };
-  $<HTMLElement>("manual-type").addEventListener("change", updateManualIconPreview);
-  $<HTMLElement>("manual-rarity-sub").addEventListener("change", updateManualIconPreview);
+  $<HTMLElement>("manual-type").addEventListener("change", () => { updateManualIconPreview(); updateManualStatWarnings(); });
+  $<HTMLElement>("manual-rarity-sub").addEventListener("change", () => { updateManualIconPreview(); updateManualStatWarnings(); });
 
   initDropdowns(body);
 
@@ -1872,6 +1973,59 @@ function renderManualModalBody() {
   body.querySelectorAll<HTMLButtonElement>(".manual-remove-stat").forEach((btn) => {
     btn.onclick = () => { manualStatCount--; renderManualModalBody(); };
   });
+
+  body.querySelectorAll<HTMLElement>(".manual-stat-name").forEach((dd) => {
+    dd.addEventListener("change", updateManualStatWarnings);
+  });
+
+  updateManualStatWarnings();
+}
+
+/** 手動入力モーダルのステータス警告アイコンを更新 */
+function updateManualStatWarnings() {
+  const typeDigit = Number($<HTMLElement>("manual-type").dataset.value);
+  const raritySub = Number($<HTMLElement>("manual-rarity-sub").dataset.value);
+  const expected = EXPECTED_STAT_COUNT[raritySub] ?? 3;
+
+  document.querySelectorAll<HTMLElement>("#manual-stat-rows .ocr-stat-row").forEach((row) => {
+    const si = Number(row.dataset.si);
+    const nameDd = row.querySelector<HTMLElement>(".manual-stat-name");
+    const warn = row.querySelector<HTMLElement>(".ocr-stat-warn");
+    if (!nameDd || !warn) return;
+
+    const partId = Number(nameDd.dataset.value);
+    // 未選択の場合は警告を出さない
+    if (!partId) {
+      warn.classList.add("hidden");
+      return;
+    }
+
+    const tooMany = si >= expected;
+    const typeMismatch = !tooMany && !isStatValidForTypeSlot(typeDigit, si, partId);
+    const invalid = tooMany || typeMismatch;
+    warn.classList.toggle("hidden", !invalid);
+    warn.title = tooMany ? t.ui.stat_count_mismatch : t.ui.stat_type_mismatch;
+  });
+
+  // 追加ボタン横のステータス数不足警告を更新
+  const addStatRow = document.getElementById("manual-add-stat-row");
+  if (addStatRow) {
+    const countWarn = addStatRow.querySelector<HTMLElement>(".ocr-stat-warn");
+    const tooFew = manualStatCount < expected;
+    if (tooFew && !countWarn) {
+      const span = document.createElement("span");
+      span.className = "ocr-stat-warn";
+      span.title = t.ui.stat_count_mismatch;
+      const img = document.createElement("img");
+      img.src = "icons/triangle-alert.svg";
+      img.width = 18;
+      img.height = 18;
+      span.appendChild(img);
+      addStatRow.appendChild(span);
+    } else if (!tooFew && countWarn) {
+      countWarn.remove();
+    }
+  }
 }
 
 function addManualModule() {
@@ -3154,6 +3308,25 @@ document.addEventListener("DOMContentLoaded", () => {
   $("modal-bd").onclick = (e) => { if (e.target === $("modal-bd")) closeModal(); };
 
   $("ocr-register").onclick = registerOcrModules;
+  $("ocr-warn-go").onclick = () => {
+    $("ocr-warn-modal-bd").classList.remove("on");
+    if (!firstOcrWarning) return;
+    ocrCurrentPage = firstOcrWarning.gi;
+    renderOcrModalBody();
+    requestAnimationFrame(() => {
+      const row = document.querySelector<HTMLElement>(`.ocr-row[data-gi="${firstOcrWarning!.gi}"][data-mi="${firstOcrWarning!.mi}"]`);
+      row?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  };
+  $("ocr-warn-register").onclick = () => {
+    $("ocr-warn-modal-bd").classList.remove("on");
+    const all = allPendingModules();
+    const newOnly = ($("ocr-new-only") as HTMLInputElement).checked;
+    const toRegister = newOnly ? all.filter((m) => !isModuleDuplicate(m)) : all;
+    doRegisterOcrModules(toRegister);
+  };
+  $("ocr-warn-modal-close").onclick = () => $("ocr-warn-modal-bd").classList.remove("on");
+  $("ocr-warn-modal-bd").onclick = (e) => { if (e.target === $("ocr-warn-modal-bd")) $("ocr-warn-modal-bd").classList.remove("on"); };
   $("ocr-cancel").onclick = cancelOcrModal;
   $("ocr-modal-close").onclick = closeOcrModal;
   ($("ocr-new-only") as HTMLInputElement).onchange = applyOcrNewOnlyFilter;
