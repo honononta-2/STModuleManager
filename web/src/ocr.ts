@@ -207,7 +207,6 @@ async function loadTemplates(): Promise<void> {
   }
 
   for (const modIcon of MODULE_ICONS) {
-    // rarity5もカラーマッチングで区別可能なため含める
     const img = await loadImage(`/icons/${modIcon.file}`);
     const bgRarity = Math.min(modIcon.rarity, 4);
     const bgImg = rarityBgImages[bgRarity];
@@ -252,7 +251,7 @@ async function loadTemplates(): Promise<void> {
       const img = await loadImage(`/icons/OCR_${modIcon.type}${modIcon.rarity}.png`);
       const colorCanvas = renderTemplateCanvas(img, null);
       const colorMat = buildColorMat(colorCanvas, cv);
-      // グレースケール+equalizeHist版をキャッシュ（スライディング検出で毎回変換する無駄を排除）
+      // グレースケール+equalizeHist版をキャッシュ
       const grayTmpl = new cv.Mat();
       cv.cvtColor(colorMat, grayTmpl, cv.COLOR_RGBA2GRAY);
       const grayEqTmpl = new cv.Mat();
@@ -267,134 +266,11 @@ async function loadTemplates(): Promise<void> {
         grayEqMat: grayEqTmpl,
       });
     } catch {
-      // ユーザー提供のOCRテンプレートは任意
+      // テンプレート画像が存在しない場合はスキップ
     }
   }
 
   templatesLoaded = true;
-}
-
-// --- pHash (Perceptual Hash) ---
-// cv.dct() はCDN版OpenCV.jsに未収録のため、DCT-IIを純粋JSで実装
-// 32x32行列の2D DCT: ~64K演算で1ms未満
-
-function dct1d(input: number[]): number[] {
-  const N = input.length;
-  const output = new Array<number>(N);
-  for (let k = 0; k < N; k++) {
-    let sum = 0;
-    for (let n = 0; n < N; n++) {
-      sum += input[n] * Math.cos((Math.PI / N) * (n + 0.5) * k);
-    }
-    output[k] = sum;
-  }
-  return output;
-}
-
-function computePHash(grayMat: any, cv: any): number[] {
-  // 32x32にリサイズしてピクセルデータを取得
-  const resized = new cv.Mat();
-  cv.resize(grayMat, resized, new cv.Size(32, 32));
-
-  const pixels: number[][] = [];
-  for (let y = 0; y < 32; y++) {
-    const row: number[] = [];
-    for (let x = 0; x < 32; x++) {
-      row.push(resized.ucharAt(y, x));
-    }
-    pixels.push(row);
-  }
-  resized.delete();
-
-  // 2D DCT: 行方向 → 列方向
-  const rowDct: number[][] = pixels.map((row) => dct1d(row));
-  const colDct: number[][] = [];
-  for (let y = 0; y < 32; y++) {
-    colDct.push(new Array<number>(32));
-  }
-  for (let x = 0; x < 32; x++) {
-    const col: number[] = [];
-    for (let y = 0; y < 32; y++) {
-      col.push(rowDct[y][x]);
-    }
-    const transformed = dct1d(col);
-    for (let y = 0; y < 32; y++) {
-      colDct[y][x] = transformed[y];
-    }
-  }
-
-  // 左上8x8のDCT係数を取得（DC成分[0,0]を除外）
-  const values: number[] = [];
-  for (let y = 0; y < 8; y++) {
-    for (let x = 0; x < 8; x++) {
-      if (y === 0 && x === 0) continue;
-      values.push(colDct[y][x]);
-    }
-  }
-
-  // 中央値でハッシュ化（63bit）
-  const sorted = [...values].sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)];
-  return values.map((v) => (v > median ? 1 : 0));
-}
-
-function pHashSimilarity(h1: number[], h2: number[]): number {
-  const len = Math.min(h1.length, h2.length);
-  if (len === 0) return 0;
-  let same = 0;
-  for (let i = 0; i < len; i++) {
-    if (h1[i] === h2[i]) same++;
-  }
-  return same / len;
-}
-
-// --- ヒストグラム比較 ---
-
-function computeHistogram(grayMat: any, mask: any): Float64Array {
-  const hist = new Float64Array(256);
-  const data = grayMat.data;
-  const maskData = mask.data;
-  let total = 0;
-
-  for (let i = 0; i < data.length; i++) {
-    if (maskData[i] > 0) {
-      hist[data[i]]++;
-      total++;
-    }
-  }
-
-  if (total > 0) {
-    for (let i = 0; i < 256; i++) {
-      hist[i] /= total;
-    }
-  }
-
-  return hist;
-}
-
-function histCorrelation(h1: Float64Array, h2: Float64Array): number {
-  let mean1 = 0;
-  let mean2 = 0;
-  for (let i = 0; i < 256; i++) {
-    mean1 += h1[i];
-    mean2 += h2[i];
-  }
-  mean1 /= 256;
-  mean2 /= 256;
-
-  let num = 0;
-  let den1 = 0;
-  let den2 = 0;
-  for (let i = 0; i < 256; i++) {
-    const d1 = h1[i] - mean1;
-    const d2 = h2[i] - mean2;
-    num += d1 * d2;
-    den1 += d1 * d1;
-    den2 += d2 * d2;
-  }
-
-  const den = Math.sqrt(den1 * den2);
-  return den > 0 ? num / den : 0;
 }
 
 function median(values: number[]): number {
@@ -523,7 +399,6 @@ async function ocrNumbersForRow(
 
     if (mode === "adaptive") {
       // 適応的二値化: ローカル平均との差分で文字を抽出
-      // 背景の明るさが変化しても文字を正確に分離できる
       const brightness = new Float32Array(w * h);
       for (let i = 0; i < imageData.data.length; i += 4) {
         brightness[i / 4] =
@@ -532,7 +407,7 @@ async function ocrNumbersForRow(
           imageData.data[i + 2] * 0.114;
       }
 
-      // Integral image で高速にローカル平均を計算
+      // Integral image でローカル平均を計算
       const integral = new Float64Array((w + 1) * (h + 1));
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
@@ -572,7 +447,6 @@ async function ocrNumbersForRow(
       }
     } else if (mode === "color-distance") {
       // 既知の文字色（#98ADB2～#99A8AB）との色距離で二値化
-      // 背景の明るさに関係なく文字色に近いピクセルだけを抽出
       const refR = 153, refG = 171, refB = 175;
       const maxDist = threshold ?? 50;
 
@@ -733,8 +607,6 @@ async function ocrNumbersForRow(
     } catch {
       // OCR失敗
     }
-    if (stat.value === 0) {
-    }
     delete (stat as any)._ocrCrops;
   }
 
@@ -779,16 +651,9 @@ interface ModuleIconMatch {
   y: number;
   w: number;
   h: number;
-  baseRgbType?: string;
-  baseRgbScore?: number;
-  ahashDistance?: number;
-  ahashReranked?: boolean;
 }
 
 const TYPE_DIGIT_MAP: Record<string, number> = { attack: 1, device: 2, protect: 3 };
-const MODULE_USER_TEMPLATE_MIN_SCORE = 0.275;
-const MODULE_USER_TEMPLATE_AHASH_SCORE_MAX = 0.33;
-const MODULE_USER_TEMPLATE_AHASH_MAX_DISTANCE = 0.205;
 
 function buildConfigId(typeName: string, rarity: number): number {
   const typeDigit = TYPE_DIGIT_MAP[typeName] ?? 0;
@@ -829,361 +694,6 @@ function computeAverageHash(srcMat: any, cv: any): number[] {
   resized.delete();
   return hash;
 }
-
-function normalizedHammingDistance(hashA: number[], hashB: number[]): number {
-  if (hashA.length !== hashB.length || hashA.length === 0) return Number.POSITIVE_INFINITY;
-  let diff = 0;
-  for (let i = 0; i < hashA.length; i++) {
-    if (hashA[i] !== hashB[i]) diff++;
-  }
-  return diff / hashA.length;
-}
-
-function estimateModuleScaleFromRow(row: ModuleRow): number {
-  const statWidths = row.stats.map((s) => s.w).filter((w) => w > 0);
-  if (statWidths.length === 0) return 0.32;
-
-  const medianStatWidth = median(statWidths);
-  const estimatedModuleWidth = medianStatWidth * 2.05;
-  return Math.max(0.22, Math.min(0.42, estimatedModuleWidth / 256));
-}
-
-// OCR_*.png グレースケールテンプレートによるスライディング検出。
-// 検証で sl_gray (97.3%) として高精度を確認。
-// grayImage には equalizeHist 版またはCLAHE版を渡す。
-function classifyModuleIconByOcrGraySliding(
-  grayImage: any,
-  row: ModuleRow,
-  moduleScale: number,
-  cv: any,
-  filterRarities?: number[],
-  filterTypes?: string[],
-): ModuleIconMatch | null {
-  if (userModuleOcrTemplates.length === 0 || row.stats.length === 0) return null;
-
-  const baseModuleScale = moduleScale;
-
-  // スライディング検索領域: 画像の左30%、行のY位置周辺
-  const modPx = Math.round(256 * baseModuleScale);
-  const sw = Math.round(grayImage.cols * 0.3);
-  const hh = Math.round(modPx * 0.7);
-  const y1 = Math.max(0, Math.round(row.y - hh));
-  const y2 = Math.min(grayImage.rows, Math.round(row.y + hh));
-
-  if (y2 <= y1 || y2 - y1 < 20 || sw < 20) return null;
-
-  const roiRect = new cv.Rect(0, y1, sw, y2 - y1);
-  const roiGray = grayImage.roi(roiRect);
-
-  let bestMatch: ModuleIconMatch | null = null;
-  let secondBestScore = -1;
-  const result = new cv.Mat();
-  const resizedTmpl = new cv.Mat();
-
-  const scaleMultipliers = [0.85, 0.9, 0.95, 1.0, 1.05, 1.1];
-
-  for (const m of scaleMultipliers) {
-    const sc = baseModuleScale * m;
-
-    for (const tmpl of userModuleOcrTemplates) {
-      // フィルタ: レアリティ・型が指定されていれば該当するものだけ処理
-      if (filterRarities && filterRarities.length > 0 && !filterRarities.includes(tmpl.rarity)) continue;
-      if (filterTypes && filterTypes.length > 0 && !filterTypes.includes(tmpl.type)) continue;
-      // grayEqMat はテンプレート読み込み時にキャッシュ済み
-      const tw = Math.round(tmpl.grayEqMat.cols * sc);
-      const th = Math.round(tmpl.grayEqMat.rows * sc);
-      if (tw < 20 || th < 20 || tw >= roiGray.cols || th >= roiGray.rows) {
-        continue;
-      }
-
-      cv.resize(tmpl.grayEqMat, resizedTmpl, new cv.Size(tw, th));
-      cv.matchTemplate(roiGray, resizedTmpl, result, cv.TM_CCOEFF_NORMED);
-      const mm = cv.minMaxLoc(result);
-      const score = isNaN(mm.maxVal) ? 0 : mm.maxVal;
-
-      if (bestMatch === null || score > bestMatch.score) {
-        secondBestScore = bestMatch?.score ?? -1;
-        bestMatch = {
-          type: tmpl.type,
-          rarity: tmpl.rarity,
-          configId: buildConfigId(tmpl.type, tmpl.rarity),
-          score,
-          margin: 0,
-          x: mm.maxLoc.x,
-          y: y1 + mm.maxLoc.y,
-          w: tw,
-          h: th,
-        };
-      } else if (score > secondBestScore) {
-        secondBestScore = score;
-      }
-    }
-  }
-
-  result.delete();
-  resizedTmpl.delete();
-  roiGray.delete();
-
-  if (bestMatch) {
-    bestMatch.margin = secondBestScore >= 0 ? bestMatch.score - secondBestScore : 0;
-  }
-
-  return bestMatch;
-}
-
-function classifyModuleIconByExistingTemplates(
-  grayEq: any,
-  edgeMat: any,
-  row: ModuleRow,
-  statScale: number,
-  moduleScale: number,
-  cv: any,
-  filterRarities?: number[],
-  filterTypes?: string[],
-): ModuleIconMatch | null {
-  if (moduleIconTemplates.length === 0 || row.stats.length === 0) return null;
-
-  const baseModuleScale = moduleScale;
-
-  // 画像左30%、行Y±modPx*0.7
-  const modPx = Math.round(256 * baseModuleScale);
-  const sw = Math.round(grayEq.cols * 0.3);
-  const hh = Math.round(modPx * 0.7);
-  const roiY = Math.max(0, Math.round(row.y - hh));
-  const roiH = Math.min(grayEq.rows, Math.round(row.y + hh)) - roiY;
-
-  if (roiH < 20 || sw < 20) return null;
-
-  const roiRect = new cv.Rect(0, roiY, sw, roiH);
-  const roiGray = grayEq.roi(roiRect);
-  const roiEdge = edgeMat.roi(roiRect);
-
-  let bestMatch: ModuleIconMatch | null = null;
-  let secondBestScore = -1;
-
-  const scaleCandidates = new Set<number>([
-    baseModuleScale * 0.85,
-    baseModuleScale * 0.9,
-    baseModuleScale * 0.95,
-    baseModuleScale,
-    baseModuleScale * 1.05,
-    baseModuleScale * 1.1,
-  ]);
-  const scaleRange = [...scaleCandidates].sort((a, b) => a - b);
-
-  const resizedEdge = new cv.Mat();
-  const edgeResult = new cv.Mat();
-  const resizedGray = new cv.Mat();
-  const grayResult = new cv.Mat();
-
-  for (const scaleMul of scaleRange) {
-    const modScale = scaleMul;
-
-    for (const tmpl of moduleIconTemplates) {
-      if (filterRarities && filterRarities.length > 0 && !filterRarities.includes(tmpl.rarity)) continue;
-      if (filterTypes && filterTypes.length > 0 && !filterTypes.includes(tmpl.type)) continue;
-      const tw = Math.round(tmpl.edgeMat.cols * modScale);
-      const th = Math.round(tmpl.edgeMat.rows * modScale);
-      if (tw < 10 || th < 10 || tw >= sw || th >= roiH) continue;
-
-      // エッジマッチング
-      cv.resize(tmpl.edgeMat, resizedEdge, new cv.Size(tw, th));
-      cv.matchTemplate(roiEdge, resizedEdge, edgeResult, cv.TM_CCOEFF_NORMED);
-      const edgeLoc = cv.minMaxLoc(edgeResult);
-      const edgeScore = edgeLoc.maxVal;
-
-      // グレーマッチング (best variant)
-      let bestGrayScore = 0;
-      for (const variant of tmpl.classifyVariants) {
-        cv.resize(variant.grayMat, resizedGray, new cv.Size(tw, th));
-        cv.matchTemplate(roiGray, resizedGray, grayResult, cv.TM_CCOEFF_NORMED);
-        const gs = cv.minMaxLoc(grayResult).maxVal;
-        if (gs > bestGrayScore) bestGrayScore = gs;
-      }
-
-      const combined = edgeScore * 0.5 + bestGrayScore * 0.5;
-
-      if (!bestMatch || combined > bestMatch.score) {
-        if (bestMatch) secondBestScore = Math.max(secondBestScore, bestMatch.score);
-        bestMatch = {
-          type: tmpl.type,
-          rarity: tmpl.rarity,
-          configId: buildConfigId(tmpl.type, tmpl.rarity),
-          score: combined,
-          margin: 0,
-          x: edgeLoc.maxLoc.x,
-          y: roiY + edgeLoc.maxLoc.y,
-          w: tw,
-          h: th,
-        };
-      } else if (combined > secondBestScore) {
-        secondBestScore = combined;
-      }
-    }
-  }
-
-  resizedEdge.delete();
-  edgeResult.delete();
-  resizedGray.delete();
-  grayResult.delete();
-  roiGray.delete();
-  roiEdge.delete();
-
-  if (bestMatch) {
-    bestMatch.margin =
-      secondBestScore >= 0 ? bestMatch.score - secondBestScore : Number.POSITIVE_INFINITY;
-  }
-
-  // 信頼度が低すぎる場合はnull
-  if (bestMatch && bestMatch.score < 0.2) {
-    return null;
-  }
-
-  if (bestMatch) {
-  }
-
-  return bestMatch;
-}
-
-function classifyModuleIconByUserTemplates(
-  colorMat: any,
-  row: ModuleRow,
-  moduleScale: number,
-  cv: any,
-  filterRarities?: number[],
-  filterTypes?: string[],
-): ModuleIconMatch | null {
-  if (userModuleOcrTemplates.length === 0 || row.stats.length === 0) return null;
-
-  interface UserModuleCandidate {
-    template: UserModuleOcrTemplateInfo;
-    score: number;
-    localX: number;
-    localY: number;
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  }
-
-  const leftStat = row.stats.reduce((min, s) => (s.x < min.x ? s : min), row.stats[0]);
-  const derivedModuleScale = estimateModuleScaleFromRow(row);
-  const useDetectedScale =
-    Number.isFinite(moduleScale) &&
-    Math.abs(moduleScale - derivedModuleScale) <= 0.08;
-  const baseModuleScale = useDetectedScale ? moduleScale : derivedModuleScale;
-
-  const tileSize = Math.max(80, Math.min(108, Math.round(256 * baseModuleScale * 1.02)));
-  const tileX = Math.max(0, Math.round(leftStat.x - tileSize * 1.33));
-  const tileY = Math.max(0, Math.round(leftStat.y - tileSize * 0.2));
-  const tileW = Math.min(tileSize, colorMat.cols - tileX);
-  const tileH = Math.min(tileSize, colorMat.rows - tileY);
-  if (tileW < 50 || tileH < 50) return null;
-
-  const roiRect = new cv.Rect(tileX, tileY, tileW, tileH);
-  const roiColor = colorMat.roi(roiRect);
-  const expCx = tileW / 2;
-  const expCy = tileH / 2 + tileSize * 0.04;
-  const sizeRatios = [0.53, 0.61, 0.69, 0.78, 0.86];
-
-  const topCandidates: UserModuleCandidate[] = [];
-
-  const resizedUser = new cv.Mat();
-  const resultUser = new cv.Mat();
-
-  for (const tmpl of userModuleOcrTemplates) {
-    if (filterRarities && filterRarities.length > 0 && !filterRarities.includes(tmpl.rarity)) continue;
-    if (filterTypes && filterTypes.length > 0 && !filterTypes.includes(tmpl.type)) continue;
-    for (const ratio of sizeRatios) {
-      const tw = Math.round(tileSize * ratio);
-      const th = tw;
-      if (tw < 24 || th < 24 || tw >= tileW || th >= tileH) continue;
-
-      cv.resize(tmpl.colorMat, resizedUser, new cv.Size(tw, th));
-      cv.matchTemplate(roiColor, resizedUser, resultUser, cv.TM_CCOEFF_NORMED);
-      const { maxVal, maxLoc } = cv.minMaxLoc(resultUser);
-
-      const cx = maxLoc.x + tw / 2;
-      const cy = maxLoc.y + th / 2;
-      const penalty = 0.01 * (Math.abs(cx - expCx) + Math.abs(cy - expCy));
-      const score = maxVal - penalty;
-
-      topCandidates.push({
-        template: tmpl,
-        score,
-        localX: maxLoc.x,
-        localY: maxLoc.y,
-        x: tileX + maxLoc.x,
-        y: tileY + maxLoc.y,
-        w: tw,
-        h: th,
-      });
-      topCandidates.sort((a, b) => b.score - a.score);
-      if (topCandidates.length > 3) {
-        topCandidates.length = 3;
-      }
-    }
-  }
-
-  resizedUser.delete();
-  resultUser.delete();
-
-  const bestCandidate = topCandidates[0];
-  roiColor.delete();
-
-  if (!bestCandidate) return null;
-
-  let selectedCandidate = bestCandidate;
-  let ahashDistance: number | undefined;
-  let ahashReranked = false;
-
-  if (
-    bestCandidate.template.type !== "device" &&
-    bestCandidate.score <= MODULE_USER_TEMPLATE_AHASH_SCORE_MAX &&
-    topCandidates.length > 0
-  ) {
-    let bestHashCandidate = bestCandidate;
-    let bestHashDistance = Number.POSITIVE_INFINITY;
-
-    for (const candidate of topCandidates) {
-      const patch = colorMat.roi(new cv.Rect(candidate.x, candidate.y, candidate.w, candidate.h));
-      const patchHash = computeAverageHash(patch, cv);
-      patch.delete();
-
-      const distance = normalizedHammingDistance(patchHash, candidate.template.avgHash);
-      if (distance < bestHashDistance) {
-        bestHashDistance = distance;
-        bestHashCandidate = candidate;
-      }
-    }
-
-    ahashDistance = bestHashDistance;
-    if (bestHashDistance <= MODULE_USER_TEMPLATE_AHASH_MAX_DISTANCE) {
-      selectedCandidate = bestHashCandidate;
-      ahashReranked = bestHashCandidate !== bestCandidate;
-    }
-  }
-
-  const secondBestScore = topCandidates[1]?.score ?? -1;
-  const match: ModuleIconMatch = {
-    type: selectedCandidate.template.type,
-    rarity: selectedCandidate.template.rarity,
-    configId: buildConfigId(selectedCandidate.template.type, selectedCandidate.template.rarity),
-    score: selectedCandidate.score,
-    margin: secondBestScore >= 0 ? bestCandidate.score - secondBestScore : Number.POSITIVE_INFINITY,
-    x: selectedCandidate.x,
-    y: selectedCandidate.y,
-    w: selectedCandidate.w,
-    h: selectedCandidate.h,
-    baseRgbType: bestCandidate.template.type,
-    baseRgbScore: bestCandidate.score,
-    ahashDistance,
-    ahashReranked,
-  };
-
-  return match;
-}
-
 
 // ステータスアイコン分類（予測座標指定・最小探索範囲版）
 function classifyStatAtPoint(
@@ -1322,8 +832,7 @@ function classifyModuleIconByColor(
   return bestMatch;
 }
 
-// モジュールアイコン分類（予測座標指定・最小探索範囲版）
-// 位置が確定している場合用: パディングを最小にしてmatchTemplateの探索範囲を極小化
+// 予測座標周辺の最小ROIでモジュールアイコンを分類
 function classifyModuleIconAtPoint(
   colorMat: any,
   cx: number,
@@ -1339,7 +848,6 @@ function classifyModuleIconAtPoint(
   const expectedW = Math.round(refTmpl.edgeMat.cols * moduleScale);
   const expectedH = Math.round(refTmpl.edgeMat.rows * moduleScale);
 
-  // 最小パディング: 位置が予測済みなので探索範囲を数ピクセルに限定
   const pad = 4;
   const roiX = Math.max(0, Math.round(cx - expectedW / 2 - pad));
   const roiY = Math.max(0, Math.round(cy - expectedH / 2 - pad));
@@ -1423,7 +931,7 @@ interface PredictedGrid {
   mobileLayout?: "phone" | "ipad"; // モバイルのレイアウト種別
 }
 
-// 画像サイズからグリッドパラメータを計算（テンプレートマッチング不要）
+// 画像サイズからグリッドパラメータを計算
 function predictGridFromImageSize(
   imgWidth: number,
   imgHeight: number,
@@ -1452,9 +960,9 @@ function predictGridFromImageSize(
   const col1Ratio = layout === "phone" ? 0.1846 : 0.117;
   const col1 = Math.round(base * col1Ratio);
   const colXs = [col1, Math.round(col1 + gap), Math.round(col1 + gap * 2)];
-  // モジュールアイコン: min(W, H*16/9)基準で0.0557（PC版と同じbase定義）
+  // モジュールアイコンX座標: min(W, H*16/9) × 0.0557
   const moduleIconX = Math.round(Math.min(imgWidth, imgHeight * 16 / 9) * 0.0557);
-  // ヘッダー〜リスト間の隙間による誤検出を防ぐため、imgH * 0.16 を下限に設定
+  // yMinの下限: imgH × 0.16
   const yMin = Math.max(Math.round(base * 0.06), Math.round(imgHeight * 0.16));
   const yMax = Math.round(imgHeight - base * 0.05);
   return { base, scale, iconSize, colXs, moduleIconX, yMin, yMax, platform, mobileLayout: layout };
@@ -1687,7 +1195,6 @@ async function processPredictedGridMode(
   canvas: HTMLCanvasElement,
   gray: any,
   grayEq1x: any,
-  _grayCl1x: any, // 未使用（CLAHE不要）、呼び出し元との互換性のため保持
   colorMat1x: any,
   cropWidth: number,
   cropHeight: number,
@@ -1707,7 +1214,7 @@ async function processPredictedGridMode(
   const rowYs = predictedGridDetectRows(grayEq1x, colXs, iconSize, scale, yMin, yMax, cv).map(r => r.y);
   if (rowYs.length === 0) {
     console.warn("[predictedGrid] 行検出失敗");
-    gray.delete(); grayEq1x.delete(); _grayCl1x.delete(); colorMat1x.delete();
+    gray.delete(); grayEq1x.delete(); colorMat1x.delete();
     canvas.width = 0; canvas.height = 0;
     return { modules: [], rowPositions: [] };
   }
@@ -1731,7 +1238,6 @@ async function processPredictedGridMode(
 
   // 1x画像は不要なので解放
   grayEq1x.delete();
-  _grayCl1x.delete();
   // Step 3: ステータス分類（カラーマッチング）
   onProgress?.({ stage: "ステータスアイコン分類中...", percent: 45 });
   const rows: ModuleRow[] = [];
@@ -1748,7 +1254,7 @@ async function processPredictedGridMode(
       // カラーマッチング（予測座標・最小探索版）
       const result = classifyStatAtPoint(colorMatUp, cx, ry, scaledIconSize, cv, excludePids);
 
-      // ステータスなし判定: 閾値未満ならスキップ（青=1ステ、紫=2ステ対応）
+      // ステータスなし判定: 閾値未満ならスキップ
       if (result.score < STAT_ABSENT_THRESHOLD) {
         await new Promise<void>((r) => setTimeout(r, 0));
         continue;
@@ -1932,9 +1438,8 @@ export async function processScreenshot(
   if (customOptions?.platform === "pc") {
     const predicted = predictGridFromImageSize(imgWidth, imgHeight, "pc");
     const { pGray, pGrayEq, pColorMat, predictedCropWidth } = preparePredictedCanvas(predicted);
-    const pGrayCl = new cv.Mat();
     return processPredictedGridMode(
-      canvas, pGray, pGrayEq, pGrayCl, pColorMat,
+      canvas, pGray, pGrayEq, pColorMat,
       predictedCropWidth, imgHeight, imgWidth, imgHeight,
       predicted,
       onProgress, externalWorker, customOptions, cv,
@@ -1988,9 +1493,8 @@ export async function processScreenshot(
       };
 
       const { pGray, pGrayEq, pColorMat, predictedCropWidth } = preparePredictedCanvas(predicted);
-      const pGrayCl = new cv.Mat();
       return processPredictedGridMode(
-        canvas, pGray, pGrayEq, pGrayCl, pColorMat,
+        canvas, pGray, pGrayEq, pColorMat,
         predictedCropWidth, imgHeight, imgWidth, imgHeight,
         predicted,
         onProgress, externalWorker, customOptions, cv,
