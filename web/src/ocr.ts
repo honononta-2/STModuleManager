@@ -24,7 +24,7 @@ function loadOpenCV(): Promise<void> {
     }
 
     const script = document.createElement("script");
-    script.src = "https://docs.opencv.org/4.10.0/opencv.js";
+    script.src = "/opencv.js";
     script.async = true;
     script.onerror = () => reject(new Error("OpenCV.jsの読み込みに失敗しました"));
     document.head.appendChild(script);
