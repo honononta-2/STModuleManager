@@ -1304,6 +1304,31 @@ async function init() {
     if (e.target === $("detail-modal-bd")) closeDetailModal();
   };
 
+  // ステータス解除モーダル
+  const closeClearStatsModal = () => $("clear-stats-bd").classList.remove("on");
+  $("opt-clear-stats-btn").onclick = () => {
+    $("clear-stats-bd").classList.add("on");
+  };
+  $("clear-stats-close").onclick = closeClearStatsModal;
+  $("clear-stats-no").onclick = closeClearStatsModal;
+  $("clear-stats-bd").onclick = (e) => {
+    if (e.target === $("clear-stats-bd")) closeClearStatsModal();
+  };
+  $("clear-stats-yes").onclick = () => {
+    optRequired = [];
+    optDesired = [];
+    optExcluded = [];
+    optMinRequired = [];
+    optMinDesired = [];
+    updateOptBtnLabel("req");
+    updateOptBtnLabel("des");
+    updateOptBtnLabel("excl");
+    updateDetailBtnLabels();
+    updateOptRunBtn();
+    saveOptState();
+    closeClearStatsModal();
+  };
+
   $("opt-quality").onchange = () => saveOptState();
   $("opt-run").onclick = () => runOptimize();
 

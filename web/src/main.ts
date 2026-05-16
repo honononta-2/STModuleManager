@@ -3166,6 +3166,31 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target === $("detail-modal-bd")) closeDetailModal();
   };
 
+  // ステータス解除モーダル
+  const closeClearStatsModal = () => $("clear-stats-modal-bd").classList.remove("on");
+  $("opt-clear-stats-btn").onclick = () => {
+    $("clear-stats-modal-bd").classList.add("on");
+  };
+  $("clear-stats-modal-close").onclick = closeClearStatsModal;
+  $("clear-stats-no").onclick = closeClearStatsModal;
+  $("clear-stats-modal-bd").onclick = (e) => {
+    if (e.target === $("clear-stats-modal-bd")) closeClearStatsModal();
+  };
+  $("clear-stats-yes").onclick = () => {
+    optRequired = [];
+    optDesired = [];
+    optExcluded = [];
+    optMinRequired = [];
+    optMinDesired = [];
+    updateOptBtnLabel("req");
+    updateOptBtnLabel("des");
+    updateOptBtnLabel("excl");
+    updateDetailBtnLabels();
+    updateOptRunBtn();
+    saveOptState();
+    closeClearStatsModal();
+  };
+
   $("opt-quality").addEventListener("change", () => { saveOptState(); });
   $("opt-run").onclick = () => runOptimize();
 

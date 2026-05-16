@@ -138,6 +138,7 @@
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
           <button class="opt-detail-btn" id="opt-detail-btn" data-i18n="detail_settings">詳細設定</button>
+          <button class="opt-detail-btn" id="opt-clear-stats-btn" data-i18n="clear_stats">ステータス解除</button>
         </div>
       </div>
 
@@ -312,6 +313,23 @@
         <div class="modal-footer">
           <button class="addbtn" id="ocr-warn-go" data-i18n="ocr_warn_go">警告に移動</button>
           <button class="addbtn" id="ocr-warn-register" data-i18n="ocr_warn_register">そのまま登録</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ステータス解除確認モーダル -->
+    <div class="modal-bd" id="clear-stats-modal-bd">
+      <div class="modal modal--confirm">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="clear_stats_title">ステータス解除</span>
+          <button class="modal-close" id="clear-stats-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p data-i18n="clear_stats_msg">ステータスを非選択に変更しますか？</p>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="clear-stats-no" data-i18n="btn_no">いいえ</button>
+          <button class="opt-run-btn" id="clear-stats-yes" data-i18n="btn_yes">はい</button>
         </div>
       </div>
     </div>

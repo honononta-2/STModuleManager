@@ -85,6 +85,7 @@
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
           <button class="opt-detail-btn" id="opt-detail-btn" data-i18n="detail_settings">詳細設定</button>
+          <button class="opt-detail-btn" id="opt-clear-stats-btn" data-i18n="clear_stats">ステータス解除</button>
         </div>
       </div>
 
@@ -286,6 +287,23 @@
             <option value="en">English</option>
           </select>
           <button class="firstrun-save-btn" id="firstrun-save">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ステータス解除確認モーダル -->
+    <div class="modal-bd" id="clear-stats-bd">
+      <div class="modal monitor-confirm-modal">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="clear_stats_title">ステータス解除</span>
+          <button class="modal-close" id="clear-stats-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="monitor-confirm-text" data-i18n="clear_stats_msg">ステータスを非選択に変更しますか？</p>
+          <div class="monitor-confirm-actions">
+            <button class="monitor-confirm-btn secondary" id="clear-stats-no" data-i18n="monitor_no">いいえ</button>
+            <button class="monitor-confirm-btn primary" id="clear-stats-yes" data-i18n="monitor_yes">はい</button>
+          </div>
         </div>
       </div>
     </div>
