@@ -3715,6 +3715,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target === $("clear-modal-bd")) closeClearModal();
   };
   $("clear-ok").onclick = () => executeClear();
+  $("clear-backup-btn").onclick = () => exportBackup();
 
   // Sidebar
   $("backup-export-btn").onclick = () => exportBackup();
