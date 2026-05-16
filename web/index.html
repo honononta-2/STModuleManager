@@ -256,9 +256,10 @@
             <button class="ocr-pager-btn" id="ocr-next" disabled>&rsaquo;</button>
           </div>
           <label class="ocr-new-only-label">
-            <input type="checkbox" id="ocr-new-only" />
-            <span data-i18n="ocr_new_only">新規のみ</span>
+            <input type="checkbox" id="ocr-target-only" />
+            <span data-i18n="ocr_target_only">登録対象のみ</span>
           </label>
+          <button class="addbtn" id="ocr-target-config-btn" data-i18n="ocr_target_config">対象管理</button>
           <span style="flex:1"></span>
           <button class="addbtn" id="ocr-cancel" data-i18n="btn_cancel">キャンセル</button>
           <button class="opt-run-btn" id="ocr-register" data-i18n="btn_register">登録</button>
@@ -300,6 +301,55 @@
       </div>
     </div>
 
+    <!-- OCR target config modal -->
+    <div class="modal-bd" id="ocr-target-config-modal-bd">
+      <div class="modal modal--form modal--auto-h">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="ocr_target_modal_title">登録対象の設定</span>
+          <button class="modal-close" id="ocr-target-config-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="detail-row">
+            <div class="detail-col">
+              <label class="ocr-new-only-label" style="margin:0">
+                <input type="checkbox" id="ocr-target-new-only" />
+                <span data-i18n="ocr_new_only">新規のみ</span>
+              </label>
+            </div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-col">
+              <span class="detail-label" data-i18n="fly_stat">ステータス</span>
+              <button type="button" class="opt-multi-btn" id="ocr-target-stat" data-i18n="filter_none">未選択</button>
+            </div>
+            <div class="detail-col">
+              <span class="detail-label" data-i18n="ocr_target_stat_value">ステータス値</span>
+              <div id="ocr-target-stat-value" class="uni-dd" data-value="1">
+                <button type="button" class="opt-multi-btn uni-dd-trigger">1以上</button>
+                <div class="uni-dd-menu"></div>
+              </div>
+            </div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-col">
+              <span class="detail-label" data-i18n="fly_rarity">レアリティ</span>
+              <button type="button" class="opt-multi-btn" id="ocr-target-rarity" data-i18n="filter_none">未選択</button>
+            </div>
+            <div class="detail-col">
+              <span class="detail-label" data-i18n="fly_type">型</span>
+              <button type="button" class="opt-multi-btn" id="ocr-target-type" data-i18n="filter_none">未選択</button>
+            </div>
+          </div>
+          <p class="ocr-target-note" data-i18n="ocr_target_note">※ OCRの精度次第で意図せず弾かれる可能性があります</p>
+        </div>
+        <div class="modal-footer">
+          <span style="flex:1"></span>
+          <button class="addbtn" id="ocr-target-config-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="opt-run-btn" id="ocr-target-config-save" data-i18n="btn_register">登録</button>
+        </div>
+      </div>
+    </div>
+
     <!-- OCR warning confirm modal -->
     <div class="modal-bd" id="ocr-warn-modal-bd">
       <div class="modal modal--confirm">
@@ -313,6 +363,56 @@
         <div class="modal-footer">
           <button class="addbtn" id="ocr-warn-go" data-i18n="ocr_warn_go">警告に移動</button>
           <button class="addbtn" id="ocr-warn-register" data-i18n="ocr_warn_register">そのまま登録</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- モジュール削除モーダル -->
+    <div class="modal-bd" id="clear-modal-bd">
+      <div class="modal modal--confirm modal--auto-h">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="clear_modal_title">モジュール削除</span>
+          <button class="modal-close" id="clear-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="margin-bottom:14px">
+            <span class="detail-label" data-i18n="clear_rarity_label">レアリティ</span>
+            <div class="ocr-setup-radios ocr-setup-radios-row" style="margin-top:6px">
+              <label class="ocr-setup-radio">
+                <input type="radio" name="clear-rarity" value="all" checked>
+                <span class="ocr-setup-radio-title" data-i18n="clear_rarity_all">全部</span>
+              </label>
+              <label class="ocr-setup-radio">
+                <input type="radio" name="clear-rarity" value="purple_down">
+                <span class="ocr-setup-radio-title" data-i18n="clear_rarity_purple_down">紫以下</span>
+              </label>
+              <label class="ocr-setup-radio">
+                <input type="radio" name="clear-rarity" value="blue">
+                <span class="ocr-setup-radio-title" data-i18n="clear_rarity_blue_only">青のみ</span>
+              </label>
+            </div>
+          </div>
+          <div>
+            <span class="detail-label" data-i18n="clear_type_label">型</span>
+            <div class="ocr-setup-radios ocr-setup-radios-row" style="margin-top:6px">
+              <label class="ocr-setup-radio">
+                <input type="checkbox" name="clear-type" value="1" checked>
+                <span class="ocr-setup-radio-title" data-i18n-module-type="55001">攻撃</span>
+              </label>
+              <label class="ocr-setup-radio">
+                <input type="checkbox" name="clear-type" value="2" checked>
+                <span class="ocr-setup-radio-title" data-i18n-module-type="55002">支援</span>
+              </label>
+              <label class="ocr-setup-radio">
+                <input type="checkbox" name="clear-type" value="3" checked>
+                <span class="ocr-setup-radio-title" data-i18n-module-type="55003">防御</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="clear-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="pattern-del-btn addbtn" id="clear-ok" data-i18n="btn_delete">削除</button>
         </div>
       </div>
     </div>

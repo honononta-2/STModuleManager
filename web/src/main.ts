@@ -330,6 +330,46 @@ let filterTypes: number[] = [];
 let filterMode: "and" | "or" = "and";
 let sortKeys: { k: string; d: number }[] = [];
 
+interface OcrTargetConfig {
+  enabled: boolean;
+  newOnly: boolean;
+  stats: number[];
+  minStatValue: number;
+  rarities: Rarity[];
+  types: number[];
+}
+
+const OCR_TARGET_CONFIG_KEY = "ocr-target-config";
+
+function defaultOcrTargetConfig(): OcrTargetConfig {
+  return { enabled: false, newOnly: false, stats: [], minStatValue: 1, rarities: [], types: [] };
+}
+
+let ocrTargetConfig: OcrTargetConfig = defaultOcrTargetConfig();
+let ocrTargetConfigDraft: OcrTargetConfig | null = null;
+
+function saveOcrTargetConfig() {
+  try { localStorage.setItem(OCR_TARGET_CONFIG_KEY, JSON.stringify(ocrTargetConfig)); } catch { /* quota */ }
+}
+
+function loadOcrTargetConfig() {
+  try {
+    const raw = localStorage.getItem(OCR_TARGET_CONFIG_KEY);
+    if (!raw) return;
+    const p = JSON.parse(raw) as Partial<OcrTargetConfig>;
+    const validRarity = (v: unknown): v is Rarity => v === "gold" || v === "purple" || v === "blue";
+    const mv = typeof p.minStatValue === "number" && p.minStatValue >= 1 && p.minStatValue <= 10 ? p.minStatValue : 1;
+    ocrTargetConfig = {
+      enabled: !!p.enabled,
+      newOnly: !!p.newOnly,
+      stats: Array.isArray(p.stats) ? p.stats.filter((v): v is number => typeof v === "number" && ALL_STAT_IDS.includes(v)) : [],
+      minStatValue: mv,
+      rarities: Array.isArray(p.rarities) ? p.rarities.filter(validRarity) : [],
+      types: Array.isArray(p.types) ? p.types.filter((v): v is number => v === 1 || v === 2 || v === 3) : [],
+    };
+  } catch { /* ignore */ }
+}
+
 let optRequired: number[] = [];
 let optDesired: number[] = [];
 let optExcluded: number[] = [];
@@ -1327,30 +1367,178 @@ function refreshOcrDuplicateState() {
       row.classList.remove("ocr-row--duplicate");
     }
   });
-  applyOcrNewOnlyFilter();
+  applyOcrTargetFilter();
 }
 
-/** 新規のみチェック状態に応じて行の表示/非表示を切り替え、カウンターを更新 */
-function applyOcrNewOnlyFilter() {
-  const checked = ($("ocr-new-only") as HTMLInputElement).checked;
+/** 登録対象の設定に応じて、対象外の行を非表示にし、カウンタを更新 */
+function isOcrTargetEligible(m: ModuleInput): boolean {
+  if (ocrTargetConfig.newOnly && isModuleDuplicate(m)) return false;
+  if (ocrTargetConfig.rarities.length > 0 && !ocrTargetConfig.rarities.includes(qualityToRarity(m.quality))) return false;
+  if (ocrTargetConfig.types.length > 0) {
+    const comp = configIdToComponents(m.config_id);
+    const td = comp?.typeDigit ?? 0;
+    if (!ocrTargetConfig.types.includes(td)) return false;
+  }
+  const targetStats = ocrTargetConfig.stats.length > 0 ? ocrTargetConfig.stats : ALL_STAT_IDS;
+  const hasMatch = m.stats.some((s) => targetStats.includes(s.part_id) && s.value >= ocrTargetConfig.minStatValue);
+  if (!hasMatch) return false;
+  return true;
+}
+
+function applyOcrTargetFilter() {
+  const enabled = ocrTargetConfig.enabled;
   const body = $("ocr-modal-body");
   const rows = body.querySelectorAll<HTMLElement>(".ocr-row");
   let total = 0;
   let newCount = 0;
+  let matchCount = 0;
   rows.forEach((row) => {
     total++;
+    const gi = Number(row.dataset.gi);
+    const mi = Number(row.dataset.mi);
+    const m = pendingOcrGroups[gi]?.modules[mi];
     const isDup = row.classList.contains("ocr-row--duplicate");
-    if (isDup && checked) {
+    if (!isDup) newCount++;
+    const eligible = !!m && isOcrTargetEligible(m);
+    if (eligible) matchCount++;
+    if (enabled && !eligible) {
       row.classList.add("ocr-row--hidden");
     } else {
       row.classList.remove("ocr-row--hidden");
     }
-    if (!isDup) newCount++;
   });
   const counter = body.querySelector<HTMLElement>(".ocr-new-count");
   if (counter) {
-    counter.textContent = fmt(t.ui.ocr_new_count, { total: String(total), newCount: String(newCount) });
+    counter.textContent = enabled
+      ? fmt(t.ui.ocr_new_count_with_match, { total: String(total), newCount: String(newCount), matchCount: String(matchCount) })
+      : fmt(t.ui.ocr_new_count, { total: String(total), newCount: String(newCount) });
   }
+}
+
+function setOcrTargetMultiBtnLabel(btnId: string, count: number) {
+  const btn = $<HTMLButtonElement>(btnId);
+  if (count === 0) {
+    btn.textContent = t.ui.filter_none;
+    btn.classList.remove("has-items");
+  } else {
+    btn.textContent = fmt(t.ui.filter_count, { count });
+    btn.classList.add("has-items");
+  }
+}
+
+function renderOcrTargetStatValueMenu() {
+  if (!ocrTargetConfigDraft) return;
+  const dd = $("ocr-target-stat-value");
+  const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger")!;
+  const menu = dd.querySelector<HTMLElement>(".uni-dd-menu")!;
+  menu.textContent = "";
+  const cur = ocrTargetConfigDraft.minStatValue;
+  for (let v = 1; v <= 10; v++) {
+    const item = document.createElement("div");
+    item.className = "fitem uni-dd-item" + (v === cur ? " selected" : "");
+    item.dataset.value = String(v);
+    item.textContent = fmt(t.ui.ocr_target_stat_value_n, { n: String(v) });
+    menu.appendChild(item);
+  }
+  dd.dataset.value = String(cur);
+  trigger.textContent = fmt(t.ui.ocr_target_stat_value_n, { n: String(cur) });
+}
+
+function renderOcrTargetConfigModal() {
+  if (!ocrTargetConfigDraft) return;
+  ($("ocr-target-new-only") as HTMLInputElement).checked = ocrTargetConfigDraft.newOnly;
+  setOcrTargetMultiBtnLabel("ocr-target-stat", ocrTargetConfigDraft.stats.length);
+  setOcrTargetMultiBtnLabel("ocr-target-rarity", ocrTargetConfigDraft.rarities.length);
+  setOcrTargetMultiBtnLabel("ocr-target-type", ocrTargetConfigDraft.types.length);
+  renderOcrTargetStatValueMenu();
+}
+
+function openOcrTargetConfigModal() {
+  ocrTargetConfigDraft = JSON.parse(JSON.stringify(ocrTargetConfig)) as OcrTargetConfig;
+  renderOcrTargetConfigModal();
+  $("ocr-target-config-modal-bd").classList.add("on");
+}
+
+function closeOcrTargetConfigModal() {
+  $("ocr-target-config-modal-bd").classList.remove("on");
+  ocrTargetConfigDraft = null;
+}
+
+function saveOcrTargetConfigFromDraft() {
+  if (!ocrTargetConfigDraft) return;
+  const wasEnabled = ocrTargetConfig.enabled;
+  ocrTargetConfig = { ...ocrTargetConfigDraft, enabled: wasEnabled };
+  saveOcrTargetConfig();
+  ocrTargetConfigDraft = null;
+  $("ocr-target-config-modal-bd").classList.remove("on");
+  applyOcrTargetFilter();
+}
+
+function openOcrTargetStatFlyout(anchor: HTMLElement) {
+  if (!ocrTargetConfigDraft) return;
+  openFlyout(anchor, {
+    mode: "multi",
+    items: ALL_STAT_IDS.map((id) => ({
+      value: String(id),
+      label: statName(id),
+      icon: STAT_ICONS[id] ? `/icons/${STAT_ICONS[id]}` : undefined,
+      checked: ocrTargetConfigDraft!.stats.includes(id),
+    })),
+    onCheck: (value, checked) => {
+      const v = Number(value);
+      if (checked) ocrTargetConfigDraft!.stats.push(v);
+      else {
+        const idx = ocrTargetConfigDraft!.stats.indexOf(v);
+        if (idx >= 0) ocrTargetConfigDraft!.stats.splice(idx, 1);
+      }
+      setOcrTargetMultiBtnLabel("ocr-target-stat", ocrTargetConfigDraft!.stats.length);
+    },
+  });
+}
+
+function openOcrTargetRarityFlyout(anchor: HTMLElement) {
+  if (!ocrTargetConfigDraft) return;
+  openFlyout(anchor, {
+    mode: "multi",
+    items: RARITY_FILTER_VALUES.map((r) => ({
+      value: r,
+      label: t.rarity[r],
+      checked: ocrTargetConfigDraft!.rarities.includes(r),
+    })),
+    onCheck: (value, checked) => {
+      const r = value as Rarity;
+      if (checked) ocrTargetConfigDraft!.rarities.push(r);
+      else {
+        const idx = ocrTargetConfigDraft!.rarities.indexOf(r);
+        if (idx >= 0) ocrTargetConfigDraft!.rarities.splice(idx, 1);
+      }
+      setOcrTargetMultiBtnLabel("ocr-target-rarity", ocrTargetConfigDraft!.rarities.length);
+    },
+  });
+}
+
+function openOcrTargetTypeFlyout(anchor: HTMLElement) {
+  if (!ocrTargetConfigDraft) return;
+  openFlyout(anchor, {
+    mode: "multi",
+    items: MODULE_TYPE_PREFIXES.map((p) => {
+      const digit = p % 10;
+      return {
+        value: String(digit),
+        label: t.module_types[String(p)] ?? "",
+        checked: ocrTargetConfigDraft!.types.includes(digit),
+      };
+    }),
+    onCheck: (value, checked) => {
+      const v = Number(value);
+      if (checked) ocrTargetConfigDraft!.types.push(v);
+      else {
+        const idx = ocrTargetConfigDraft!.types.indexOf(v);
+        if (idx >= 0) ocrTargetConfigDraft!.types.splice(idx, 1);
+      }
+      setOcrTargetMultiBtnLabel("ocr-target-type", ocrTargetConfigDraft!.types.length);
+    },
+  });
 }
 
 function openOcrConfirmationModal(groups: OcrGroup[], startPage = 0) {
@@ -1629,7 +1817,7 @@ function renderOcrModalBody() {
 
   initDropdowns(body);
   updateOcrPager();
-  applyOcrNewOnlyFilter();
+  applyOcrTargetFilter();
 }
 
 function onOcrFieldChange(gi: number, mi: number) {
@@ -1710,8 +1898,7 @@ function collectOcrWarnings(): { gi: number; mi: number; rLabel: string }[] {
 
 function registerOcrModules() {
   const all = allPendingModules();
-  const newOnly = ($("ocr-new-only") as HTMLInputElement).checked;
-  const toRegister = newOnly ? all.filter((m) => !isModuleDuplicate(m)) : all;
+  const toRegister = ocrTargetConfig.enabled ? all.filter(isOcrTargetEligible) : all;
   if (toRegister.length === 0) {
     hasStoredOcrData = false;
     deleteOcrGroups().catch(() => {});
@@ -2815,29 +3002,58 @@ function exportBackup() {
 
 // ========== Clear ==========
 
-let clearPending = false;
-
-function clearModules() {
+function openClearModal() {
   if (modules.length === 0) return;
-  if (!clearPending) {
-    clearPending = true;
-    $("clear-btn").textContent = t.ui.clear_confirm;
-    $("clear-btn").classList.add("has-items");
-    setTimeout(() => {
-      clearPending = false;
-      $("clear-btn").textContent = t.ui.btn_clear;
-      $("clear-btn").classList.remove("has-items");
-    }, 3000);
+  const allRadio = document.querySelector<HTMLInputElement>('input[name="clear-rarity"][value="all"]');
+  if (allRadio) allRadio.checked = true;
+  document.querySelectorAll<HTMLInputElement>('input[name="clear-type"]').forEach((cb) => {
+    cb.checked = true;
+  });
+  $("clear-modal-bd").classList.add("on");
+}
+
+function closeClearModal() {
+  $("clear-modal-bd").classList.remove("on");
+}
+
+function executeClear() {
+  const rarityEl = document.querySelector<HTMLInputElement>('input[name="clear-rarity"]:checked');
+  const rarityMode = rarityEl?.value ?? "all";
+  const typeDigits = Array.from(
+    document.querySelectorAll<HTMLInputElement>('input[name="clear-type"]:checked'),
+  ).map((cb) => Number(cb.value));
+
+  if (typeDigits.length === 0) {
+    showToast(t.ui.clear_no_match, "error");
     return;
   }
-  clearPending = false;
-  modules = [];
-  localStorage.removeItem("modules");
-  $("clear-btn").textContent = t.ui.btn_clear;
-  $("clear-btn").classList.remove("has-items");
+
+  const matchRarity = (q: number | null): boolean => {
+    const r = qualityToRarity(q);
+    if (rarityMode === "blue") return r === "blue";
+    if (rarityMode === "purple_down") return r === "blue" || r === "purple";
+    return true;
+  };
+  const matchType = (configId: number | null): boolean => {
+    const comp = configIdToComponents(configId);
+    if (!comp) return false;
+    return typeDigits.includes(comp.typeDigit);
+  };
+
+  const before = modules.length;
+  modules = modules.filter((m) => !(matchRarity(m.quality) && matchType(m.config_id)));
+  const removed = before - modules.length;
+
+  if (removed === 0) {
+    showToast(t.ui.clear_no_match, "error");
+    return;
+  }
+
+  saveModulesToStorage();
   renderGrid();
   updateOptRunBtn();
-  showToast(t.ui.clear_done, "success");
+  closeClearModal();
+  showToast(fmt(t.ui.clear_done, { count: removed }), "success");
 }
 
 // ========== Toast ==========
@@ -3104,6 +3320,8 @@ document.addEventListener("DOMContentLoaded", () => {
   initDropdowns();
 
   loadModulesFromStorage();
+  loadOcrTargetConfig();
+  ($("ocr-target-only") as HTMLInputElement).checked = ocrTargetConfig.enabled;
   hasOcrGroups().then((v) => { hasStoredOcrData = v; }).catch(() => {});
 
   // タブ切替
@@ -3335,15 +3553,36 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ocr-warn-register").onclick = () => {
     $("ocr-warn-modal-bd").classList.remove("on");
     const all = allPendingModules();
-    const newOnly = ($("ocr-new-only") as HTMLInputElement).checked;
-    const toRegister = newOnly ? all.filter((m) => !isModuleDuplicate(m)) : all;
+    const toRegister = ocrTargetConfig.enabled ? all.filter(isOcrTargetEligible) : all;
     doRegisterOcrModules(toRegister);
   };
   $("ocr-warn-modal-close").onclick = () => $("ocr-warn-modal-bd").classList.remove("on");
   $("ocr-warn-modal-bd").onclick = (e) => { if (e.target === $("ocr-warn-modal-bd")) $("ocr-warn-modal-bd").classList.remove("on"); };
   $("ocr-cancel").onclick = cancelOcrModal;
   $("ocr-modal-close").onclick = closeOcrModal;
-  ($("ocr-new-only") as HTMLInputElement).onchange = applyOcrNewOnlyFilter;
+  ($("ocr-target-only") as HTMLInputElement).onchange = (e) => {
+    ocrTargetConfig.enabled = (e.target as HTMLInputElement).checked;
+    saveOcrTargetConfig();
+    applyOcrTargetFilter();
+  };
+  $("ocr-target-config-btn").onclick = openOcrTargetConfigModal;
+  $("ocr-target-config-close").onclick = closeOcrTargetConfigModal;
+  $("ocr-target-config-cancel").onclick = closeOcrTargetConfigModal;
+  $("ocr-target-config-save").onclick = saveOcrTargetConfigFromDraft;
+  $("ocr-target-config-modal-bd").onclick = (e) => {
+    if (e.target === $("ocr-target-config-modal-bd")) closeOcrTargetConfigModal();
+  };
+  ($("ocr-target-new-only") as HTMLInputElement).onchange = (e) => {
+    if (ocrTargetConfigDraft) ocrTargetConfigDraft.newOnly = (e.target as HTMLInputElement).checked;
+  };
+  $("ocr-target-stat").onclick = (e) => openOcrTargetStatFlyout(e.currentTarget as HTMLElement);
+  $("ocr-target-rarity").onclick = (e) => openOcrTargetRarityFlyout(e.currentTarget as HTMLElement);
+  $("ocr-target-type").onclick = (e) => openOcrTargetTypeFlyout(e.currentTarget as HTMLElement);
+  $("ocr-target-stat-value").addEventListener("change", () => {
+    if (!ocrTargetConfigDraft) return;
+    const v = Number($("ocr-target-stat-value").dataset.value);
+    if (v >= 1 && v <= 10) ocrTargetConfigDraft.minStatValue = v;
+  });
   $("ocr-prev").onclick = () => { ocrCurrentPage--; renderOcrModalBody(); $("ocr-modal-body").querySelector(".ocr-group-list")?.scrollTo(0, 0); };
   $("ocr-next").onclick = () => { ocrCurrentPage++; renderOcrModalBody(); $("ocr-modal-body").querySelector(".ocr-group-list")?.scrollTo(0, 0); };
 
@@ -3448,7 +3687,13 @@ document.addEventListener("DOMContentLoaded", () => {
   $("screenshot-info-close").onclick = () => closeScreenshotInfo();
   $("screenshot-info-bd").onclick = (e) => { if (e.target === $("screenshot-info-bd")) closeScreenshotInfo(); };
   $("json-import-btn").onclick = () => importJson();
-  $("clear-btn").onclick = () => clearModules();
+  $("clear-btn").onclick = () => openClearModal();
+  $("clear-modal-close").onclick = () => closeClearModal();
+  $("clear-cancel").onclick = () => closeClearModal();
+  $("clear-modal-bd").onclick = (e) => {
+    if (e.target === $("clear-modal-bd")) closeClearModal();
+  };
+  $("clear-ok").onclick = () => executeClear();
 
   // Sidebar
   $("backup-export-btn").onclick = () => exportBackup();
