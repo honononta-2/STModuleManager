@@ -474,6 +474,9 @@ body {
   .speed-info-btn:hover { background:var(--cf-subtle-h); color:var(--tx1); }
 }
 
+.dd-item-with-info { padding-right:6px; }
+.dd-item-with-info .dd-item-info-btn { margin-left:auto; }
+
 /* Result card */
 .opt-card {
   background:var(--s-content);
@@ -1527,3 +1530,31 @@ body {
 .uni-dd .opt-multi-btn { width:100%; }
 .uni-dd-placeholder { color:var(--tx3); }
 .uni-dd-menu { display:none; }
+
+
+/* ===== 現有管理 ===== */
+.addbtn.inv-saved {
+  background: var(--acc);
+  color: #fff;
+}
+.addbtn.inv-saved:hover {
+  filter: brightness(1.1);
+}
+.inv-op-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.inv-op-btn {
+  justify-content: center;
+  width: 100%;
+  height: 38px;
+  font-size: 14px;
+}
+.inv-match-options {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+

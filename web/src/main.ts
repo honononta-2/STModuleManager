@@ -10,6 +10,7 @@ import {
   saveOcrGroups, loadOcrGroups, deleteOcrGroups, hasOcrGroups,
   type OcrGroup,
 } from "./ocr-store";
+import { saveInventory, loadInventory, deleteInventory } from "./inventory-store";
 import {
   t, fmt, statName, applyI18n, initLang, saveLang, getSavedLang,
   JA, migrateStatNamesToIds,
@@ -181,6 +182,7 @@ function initDropdowns(container: HTMLElement | Document = document) {
     const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger")!;
     const menuTpl = dd.querySelector<HTMLElement>(".uni-dd-menu")!;
     if (!trigger || !menuTpl) return;
+    const isMenu = dd.dataset.menu === "true";
 
     trigger.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -190,15 +192,19 @@ function initDropdowns(container: HTMLElement | Document = document) {
           value: el.dataset.value ?? "",
           label: el.textContent ?? "",
           html: el.innerHTML,
-          selected: el.classList.contains("selected"),
+          selected: !isMenu && el.classList.contains("selected"),
         });
       });
 
       openFlyout(trigger, {
         mode: "single",
         items,
-        scrollToSelected: true,
+        scrollToSelected: !isMenu,
         onSelect: (value) => {
+          if (isMenu) {
+            dd.dispatchEvent(new CustomEvent("menu-select", { detail: { value }, bubbles: true }));
+            return;
+          }
           dd.dataset.value = value;
           menuTpl.querySelectorAll(".uni-dd-item.selected").forEach((s) => s.classList.remove("selected"));
           const picked = menuTpl.querySelector<HTMLElement>(`.uni-dd-item[data-value="${value}"]`);
@@ -329,6 +335,84 @@ let filterStats: number[] = [];
 let filterTypes: number[] = [];
 let filterSumRanges: number[] = [];
 let filterMode: "and" | "or" = "and";
+let filterInventoryFlags: ("only" | "exclude")[] = [];
+
+type OcrMode = "register" | "inventory-save" | "inventory-add";
+let ocrMode: OcrMode = "register";
+
+interface InventoryMatchConfig {
+  useRarity: boolean;
+  useType: boolean;
+}
+const INVENTORY_MATCH_KEY = "inventory-match-config";
+let inventoryMatchConfig: InventoryMatchConfig = { useRarity: false, useType: false };
+let inventoryMatchDraft: InventoryMatchConfig | null = null;
+let inventoryGroups: OcrGroup[] = [];
+
+function saveInventoryMatchConfigToStorage() {
+  try { localStorage.setItem(INVENTORY_MATCH_KEY, JSON.stringify(inventoryMatchConfig)); } catch { /* quota */ }
+}
+
+function loadInventoryMatchConfigFromStorage() {
+  try {
+    const raw = localStorage.getItem(INVENTORY_MATCH_KEY);
+    if (!raw) return;
+    const p = JSON.parse(raw) as Partial<InventoryMatchConfig>;
+    inventoryMatchConfig = {
+      useRarity: !!p.useRarity,
+      useType: !!p.useType,
+    };
+  } catch { /* ignore */ }
+}
+
+async function loadInventoryFromStorage() {
+  try {
+    const data = await loadInventory();
+    if (data && Array.isArray(data.groups)) {
+      inventoryGroups = data.groups;
+      for (const g of inventoryGroups) {
+        for (const m of g.modules) if (m.uuid > uuidSeq) uuidSeq = m.uuid;
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+async function saveInventoryToStorage() {
+  try { await saveInventory({ groups: inventoryGroups }); } catch { /* ignore */ }
+}
+
+function isInventorySaved(): boolean {
+  return inventoryGroups.length > 0;
+}
+
+function statsSignature(stats: StatEntry[]): string {
+  return stats.slice().sort((a, b) => a.part_id - b.part_id).map((s) => `${s.part_id}:${s.value}`).join(",");
+}
+
+function inventoryModuleKey(m: ModuleInput): string {
+  const parts: string[] = [statsSignature(m.stats)];
+  if (inventoryMatchConfig.useRarity) parts.push(`R:${qualityToRarity(m.quality)}`);
+  if (inventoryMatchConfig.useType) {
+    const c = configIdToComponents(m.config_id);
+    parts.push(`T:${c?.typeDigit ?? 0}`);
+  }
+  return parts.join("|");
+}
+
+function buildInventoryKeySet(): Set<string> {
+  const set = new Set<string>();
+  for (const g of inventoryGroups) {
+    for (const m of g.modules) set.add(inventoryModuleKey(m));
+  }
+  return set;
+}
+
+function updateInventoryBtnLabel() {
+  const btn = $<HTMLButtonElement>("inventory-btn");
+  if (!btn) return;
+  btn.textContent = isInventorySaved() ? t.ui.btn_inventory_saved : t.ui.btn_inventory;
+  btn.classList.toggle("inv-saved", isInventorySaved());
+}
 
 const SUM_RANGES: Array<[number, number]> = [[1, 10], [11, 15], [16, 20], [21, 25]];
 let sortKeys: { k: string; d: number }[] = [];
@@ -522,6 +606,16 @@ function renderGrid() {
       });
     });
   }
+  if (filterInventoryFlags.length > 0 && isInventorySaved()) {
+    const invKeys = buildInventoryKeySet();
+    const hasOnly = filterInventoryFlags.includes("only");
+    const hasExclude = filterInventoryFlags.includes("exclude");
+    if (hasOnly && !hasExclude) {
+      ms = ms.filter((m) => invKeys.has(inventoryModuleKey(m)));
+    } else if (hasExclude && !hasOnly) {
+      ms = ms.filter((m) => !invKeys.has(inventoryModuleKey(m)));
+    }
+  }
 
   ms.sort((a, b) => {
     for (const s of sortKeys) {
@@ -651,7 +745,8 @@ function renderGrid() {
 
   $("sb-n").textContent = fmt(t.ui.n_modules, { count: ms.length });
   const info: string[] = [];
-  const filterCount = filterRarities.length + filterTypes.length + filterStats.length + filterSumRanges.length;
+  const invCount = isInventorySaved() ? filterInventoryFlags.length : 0;
+  const filterCount = filterRarities.length + filterTypes.length + filterStats.length + filterSumRanges.length + invCount;
   if (filterCount) info.push(`${fmt(t.ui.filter_info, { count: filterCount })}(${filterMode.toUpperCase()})`);
   $("sb-i").textContent = info.join("\u3000");
 }
@@ -659,7 +754,8 @@ function renderGrid() {
 // ========== Filter flyout ==========
 
 function updateFilterBtnLabel() {
-  const count = filterRarities.length + filterTypes.length + filterStats.length + filterSumRanges.length;
+  const invCount = isInventorySaved() ? filterInventoryFlags.length : 0;
+  const count = filterRarities.length + filterTypes.length + filterStats.length + filterSumRanges.length + invCount;
   const btn = $("filter-btn");
   btn.textContent = count > 0 ? fmt(t.ui.filter_count, { count }) : t.ui.filter_none;
   btn.classList.toggle("has-items", count > 0);
@@ -669,62 +765,77 @@ const RARITY_FILTER_VALUES: Rarity[] = ["gold", "purple", "blue"];
 
 function openFilterMultiFly(anchor: HTMLElement) {
   const refresh = () => { updateFilterBtnLabel(); renderGrid(); };
-  openFlyout(anchor, {
-    mode: "multi",
-    sections: [
-      {
-        title: t.ui.fly_rarity,
-        items: RARITY_FILTER_VALUES.map((r) => ({
-          value: r, label: t.rarity[r], checked: filterRarities.includes(r),
-        })),
-        onCheck: (value, checked) => {
-          const r = value as Rarity;
-          if (checked) filterRarities.push(r);
-          else { const idx = filterRarities.indexOf(r); if (idx >= 0) filterRarities.splice(idx, 1); }
-          refresh();
-        },
+  const sections: FlyoutSection[] = [
+    {
+      title: t.ui.fly_rarity,
+      items: RARITY_FILTER_VALUES.map((r) => ({
+        value: r, label: t.rarity[r], checked: filterRarities.includes(r),
+      })),
+      onCheck: (value, checked) => {
+        const r = value as Rarity;
+        if (checked) filterRarities.push(r);
+        else { const idx = filterRarities.indexOf(r); if (idx >= 0) filterRarities.splice(idx, 1); }
+        refresh();
       },
-      {
-        title: t.ui.fly_type,
-        items: MODULE_TYPE_PREFIXES.map((p) => ({
-          value: String(p), label: t.module_types[String(p)] ?? "", checked: filterTypes.includes(p),
-        })),
-        onCheck: (value, checked) => {
-          const v = Number(value);
-          if (checked) filterTypes.push(v);
-          else { const idx = filterTypes.indexOf(v); if (idx >= 0) filterTypes.splice(idx, 1); }
-          refresh();
-        },
+    },
+    {
+      title: t.ui.fly_type,
+      items: MODULE_TYPE_PREFIXES.map((p) => ({
+        value: String(p), label: t.module_types[String(p)] ?? "", checked: filterTypes.includes(p),
+      })),
+      onCheck: (value, checked) => {
+        const v = Number(value);
+        if (checked) filterTypes.push(v);
+        else { const idx = filterTypes.indexOf(v); if (idx >= 0) filterTypes.splice(idx, 1); }
+        refresh();
       },
-      {
-        title: t.ui.fly_sum_total,
-        items: SUM_RANGES.map(([lo, hi], i) => ({
-          value: String(i), label: `${lo}-${hi}`,
-          checked: filterSumRanges.includes(i),
-        })),
-        onCheck: (value, checked) => {
-          const i = Number(value);
-          if (checked) filterSumRanges.push(i);
-          else { const idx = filterSumRanges.indexOf(i); if (idx >= 0) filterSumRanges.splice(idx, 1); }
-          refresh();
-        },
+    },
+    {
+      title: t.ui.fly_sum_total,
+      items: SUM_RANGES.map(([lo, hi], i) => ({
+        value: String(i), label: `${lo}-${hi}`,
+        checked: filterSumRanges.includes(i),
+      })),
+      onCheck: (value, checked) => {
+        const i = Number(value);
+        if (checked) filterSumRanges.push(i);
+        else { const idx = filterSumRanges.indexOf(i); if (idx >= 0) filterSumRanges.splice(idx, 1); }
+        refresh();
       },
-      {
-        title: t.ui.fly_stat,
-        items: ALL_STAT_IDS.map((id) => ({
-          value: String(id), label: statName(id),
-          icon: STAT_ICONS[id] ? `/icons/${STAT_ICONS[id]}` : undefined,
-          checked: filterStats.includes(id),
-        })),
-        onCheck: (value, checked) => {
-          const v = Number(value);
-          if (checked) filterStats.push(v);
-          else { const idx = filterStats.indexOf(v); if (idx >= 0) filterStats.splice(idx, 1); }
-          refresh();
-        },
+    },
+    {
+      title: t.ui.fly_stat,
+      items: ALL_STAT_IDS.map((id) => ({
+        value: String(id), label: statName(id),
+        icon: STAT_ICONS[id] ? `/icons/${STAT_ICONS[id]}` : undefined,
+        checked: filterStats.includes(id),
+      })),
+      onCheck: (value, checked) => {
+        const v = Number(value);
+        if (checked) filterStats.push(v);
+        else { const idx = filterStats.indexOf(v); if (idx >= 0) filterStats.splice(idx, 1); }
+        refresh();
       },
-    ],
-  });
+    },
+  ];
+
+  if (isInventorySaved()) {
+    sections.push({
+      title: t.ui.inventory_filter_label,
+      items: [
+        { value: "only", label: t.ui.inventory_filter_only, checked: filterInventoryFlags.includes("only") },
+        { value: "exclude", label: t.ui.inventory_filter_exclude, checked: filterInventoryFlags.includes("exclude") },
+      ],
+      onCheck: (value, checked) => {
+        const v = value as "only" | "exclude";
+        if (checked) filterInventoryFlags.push(v);
+        else { const idx = filterInventoryFlags.indexOf(v); if (idx >= 0) filterInventoryFlags.splice(idx, 1); }
+        refresh();
+      },
+    });
+  }
+
+  openFlyout(anchor, { mode: "multi", sections });
 }
 
 // ========== Sort chips ==========
@@ -1572,16 +1683,42 @@ function openOcrConfirmationModal(groups: OcrGroup[], startPage = 0) {
   }));
   ocrImageZoomStates = groups.map(() => ({ scale: 1, translateX: 0, translateY: 0 }));
   ocrCurrentPage = Math.min(startPage, groups.length - 1);
-  hasStoredOcrData = true;
-  saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+  if (ocrMode === "register") {
+    hasStoredOcrData = true;
+    saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+  }
+  applyOcrConfirmModeUi();
   renderOcrModalBody();
   $("ocr-modal-bd").classList.add("on");
 }
 
-/** ×ボタン: IndexedDBに保存したまま閉じる */
+function applyOcrConfirmModeUi() {
+  const titleEl = document.querySelector<HTMLElement>('#ocr-modal-bd [data-i18n="ocr_title"]');
+  if (titleEl) {
+    if (ocrMode === "inventory-save") titleEl.textContent = t.ui.inventory_setup_title;
+    else if (ocrMode === "inventory-add") titleEl.textContent = t.ui.inventory_add_setup_title;
+    else titleEl.textContent = t.ui.ocr_title;
+  }
+  const registerBtn = $<HTMLButtonElement>("ocr-register");
+  registerBtn.textContent = ocrMode === "register" ? t.ui.btn_register : t.ui.btn_save_inventory;
+  // 対象管理/登録対象のみは通常モードのみ
+  const targetConfigBtn = $<HTMLButtonElement>("ocr-target-config-btn");
+  const targetOnlyLabel = ($("ocr-target-only") as HTMLInputElement).closest("label") as HTMLElement | null;
+  const showTargetUi = ocrMode === "register";
+  targetConfigBtn.style.display = showTargetUi ? "" : "none";
+  if (targetOnlyLabel) targetOnlyLabel.style.display = showTargetUi ? "" : "none";
+  if (!showTargetUi) {
+    ocrTargetEnabled = false;
+    ($("ocr-target-only") as HTMLInputElement).checked = false;
+  }
+}
+
+/** ×ボタン: 通常モードはIndexedDBに保存して閉じる。現有モードは破棄して閉じる */
 function closeOcrModal() {
-  hasStoredOcrData = true;
-  saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+  if (ocrMode === "register") {
+    hasStoredOcrData = true;
+    saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+  }
   $("ocr-modal-bd").classList.remove("on");
   pendingOcrGroups = [];
   ocrImageZoomStates = [];
@@ -1596,8 +1733,15 @@ function showOcrDeleteConfirm(onConfirm: () => void) {
   $("ocr-cancel-modal-bd").classList.add("on");
 }
 
-/** キャンセルボタン: 確認後にIndexedDBから削除して閉じる */
+/** キャンセルボタン: 通常モードは確認後にIndexedDBから削除して閉じる。現有モードは直接破棄 */
 function cancelOcrModal() {
+  if (ocrMode !== "register") {
+    $("ocr-modal-bd").classList.remove("on");
+    pendingOcrGroups = [];
+    ocrImageZoomStates = [];
+    ocrCurrentPage = 0;
+    return;
+  }
   showOcrDeleteConfirm(() => {
     $("ocr-modal-bd").classList.remove("on");
     pendingOcrGroups = [];
@@ -1921,10 +2065,12 @@ function collectOcrWarnings(): { gi: number; mi: number; rLabel: string }[] {
 
 function registerOcrModules() {
   const all = allPendingModules();
-  const toRegister = ocrTargetEnabled ? all.filter(isOcrTargetEligible) : all;
+  const toRegister = (ocrMode === "register" && ocrTargetEnabled) ? all.filter(isOcrTargetEligible) : all;
   if (toRegister.length === 0) {
-    hasStoredOcrData = false;
-    deleteOcrGroups().catch(() => {});
+    if (ocrMode === "register") {
+      hasStoredOcrData = false;
+      deleteOcrGroups().catch(() => {});
+    }
     $("ocr-modal-bd").classList.remove("on");
     pendingOcrGroups = [];
     ocrImageZoomStates = [];
@@ -1943,12 +2089,36 @@ function registerOcrModules() {
 }
 
 function doRegisterOcrModules(toRegister: ModuleInput[]) {
-  modules.push(...toRegister);
-  saveModulesToStorage();
-  renderGrid();
-  updateOptRunBtn();
-  hasStoredOcrData = false;
-  deleteOcrGroups().catch(() => {});
+  if (ocrMode === "register") {
+    modules.push(...toRegister);
+    saveModulesToStorage();
+    renderGrid();
+    updateOptRunBtn();
+    hasStoredOcrData = false;
+    deleteOcrGroups().catch(() => {});
+  } else if (ocrMode === "inventory-save") {
+    inventoryGroups = pendingOcrGroups.map((g) => ({
+      imageUrl: g.imageUrl,
+      modules: g.modules.map((m) => ({ ...m, stats: m.stats.map((s) => ({ ...s })) })),
+      originalRowIndices: g.originalRowIndices ? [...g.originalRowIndices] : undefined,
+    }));
+    saveInventoryToStorage().catch(() => {});
+    updateInventoryBtnLabel();
+    renderGrid();
+    showToast(fmt(t.ui.inventory_save_done, { count: toRegister.length }), "success");
+  } else if (ocrMode === "inventory-add") {
+    for (const g of pendingOcrGroups) {
+      inventoryGroups.push({
+        imageUrl: g.imageUrl,
+        modules: g.modules.map((m) => ({ ...m, stats: m.stats.map((s) => ({ ...s })) })),
+        originalRowIndices: g.originalRowIndices ? [...g.originalRowIndices] : undefined,
+      });
+    }
+    saveInventoryToStorage().catch(() => {});
+    updateInventoryBtnLabel();
+    renderGrid();
+    showToast(fmt(t.ui.inventory_add_done, { count: toRegister.length }), "success");
+  }
   $("ocr-modal-bd").classList.remove("on");
   pendingOcrGroups = [];
   ocrImageZoomStates = [];
@@ -2356,6 +2526,7 @@ function closeScreenshotInfo() {
 }
 
 function importScreenshot() {
+  ocrMode = "register";
   if (!localStorage.getItem(SCREENSHOT_INFO_SEEN_KEY)) {
     localStorage.setItem(SCREENSHOT_INFO_SEEN_KEY, "1");
     showScreenshotInfo(() => importScreenshot());
@@ -2369,6 +2540,7 @@ function importScreenshot() {
 }
 
 function restoreOcrGroups() {
+  ocrMode = "register";
   $("ocr-prev-modal-bd").classList.remove("on");
   loadOcrGroups().then((data) => {
     if (data && data.groups.length > 0) {
@@ -2495,8 +2667,23 @@ function openOcrSetupModal() {
   updateOcrRarityFilterBtn();
   updateOcrTypeFilterBtn();
   renderOcrSetupFileList();
+  applyOcrSetupModeUi();
   $<HTMLButtonElement>("ocr-setup-start").disabled = true;
   $("ocr-setup-modal-bd").classList.add("on");
+}
+
+function applyOcrSetupModeUi() {
+  const titleEl = document.querySelector<HTMLElement>('#ocr-setup-modal-bd [data-i18n="ocr_setup_title"]');
+  if (titleEl) {
+    if (ocrMode === "inventory-save") titleEl.textContent = t.ui.inventory_setup_title;
+    else if (ocrMode === "inventory-add") titleEl.textContent = t.ui.inventory_add_setup_title;
+    else titleEl.textContent = t.ui.ocr_setup_title;
+  }
+  // フィルター欄は通常モードのみ表示
+  const filterSection = $("ocr-filter-rarity").closest(".ocr-setup-section") as HTMLElement | null;
+  if (filterSection) {
+    filterSection.style.display = ocrMode === "register" ? "" : "none";
+  }
 }
 
 function closeOcrSetupModal() {
@@ -2535,9 +2722,6 @@ async function startOcrFromSetup() {
 
   closeOcrSetupModal();
 
-  const btn = $<HTMLButtonElement>("screenshot-btn");
-  btn.classList.add("loading");
-  btn.textContent = t.ui.ocr_reading;
   const overlay = createLoadingOverlay();
   const appEl = document.querySelector(".app")!;
   const statusbar = appEl.querySelector(".statusbar")!;
@@ -2583,14 +2767,10 @@ async function startOcrFromSetup() {
     }
 
     overlay.remove();
-    btn.classList.remove("loading");
-    btn.textContent = t.ui.btn_screenshot;
     progress.style.display = "none";
     openOcrConfirmationModal(groups);
   } catch (err) {
     overlay.remove();
-    btn.classList.remove("loading");
-    btn.textContent = t.ui.btn_screenshot;
     progress.style.display = "none";
     showToast(err instanceof Error ? err.message : t.ui.ocr_failed, "error");
   } finally {
@@ -2939,6 +3119,100 @@ function createLoadingOverlay(): HTMLElement {
     <li class="hexagon hex_5"></li><li class="hexagon hex_6"></li>
     <li class="hexagon hex_7"></li></ul></div>`;
   return overlay;
+}
+
+// ========== Inventory Management ==========
+
+function onInventoryButtonClick() {
+  if (!isInventorySaved()) {
+    ocrMode = "inventory-save";
+    openOcrSetupModal();
+  } else {
+    openInventoryOpModal();
+  }
+}
+
+function openInventoryOpModal() {
+  $("inventory-op-modal-bd").classList.add("on");
+}
+
+function closeInventoryOpModal() {
+  $("inventory-op-modal-bd").classList.remove("on");
+}
+
+function invStartEdit() {
+  closeInventoryOpModal();
+  ocrMode = "inventory-save";
+  const copy = inventoryGroups.map((g) => ({
+    imageUrl: g.imageUrl,
+    modules: g.modules.map((m) => ({ ...m, stats: m.stats.map((s) => ({ ...s })) })),
+    originalRowIndices: g.originalRowIndices ? [...g.originalRowIndices] : undefined,
+  }));
+  openOcrConfirmationModal(copy);
+}
+
+function invStartAdd() {
+  closeInventoryOpModal();
+  ocrMode = "inventory-add";
+  openOcrSetupModal();
+}
+
+function openInventoryMatchModal() {
+  closeInventoryOpModal();
+  inventoryMatchDraft = { ...inventoryMatchConfig };
+  ($("inv-match-rarity") as HTMLInputElement).checked = inventoryMatchDraft.useRarity;
+  ($("inv-match-type") as HTMLInputElement).checked = inventoryMatchDraft.useType;
+  $("inventory-match-modal-bd").classList.add("on");
+}
+
+function closeInventoryMatchModal() {
+  $("inventory-match-modal-bd").classList.remove("on");
+  inventoryMatchDraft = null;
+}
+
+function saveInventoryMatchDraft() {
+  if (!inventoryMatchDraft) return;
+  inventoryMatchConfig = { ...inventoryMatchDraft };
+  saveInventoryMatchConfigToStorage();
+  inventoryMatchDraft = null;
+  $("inventory-match-modal-bd").classList.remove("on");
+  renderGrid();
+}
+
+function openInventoryClearShotsModal() {
+  closeInventoryOpModal();
+  $("inventory-clear-shots-modal-bd").classList.add("on");
+}
+
+function closeInventoryClearShotsModal() {
+  $("inventory-clear-shots-modal-bd").classList.remove("on");
+}
+
+function executeInventoryClearShots() {
+  for (const g of inventoryGroups) g.imageUrl = "";
+  saveInventoryToStorage().catch(() => {});
+  closeInventoryClearShotsModal();
+  showToast(t.ui.inventory_shots_cleared, "success");
+}
+
+function openInventoryClearDataModal() {
+  closeInventoryOpModal();
+  $("inventory-clear-data-modal-bd").classList.add("on");
+}
+
+function closeInventoryClearDataModal() {
+  $("inventory-clear-data-modal-bd").classList.remove("on");
+}
+
+function executeInventoryClearData() {
+  inventoryGroups = [];
+  filterInventoryFlags = [];
+  deleteInventory().catch(() => {});
+  closeInventoryClearDataModal();
+  updateInventoryBtnLabel();
+  updateFilterBtnLabel();
+  renderGrid();
+  showToast(t.ui.inventory_data_cleared, "success");
 }
 
 // ========== JSON Import ==========
@@ -3344,7 +3618,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   loadModulesFromStorage();
   loadOcrTargetConfig();
+  loadInventoryMatchConfigFromStorage();
   hasOcrGroups().then((v) => { hasStoredOcrData = v; }).catch(() => {});
+  loadInventoryFromStorage().then(() => {
+    updateInventoryBtnLabel();
+    renderGrid();
+  });
 
   // タブ切替
   document.querySelectorAll<HTMLElement>(".tab").forEach((tab) => {
@@ -3575,7 +3854,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ocr-warn-register").onclick = () => {
     $("ocr-warn-modal-bd").classList.remove("on");
     const all = allPendingModules();
-    const toRegister = ocrTargetEnabled ? all.filter(isOcrTargetEligible) : all;
+    const toRegister = (ocrMode === "register" && ocrTargetEnabled) ? all.filter(isOcrTargetEligible) : all;
     doRegisterOcrModules(toRegister);
   };
   $("ocr-warn-modal-close").onclick = () => $("ocr-warn-modal-bd").classList.remove("on");
@@ -3691,7 +3970,6 @@ document.addEventListener("DOMContentLoaded", () => {
   $("license-modal-close").onclick = () => $("license-modal-bd").classList.remove("on");
   $("license-modal-bd").onclick = (e) => { if (e.target === $("license-modal-bd")) $("license-modal-bd").classList.remove("on"); };
 
-  $("manual-btn").onclick = () => openManualInputModal();
   $("manual-modal-close").onclick = closeManualModal;
   $("manual-cancel").onclick = closeManualModal;
   $("manual-add").onclick = addManualModule;
@@ -3703,11 +3981,49 @@ document.addEventListener("DOMContentLoaded", () => {
   $("edit-delete").onclick = deleteEditModule;
   $("edit-modal-bd").onclick = (e) => { if (e.target === $("edit-modal-bd")) closeEditModal(); };
 
-  $("screenshot-btn").onclick = () => importScreenshot();
-  $("screenshot-info-btn").onclick = () => showScreenshotInfo();
+  $("data-import-dd").addEventListener("menu-select", (e) => {
+    const value = (e as CustomEvent<{ value: string }>).detail.value;
+    if (value === "screenshot") importScreenshot();
+    else if (value === "json") importJson();
+    else if (value === "manual") openManualInputModal();
+  });
+  document.addEventListener("click", (e) => {
+    const infoBtn = (e.target as HTMLElement | null)?.closest<HTMLElement>(".dd-item-info-btn");
+    if (!infoBtn) return;
+    e.stopPropagation();
+    closeFlyout();
+    if (infoBtn.dataset.infoAction === "screenshot") showScreenshotInfo();
+  }, true);
   $("screenshot-info-close").onclick = () => closeScreenshotInfo();
   $("screenshot-info-bd").onclick = (e) => { if (e.target === $("screenshot-info-bd")) closeScreenshotInfo(); };
-  $("json-import-btn").onclick = () => importJson();
+
+  // Inventory
+  $("inventory-btn").onclick = () => onInventoryButtonClick();
+  $("inventory-op-close").onclick = closeInventoryOpModal;
+  $("inventory-op-modal-bd").onclick = (e) => { if (e.target === $("inventory-op-modal-bd")) closeInventoryOpModal(); };
+  $("inv-op-edit").onclick = invStartEdit;
+  $("inv-op-add").onclick = invStartAdd;
+  $("inv-op-match").onclick = openInventoryMatchModal;
+  $("inv-op-clear-shots").onclick = openInventoryClearShotsModal;
+  $("inv-op-clear-data").onclick = openInventoryClearDataModal;
+  $("inventory-match-close").onclick = closeInventoryMatchModal;
+  $("inv-match-cancel").onclick = closeInventoryMatchModal;
+  $("inv-match-save").onclick = saveInventoryMatchDraft;
+  $("inventory-match-modal-bd").onclick = (e) => { if (e.target === $("inventory-match-modal-bd")) closeInventoryMatchModal(); };
+  ($("inv-match-rarity") as HTMLInputElement).onchange = (e) => {
+    if (inventoryMatchDraft) inventoryMatchDraft.useRarity = (e.target as HTMLInputElement).checked;
+  };
+  ($("inv-match-type") as HTMLInputElement).onchange = (e) => {
+    if (inventoryMatchDraft) inventoryMatchDraft.useType = (e.target as HTMLInputElement).checked;
+  };
+  $("inv-clear-shots-close").onclick = closeInventoryClearShotsModal;
+  $("inv-clear-shots-cancel").onclick = closeInventoryClearShotsModal;
+  $("inv-clear-shots-ok").onclick = executeInventoryClearShots;
+  $("inventory-clear-shots-modal-bd").onclick = (e) => { if (e.target === $("inventory-clear-shots-modal-bd")) closeInventoryClearShotsModal(); };
+  $("inv-clear-data-close").onclick = closeInventoryClearDataModal;
+  $("inv-clear-data-cancel").onclick = closeInventoryClearDataModal;
+  $("inv-clear-data-ok").onclick = executeInventoryClearData;
+  $("inventory-clear-data-modal-bd").onclick = (e) => { if (e.target === $("inventory-clear-data-modal-bd")) closeInventoryClearDataModal(); };
   $("clear-btn").onclick = () => openClearModal();
   $("clear-modal-close").onclick = () => closeClearModal();
   $("clear-cancel").onclick = () => closeClearModal();
