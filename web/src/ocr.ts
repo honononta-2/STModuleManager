@@ -82,15 +82,6 @@ interface ModuleIconTemplateInfo {
 
 let moduleIconTemplates: ModuleIconTemplateInfo[] = [];
 
-interface UserModuleOcrTemplateInfo {
-  type: string;
-  rarity: number;
-  colorMat: any;
-  avgHash: number[];
-  grayEqMat: any; // グレースケール+equalizeHist版（キャッシュ）
-}
-
-let userModuleOcrTemplates: UserModuleOcrTemplateInfo[] = [];
 let templatesLoaded = false;
 
 const CLASSIFY_BACKGROUNDS = [
@@ -164,10 +155,8 @@ async function loadTemplates(): Promise<void> {
     for (const v of t.classifyVariants) { v.grayMat.delete(); v.edgeMat.delete(); }
     for (const v of t.colorVariants) { v.colorMat.delete(); }
   }
-  for (const t of userModuleOcrTemplates) { t.colorMat.delete(); t.grayEqMat.delete(); }
   statTemplates = [];
   moduleIconTemplates = [];
-  userModuleOcrTemplates = [];
 
   for (const [partIdStr, iconFile] of Object.entries(STAT_ICONS)) {
     const partId = Number(partIdStr);
@@ -245,38 +234,7 @@ async function loadTemplates(): Promise<void> {
     });
   }
 
-  for (const modIcon of MODULE_ICONS) {
-    if (modIcon.rarity === 5) continue; // 金Bスキップ
-    try {
-      const img = await loadImage(`/icons/OCR_${modIcon.type}${modIcon.rarity}.png`);
-      const colorCanvas = renderTemplateCanvas(img, null);
-      const colorMat = buildColorMat(colorCanvas, cv);
-      // グレースケール+equalizeHist版をキャッシュ
-      const grayTmpl = new cv.Mat();
-      cv.cvtColor(colorMat, grayTmpl, cv.COLOR_RGBA2GRAY);
-      const grayEqTmpl = new cv.Mat();
-      cv.equalizeHist(grayTmpl, grayEqTmpl);
-      grayTmpl.delete();
-
-      userModuleOcrTemplates.push({
-        type: modIcon.type,
-        rarity: modIcon.rarity,
-        colorMat,
-        avgHash: computeAverageHash(colorMat, cv),
-        grayEqMat: grayEqTmpl,
-      });
-    } catch {
-      // テンプレート画像が存在しない場合はスキップ
-    }
-  }
-
   templatesLoaded = true;
-}
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)];
 }
 
 
@@ -314,30 +272,7 @@ async function ocrNumbersForRow(
     cropH: number;
   }
 
-  interface OcrDebugInfo {
-    hadPlus: boolean;
-    rawText: string;
-    normalized: string;
-    matchedText: string;
-    cropIndex: number;
-    mode: "binary-invert" | "binary-normal" | "gray" | "adaptive" | "color-distance";
-    threshold: number | null;
-    upscale: number;
-  }
-
-  interface OcrResult extends StatEntry {
-    _ocrDebug?: OcrDebugInfo;
-  }
-
-  interface ExtractedValue {
-    value: number;
-    hadPlus: boolean;
-    rawText: string;
-    normalized: string;
-    matchedText: string;
-  }
-
-  const extractValue = (text: string): ExtractedValue => {
+  const extractValue = (text: string): { value: number; hadPlus: boolean } => {
     const normalized = text
       .trim()
       .replace(/\s/g, "")
@@ -346,21 +281,12 @@ async function ocrNumbersForRow(
       .replace(/S/g, "5");
     const match = normalized.match(/\+?(\d{1,2})/);
     if (!match) {
-      return {
-        value: 0,
-        hadPlus: normalized.includes("+"),
-        rawText: text,
-        normalized,
-        matchedText: "",
-      };
+      return { value: 0, hadPlus: normalized.includes("+") };
     }
     const val = parseInt(match[1], 10);
     return {
       value: val >= 1 && val <= 10 ? val : 0,
       hadPlus: match[0].startsWith("+"),
-      rawText: text,
-      normalized,
-      matchedText: match[0],
     };
   };
 
@@ -535,7 +461,7 @@ async function ocrNumbersForRow(
       part_id: stat.partId,
       value: 0,
       _ocrCrops: cropVariants,
-    } as any as OcrResult);
+    } as any as StatEntry);
   }
 
   if (stats.length === 0) return [];
@@ -557,7 +483,7 @@ async function ocrNumbersForRow(
       ];
 
       // 「+」付き結果を優先し、「+」なし結果はフォールバックとして保持
-      let fallback: { value: number; debug: OcrDebugInfo } | null = null;
+      let fallbackValue: number | null = null;
       let confirmed = false;
 
       for (let cropIndex = 0; cropIndex < cropVariants.length && !confirmed; cropIndex++) {
@@ -575,34 +501,19 @@ async function ocrNumbersForRow(
           const { data } = await worker.recognize(ocrInput);
           const extracted = extractValue(data.text);
           if (extracted.value > 0) {
-            const debug: OcrDebugInfo = {
-              hadPlus: extracted.hadPlus,
-              rawText: extracted.rawText,
-              normalized: extracted.normalized,
-              matchedText: extracted.matchedText,
-              cropIndex,
-              mode: attempt.mode,
-              threshold: attempt.threshold,
-              upscale: attempt.upscale,
-            };
             if (extracted.hadPlus) {
-              // 「+」付き → 高信頼、即採用
               stat.value = extracted.value;
-              (stat as OcrResult)._ocrDebug = debug;
               confirmed = true;
               break;
-            } else if (!fallback) {
-              // 「+」なし → フォールバックとして保持し、残りのパターンも試す
-              fallback = { value: extracted.value, debug };
+            } else if (fallbackValue === null) {
+              fallbackValue = extracted.value;
             }
           }
         }
       }
 
-      // 「+」付き結果が見つからなかった場合、フォールバックを採用
-      if (!confirmed && fallback) {
-        stat.value = fallback.value;
-        (stat as OcrResult)._ocrDebug = fallback.debug;
+      if (!confirmed && fallbackValue !== null) {
+        stat.value = fallbackValue;
       }
     } catch {
       // OCR失敗
@@ -618,6 +529,17 @@ async function ocrNumbersForRow(
 }
 
 // --- メイン処理 ---
+
+/** 数値OCR用に共通設定済みのtesseract.jsワーカーを生成する */
+export async function createOcrWorker(): Promise<any> {
+  const { createWorker } = await import("tesseract.js");
+  const worker = await createWorker("eng");
+  await worker.setParameters({
+    tessedit_char_whitelist: "+0123456789",
+    tessedit_pageseg_mode: "7" as any,
+  });
+  return worker;
+}
 
 export interface OcrProgress {
   stage: string;
@@ -659,40 +581,6 @@ function buildConfigId(typeName: string, rarity: number): number {
   const typeDigit = TYPE_DIGIT_MAP[typeName] ?? 0;
   const rareSub = rarity - 1; // rarity 2→1, 3→2, 4→3, 5→4
   return (55000 + typeDigit) * 100 + rareSub;
-}
-
-function computeAverageHash(srcMat: any, cv: any): number[] {
-  const gray = new cv.Mat();
-  const channels = typeof srcMat.channels === "function" ? srcMat.channels() : 4;
-  if (channels === 1) {
-    srcMat.copyTo(gray);
-  } else if (channels === 3) {
-    cv.cvtColor(srcMat, gray, cv.COLOR_RGB2GRAY);
-  } else {
-    cv.cvtColor(srcMat, gray, cv.COLOR_RGBA2GRAY);
-  }
-
-  const resized = new cv.Mat();
-  cv.resize(gray, resized, new cv.Size(8, 8), 0, 0, cv.INTER_AREA);
-
-  let sum = 0;
-  for (let y = 0; y < 8; y++) {
-    for (let x = 0; x < 8; x++) {
-      sum += resized.ucharAt(y, x);
-    }
-  }
-  const avg = sum / 64;
-  const hash = new Array<number>(64);
-  let idx = 0;
-  for (let y = 0; y < 8; y++) {
-    for (let x = 0; x < 8; x++) {
-      hash[idx++] = resized.ucharAt(y, x) > avg ? 1 : 0;
-    }
-  }
-
-  gray.delete();
-  resized.delete();
-  return hash;
 }
 
 // ステータスアイコン分類（予測座標指定・最小探索範囲版）
@@ -747,11 +635,12 @@ function classifyStatAtPoint(
 
 // --- モジュールアイコン カラーマッチング分類 ---
 
-function classifyModuleIconByColor(
+function classifyModuleIcon(
   colorMat: any,
   cx: number,
   cy: number,
   moduleScale: number,
+  pad: { x: number; y: number } | "expanded",
   cv: any,
   filterRarities?: number[],
   filterTypes?: string[],
@@ -762,97 +651,12 @@ function classifyModuleIconByColor(
   const expectedW = Math.round(refTmpl.edgeMat.cols * moduleScale);
   const expectedH = Math.round(refTmpl.edgeMat.rows * moduleScale);
 
-  const padX = Math.round(expectedW * 0.5);
-  const padY = Math.round(expectedH * 0.5);
+  const padX = pad === "expanded" ? Math.round(expectedW * 0.5) : pad.x;
+  const padY = pad === "expanded" ? Math.round(expectedH * 0.5) : pad.y;
   const roiX = Math.max(0, Math.round(cx - expectedW / 2 - padX));
   const roiY = Math.max(0, Math.round(cy - expectedH / 2 - padY));
   const roiW = Math.min(expectedW + padX * 2, colorMat.cols - roiX);
   const roiH = Math.min(expectedH + padY * 2, colorMat.rows - roiY);
-  if (roiW < expectedW || roiH < expectedH) return null;
-
-  const roi = colorMat.roi(new cv.Rect(roiX, roiY, roiW, roiH));
-  const result = new cv.Mat();
-  const resized = new cv.Mat();
-
-  let bestMatch: ModuleIconMatch | null = null;
-  let secondBestScore = -1;
-
-  for (const tmpl of moduleIconTemplates) {
-    if (filterRarities?.length && !filterRarities.includes(tmpl.rarity)) continue;
-    if (filterTypes?.length && !filterTypes.includes(tmpl.type)) continue;
-
-    let partBest = -Infinity;
-    let partLoc = { x: 0, y: 0 };
-    let partW = 0, partH = 0;
-
-    for (const v of tmpl.colorVariants) {
-      const tw = Math.round(v.colorMat.cols * moduleScale);
-      const th = Math.round(v.colorMat.rows * moduleScale);
-      if (tw < 10 || th < 10 || tw >= roiW || th >= roiH) continue;
-
-      cv.resize(v.colorMat, resized, new cv.Size(tw, th));
-      cv.matchTemplate(roi, resized, result, cv.TM_CCOEFF_NORMED);
-      const mm = cv.minMaxLoc(result);
-      const score = isNaN(mm.maxVal) ? -Infinity : mm.maxVal;
-
-      if (score > partBest) {
-        partBest = score;
-        partLoc = mm.maxLoc;
-        partW = tw;
-        partH = th;
-      }
-    }
-
-    if (bestMatch === null || partBest > bestMatch.score) {
-      secondBestScore = bestMatch?.score ?? -1;
-      bestMatch = {
-        type: tmpl.type,
-        rarity: tmpl.rarity,
-        configId: buildConfigId(tmpl.type, tmpl.rarity),
-        score: partBest,
-        margin: 0,
-        x: roiX + partLoc.x,
-        y: roiY + partLoc.y,
-        w: partW,
-        h: partH,
-      };
-    } else if (partBest > secondBestScore) {
-      secondBestScore = partBest;
-    }
-  }
-
-  roi.delete();
-  result.delete();
-  resized.delete();
-
-  if (bestMatch) {
-    bestMatch.margin = secondBestScore >= 0 ? bestMatch.score - secondBestScore : 0;
-  }
-
-  return bestMatch;
-}
-
-// 予測座標周辺の最小ROIでモジュールアイコンを分類
-function classifyModuleIconAtPoint(
-  colorMat: any,
-  cx: number,
-  cy: number,
-  moduleScale: number,
-  cv: any,
-  filterRarities?: number[],
-  filterTypes?: string[],
-): ModuleIconMatch | null {
-  if (moduleIconTemplates.length === 0) return null;
-
-  const refTmpl = moduleIconTemplates[0];
-  const expectedW = Math.round(refTmpl.edgeMat.cols * moduleScale);
-  const expectedH = Math.round(refTmpl.edgeMat.rows * moduleScale);
-
-  const pad = 4;
-  const roiX = Math.max(0, Math.round(cx - expectedW / 2 - pad));
-  const roiY = Math.max(0, Math.round(cy - expectedH / 2 - pad));
-  const roiW = Math.min(expectedW + pad * 2, colorMat.cols - roiX);
-  const roiH = Math.min(expectedH + pad * 2, colorMat.rows - roiY);
   if (roiW < expectedW || roiH < expectedH) return null;
 
   const roi = colorMat.roi(new cv.Rect(roiX, roiY, roiW, roiH));
@@ -1196,8 +1000,6 @@ async function processPredictedGridMode(
   gray: any,
   grayEq1x: any,
   colorMat1x: any,
-  cropWidth: number,
-  cropHeight: number,
   imgWidth: number,
   imgHeight: number,
   predicted: PredictedGrid,
@@ -1219,13 +1021,9 @@ async function processPredictedGridMode(
     return { modules: [], rowPositions: [] };
   }
 
-  // Step 2: アップスケール
+  // Step 2: アップスケール倍率の決定
   const upscale = Math.max(2, Math.round(50 / iconSize));
-  const grayUpscaled = new cv.Mat();
-  cv.resize(gray, grayUpscaled, new cv.Size(0, 0), upscale, upscale, cv.INTER_CUBIC);
   gray.delete();
-
-  grayUpscaled.delete();
 
   const scaledColXs = colXs.map((x) => x * upscale);
   const scaledRowYs = rowYs.map((y) => y * upscale);
@@ -1287,17 +1085,17 @@ async function processPredictedGridMode(
   const moduleIcons: (ModuleIconMatch | null)[] = [];
   for (let ri = 0; ri < scaledRowYs.length; ri++) {
     // Step4-1: 予測位置で最小探索（pad=4px、高速）
-    let result = classifyModuleIconAtPoint(
+    let result = classifyModuleIcon(
       colorMatUp, predictedModuleX, scaledRowYs[ri],
-      moduleScale, cv,
+      moduleScale, { x: 4, y: 4 }, cv,
       ocrFilterRarities, ocrFilterTypes,
     );
 
     // Step4-2: スコアが低い場合、広域探索にフォールバック
     if (!result || result.score < MODULE_ICON_RETRY_THRESHOLD) {
-      const widerResult = classifyModuleIconByColor(
+      const widerResult = classifyModuleIcon(
         colorMatUp, predictedModuleX, scaledRowYs[ri],
-        moduleScale, cv,
+        moduleScale, "expanded", cv,
         ocrFilterRarities, ocrFilterTypes,
       );
       if (widerResult && (!result || widerResult.score > result.score)) {
@@ -1341,12 +1139,7 @@ async function processPredictedGridMode(
   if (externalWorker) {
     worker = externalWorker;
   } else {
-    const { createWorker } = await import("tesseract.js");
-    worker = await createWorker("eng");
-    await worker.setParameters({
-      tessedit_char_whitelist: "+0123456789",
-      tessedit_pageseg_mode: "7" as any,
-    });
+    worker = await createOcrWorker();
   }
 
   const modules: ModuleInput[] = [];
@@ -1431,16 +1224,16 @@ export async function processScreenshot(
     pSrcMat.delete();
     const pGrayEq = new cv.Mat();
     cv.equalizeHist(pGray, pGrayEq);
-    return { pGray, pGrayEq, pColorMat, predictedCropWidth };
+    return { pGray, pGrayEq, pColorMat };
   };
 
   // --- autoモード + PC: 予測グリッドパイプラインを使用 ---
   if (customOptions?.platform === "pc") {
     const predicted = predictGridFromImageSize(imgWidth, imgHeight, "pc");
-    const { pGray, pGrayEq, pColorMat, predictedCropWidth } = preparePredictedCanvas(predicted);
+    const { pGray, pGrayEq, pColorMat } = preparePredictedCanvas(predicted);
     return processPredictedGridMode(
       canvas, pGray, pGrayEq, pColorMat,
-      predictedCropWidth, imgHeight, imgWidth, imgHeight,
+      imgWidth, imgHeight,
       predicted,
       onProgress, externalWorker, customOptions, cv,
       startUuid ?? 1,
@@ -1492,10 +1285,10 @@ export async function processScreenshot(
         platform: "mobile",
       };
 
-      const { pGray, pGrayEq, pColorMat, predictedCropWidth } = preparePredictedCanvas(predicted);
+      const { pGray, pGrayEq, pColorMat } = preparePredictedCanvas(predicted);
       return processPredictedGridMode(
         canvas, pGray, pGrayEq, pColorMat,
-        predictedCropWidth, imgHeight, imgWidth, imgHeight,
+        imgWidth, imgHeight,
         predicted,
         onProgress, externalWorker, customOptions, cv,
         startUuid ?? 1,

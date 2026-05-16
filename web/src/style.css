@@ -116,24 +116,42 @@ body {
 }
 .cmd-sep { width:1px; height:20px; background:var(--str-divider); }
 
-/* ===== Add button ===== */
-.addbtn {
-  height:26px; padding:0 11px; flex-shrink:0;
-  background:var(--cf-default);
+/* ===== Flat button base (共通) ===== */
+.addbtn,
+.opt-multi-btn,
+.opt-detail-btn,
+.filter-mode-btn {
+  height:26px;
   border:1px solid var(--str-soft);
   border-radius:4px;
-  color:var(--tx1); font-size:12px;
-  display:flex; align-items:center; gap:4px;
-  cursor:pointer;
-  transition: background 0.1s, box-shadow 0.1s, color 0.1s;
-  font-family:var(--font);
+  background:var(--cf-default);
   box-shadow:var(--sh2);
+  color:var(--tx1); font-size:12px;
+  font-family:var(--font);
+  cursor:pointer;
   white-space:nowrap;
+  transition: background 0.1s, box-shadow 0.1s, color 0.1s;
 }
 @media (hover: hover) {
-  .addbtn:hover { background:var(--cf-hover); box-shadow:var(--sh4); color:var(--tx1); }
+  .addbtn:hover,
+  .opt-multi-btn:hover,
+  .opt-detail-btn:hover,
+  .filter-mode-btn:hover {
+    background:var(--cf-hover); box-shadow:var(--sh4); color:var(--tx1);
+  }
 }
-.addbtn:active { background:var(--cf-pressed); box-shadow:none; }
+.addbtn:active,
+.opt-multi-btn:active,
+.opt-detail-btn:active,
+.filter-mode-btn:active {
+  background:var(--cf-pressed); box-shadow:none;
+}
+
+/* ===== Add button ===== */
+.addbtn {
+  padding:0 11px; flex-shrink:0;
+  display:flex; align-items:center; gap:4px;
+}
 .addbtn:disabled { opacity:0.4; pointer-events:none; }
 
 /* ===== Sort chip ===== */
@@ -328,20 +346,11 @@ body {
 
 .opt-multi-btn {
   display:inline-flex; align-items:center; gap:5px;
-  height:26px; padding:0 26px 0 10px;
+  padding:0 26px 0 10px;
   line-height:1;
   appearance:none; -webkit-appearance:none;
-  border-radius:4px;
-  border:1px solid var(--str-soft);
-  background:var(--cf-default);
-  box-shadow:var(--sh2);
-  color:var(--tx1); font-size:12px;
-  font-family:var(--font);
-  cursor:pointer;
   position:relative;
-  white-space:nowrap;
   text-align:left;
-  transition: background 0.1s, box-shadow 0.1s, color 0.1s;
 }
 .opt-multi-btn::after {
   content:''; position:absolute;
@@ -352,10 +361,6 @@ body {
   mask:url('/icons/chevron-down.svg') center/contain no-repeat;
   pointer-events:none;
 }
-@media (hover: hover) {
-  .opt-multi-btn:hover { background:var(--cf-hover); box-shadow:var(--sh4); color:var(--tx1); }
-}
-.opt-multi-btn:active { background:var(--cf-pressed); box-shadow:none; }
 .opt-multi-btn.has-items {
   background:var(--acc-bg);
   border-color:var(--acc-str);
@@ -365,21 +370,8 @@ body {
 
 /* Detail settings button */
 .opt-detail-btn {
-  height:26px; padding:0 12px;
-  border-radius:4px;
-  border:1px solid var(--str-soft);
-  background:var(--cf-default);
-  box-shadow:var(--sh2);
-  color:var(--tx1); font-size:12px;
-  font-family:var(--font);
-  cursor:pointer;
-  white-space:nowrap;
-  transition: background 0.1s, box-shadow 0.1s, color 0.1s;
+  padding:0 12px;
 }
-@media (hover: hover) {
-  .opt-detail-btn:hover { background:var(--cf-hover); box-shadow:var(--sh4); color:var(--tx1); }
-}
-.opt-detail-btn:active { background:var(--cf-pressed); box-shadow:none; }
 
 /* Detail settings modal */
 .detail-row {
@@ -400,22 +392,10 @@ body {
 
 /* Filter mode toggle (AND/OR) */
 .filter-mode-btn {
-  height:26px; padding:0 10px;
-  border-radius:4px;
-  border:1px solid var(--str-soft);
-  background:var(--cf-default);
-  box-shadow:var(--sh2);
+  padding:0 10px;
   color:var(--tx2); font-size:11px; font-weight:600;
-  font-family:var(--font);
-  cursor:pointer;
-  transition: background 0.1s, box-shadow 0.1s, color 0.1s;
-  white-space:nowrap;
   letter-spacing:0.04em;
 }
-@media (hover: hover) {
-  .filter-mode-btn:hover { background:var(--cf-hover); box-shadow:var(--sh4); color:var(--tx1); }
-}
-.filter-mode-btn:active { background:var(--cf-pressed); box-shadow:none; }
 .filter-mode-btn.or {
   background:var(--rp-bg);
   border-color:var(--rp-str);
@@ -654,8 +634,7 @@ body {
 
 /* ===== Modal size modifiers ===== */
 .modal--confirm { width:400px; }
-.modal--info    { width:640px; }
-.modal--form    { width:640px; height:85dvh; }
+.modal--form    { height:85dvh; }
 .modal--auto-h  { height:auto; max-height:70dvh; }
 
 /* Modal: module detail */
@@ -1111,7 +1090,7 @@ body {
   cursor:pointer; user-select:none;
 }
 .ocr-new-only-label input[type="checkbox"] {
-  margin:0; accent-color:var(--accent);
+  margin:0; accent-color:var(--acc);
 }
 
 .ocr-new-count {
@@ -1140,20 +1119,11 @@ body {
   display:none;
 }
 
-.form-row {
-  display:flex; align-items:center; gap:12px;
-  flex-wrap:wrap;
-}
-
 .form-field {
   display:flex; align-items:center; gap:6px;
 }
 .form-field .cmd-lbl { min-width:auto; }
 
-.stat-input-group {
-  display:flex; align-items:center; gap:6px;
-}
-.stat-input-group .uni-dd { flex:1; min-width:0; }
 .manual-stat-value { min-width:56px; width:56px; flex:0 0 56px; }
 
 /* ===== Toast ===== */
@@ -1355,21 +1325,6 @@ body {
     width: 70px;
     flex: 0 0 70px;
   }
-
-  /* Manual form */
-  .form-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-  }
-  .stat-input-group {
-    flex-wrap: wrap;
-  }
-  .stat-input-group .uni-dd {
-    min-width: 0;
-    flex: 1;
-  }
-
 
   /* Toast: fit screen */
   .toast {

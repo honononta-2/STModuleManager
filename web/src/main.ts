@@ -2,10 +2,10 @@ import {
   STAT_ICONS, ALL_STAT_IDS, configIdToIcon, isStatValidForTypeSlot, EXPECTED_STAT_COUNT,
 } from "@shared/stats";
 import type {
-  Combination, CombinationModule, ModuleInput, OptimizeRequest,
-  OptimizeResponse, StatEntry, StatTotal,
+  Combination, ModuleInput, OptimizeRequest,
+  OptimizeResponse, StatEntry,
 } from "@shared/types";
-import { processScreenshot, type OcrCustomOptions, type RowPosition } from "./ocr";
+import { processScreenshot, createOcrWorker, type OcrCustomOptions, type RowPosition } from "./ocr";
 import {
   saveOcrGroups, loadOcrGroups, deleteOcrGroups, hasOcrGroups,
   type OcrGroup,
@@ -13,7 +13,7 @@ import {
 import { saveInventory, loadInventory, deleteInventory } from "./inventory-store";
 import {
   t, fmt, statName, applyI18n, initLang, saveLang, getSavedLang,
-  JA, migrateStatNamesToIds,
+  migrateStatNamesToIds,
 } from "./i18n";
 
 // --- Helpers ---
@@ -573,6 +573,35 @@ function statDropdownHtml(
 
 let _gridScrollCleanup: (() => void) | null = null;
 
+function createStatRow(s: StatEntry): HTMLDivElement {
+  const srow = document.createElement("div");
+  srow.className = "srow";
+  const iconFile = STAT_ICONS[s.part_id];
+  if (iconFile) {
+    const img = document.createElement("img");
+    img.className = "sicon";
+    img.src = `/icons/${iconFile}`;
+    img.alt = "";
+    srow.appendChild(img);
+  }
+  const sname = document.createElement("span");
+  sname.className = "sname";
+  sname.textContent = statName(s.part_id);
+  srow.appendChild(sname);
+  const sbarW = document.createElement("div");
+  sbarW.className = "sbar-w";
+  const sbar = document.createElement("div");
+  sbar.className = "sbar";
+  sbar.style.width = `${s.value * 10}%`;
+  sbarW.appendChild(sbar);
+  srow.appendChild(sbarW);
+  const sval = document.createElement("span");
+  sval.className = "sval";
+  sval.textContent = `+${s.value}`;
+  srow.appendChild(sval);
+  return srow;
+}
+
 function renderGrid() {
   // 前回のスクロールリスナーを確実に削除
   if (_gridScrollCleanup) {
@@ -685,30 +714,7 @@ function renderGrid() {
     const statsDiv = document.createElement("div");
     statsDiv.className = "stats";
     m.stats.forEach((s) => {
-      const srow = document.createElement("div");
-      srow.className = "srow";
-      const iconImg = statIcon(s.part_id);
-      if (iconImg) {
-        const tmp = document.createElement("span");
-        tmp.innerHTML = iconImg;
-        if (tmp.firstElementChild) srow.appendChild(tmp.firstElementChild);
-      }
-      const sname = document.createElement("span");
-      sname.className = "sname";
-      sname.textContent = statName(s.part_id);
-      srow.appendChild(sname);
-      const sbarW = document.createElement("div");
-      sbarW.className = "sbar-w";
-      const sbar = document.createElement("div");
-      sbar.className = "sbar";
-      sbar.style.width = `${s.value * 10}%`;
-      sbarW.appendChild(sbar);
-      srow.appendChild(sbarW);
-      const sval = document.createElement("span");
-      sval.className = "sval";
-      sval.textContent = `+${s.value}`;
-      srow.appendChild(sval);
-      statsDiv.appendChild(srow);
+      statsDiv.appendChild(createStatRow(s));
     });
     c.appendChild(statsDiv);
     return c;
@@ -1359,30 +1365,7 @@ function openModal(comb: Combination) {
     const statsDiv = document.createElement("div");
     statsDiv.className = "stats";
     m.stats.forEach((s) => {
-      const srow = document.createElement("div");
-      srow.className = "srow";
-      const iconStr = statIcon(s.part_id);
-      if (iconStr) {
-        const tmp = document.createElement("span");
-        tmp.innerHTML = iconStr;
-        if (tmp.firstElementChild) srow.appendChild(tmp.firstElementChild);
-      }
-      const sname = document.createElement("span");
-      sname.className = "sname";
-      sname.textContent = statName(s.part_id);
-      srow.appendChild(sname);
-      const sbarW = document.createElement("div");
-      sbarW.className = "sbar-w";
-      const sbar = document.createElement("div");
-      sbar.className = "sbar";
-      sbar.style.width = `${s.value * 10}%`;
-      sbarW.appendChild(sbar);
-      srow.appendChild(sbarW);
-      const sval = document.createElement("span");
-      sval.className = "sval";
-      sval.textContent = `+${s.value}`;
-      srow.appendChild(sval);
-      statsDiv.appendChild(srow);
+      statsDiv.appendChild(createStatRow(s));
     });
     modDiv.appendChild(statsDiv);
     modsWrap.appendChild(modDiv);
@@ -1550,7 +1533,7 @@ function applyOcrTargetFilter() {
   }
 }
 
-function setOcrTargetMultiBtnLabel(btnId: string, count: number) {
+function setMultiSelectBtnLabel(btnId: string, count: number) {
   const btn = $<HTMLButtonElement>(btnId);
   if (count === 0) {
     btn.textContent = t.ui.filter_none;
@@ -1582,9 +1565,9 @@ function renderOcrTargetStatValueMenu() {
 function renderOcrTargetConfigModal() {
   if (!ocrTargetConfigDraft) return;
   ($("ocr-target-new-only") as HTMLInputElement).checked = ocrTargetConfigDraft.newOnly;
-  setOcrTargetMultiBtnLabel("ocr-target-stat", ocrTargetConfigDraft.stats.length);
-  setOcrTargetMultiBtnLabel("ocr-target-rarity", ocrTargetConfigDraft.rarities.length);
-  setOcrTargetMultiBtnLabel("ocr-target-type", ocrTargetConfigDraft.types.length);
+  setMultiSelectBtnLabel("ocr-target-stat", ocrTargetConfigDraft.stats.length);
+  setMultiSelectBtnLabel("ocr-target-rarity", ocrTargetConfigDraft.rarities.length);
+  setMultiSelectBtnLabel("ocr-target-type", ocrTargetConfigDraft.types.length);
   renderOcrTargetStatValueMenu();
 }
 
@@ -1625,7 +1608,7 @@ function openOcrTargetStatFlyout(anchor: HTMLElement) {
         const idx = ocrTargetConfigDraft!.stats.indexOf(v);
         if (idx >= 0) ocrTargetConfigDraft!.stats.splice(idx, 1);
       }
-      setOcrTargetMultiBtnLabel("ocr-target-stat", ocrTargetConfigDraft!.stats.length);
+      setMultiSelectBtnLabel("ocr-target-stat", ocrTargetConfigDraft!.stats.length);
     },
   });
 }
@@ -1646,7 +1629,7 @@ function openOcrTargetRarityFlyout(anchor: HTMLElement) {
         const idx = ocrTargetConfigDraft!.rarities.indexOf(r);
         if (idx >= 0) ocrTargetConfigDraft!.rarities.splice(idx, 1);
       }
-      setOcrTargetMultiBtnLabel("ocr-target-rarity", ocrTargetConfigDraft!.rarities.length);
+      setMultiSelectBtnLabel("ocr-target-rarity", ocrTargetConfigDraft!.rarities.length);
     },
   });
 }
@@ -1670,7 +1653,7 @@ function openOcrTargetTypeFlyout(anchor: HTMLElement) {
         const idx = ocrTargetConfigDraft!.types.indexOf(v);
         if (idx >= 0) ocrTargetConfigDraft!.types.splice(idx, 1);
       }
-      setOcrTargetMultiBtnLabel("ocr-target-type", ocrTargetConfigDraft!.types.length);
+      setMultiSelectBtnLabel("ocr-target-type", ocrTargetConfigDraft!.types.length);
     },
   });
 }
@@ -2579,23 +2562,12 @@ const OCR_TYPE_OPTIONS: { type: string; prefix: number; icon: string }[] = [
   { type: "protect", prefix: 55003, icon: "item_mod_protect4.png" },
 ];
 
-function updateOcrFilterBtn(btnId: string, count: number) {
-  const btn = $<HTMLButtonElement>(btnId);
-  if (count === 0) {
-    btn.textContent = t.ui.filter_none;
-    btn.classList.remove("has-items");
-  } else {
-    btn.textContent = fmt(t.ui.filter_count, { count });
-    btn.classList.add("has-items");
-  }
-}
-
 function updateOcrRarityFilterBtn() {
-  updateOcrFilterBtn("ocr-filter-rarity", ocrSetupFilterRarities.length);
+  setMultiSelectBtnLabel("ocr-filter-rarity", ocrSetupFilterRarities.length);
 }
 
 function updateOcrTypeFilterBtn() {
-  updateOcrFilterBtn("ocr-filter-type", ocrSetupFilterTypes.length);
+  setMultiSelectBtnLabel("ocr-filter-type", ocrSetupFilterTypes.length);
 }
 
 function openOcrRarityFlyout(anchor: HTMLElement) {
@@ -2735,12 +2707,7 @@ async function startOcrFromSetup() {
 
   let ocrWorker: any = null;
   try {
-    const { createWorker } = await import("tesseract.js");
-    ocrWorker = await createWorker("eng");
-    await ocrWorker.setParameters({
-      tessedit_char_whitelist: "+0123456789",
-      tessedit_pageseg_mode: "7" as any,
-    });
+    ocrWorker = await createOcrWorker();
 
     for (let fi = 0; fi < files.length; fi++) {
       const file = files[fi];
@@ -2756,7 +2723,7 @@ async function startOcrFromSetup() {
         const result = await processScreenshot(img, undefined, ocrWorker, customOptions, startId);
         uuidSeq += result.modules.length;
         const thumbnailUrl = createThumbnailDataUrl(img, result.rowPositions);
-        groups.push({ imageUrl: thumbnailUrl, modules: result.modules, rowPositions: result.rowPositions });
+        groups.push({ imageUrl: thumbnailUrl, modules: result.modules });
       } catch {
         throw new Error(t.ui.ocr_failed);
       } finally {
@@ -2870,12 +2837,7 @@ async function connectCapture() {
 
 async function ensureCaptureOcrWorker() {
   if (captureOcrWorker) return;
-  const { createWorker } = await import("tesseract.js");
-  captureOcrWorker = await createWorker("eng");
-  await captureOcrWorker.setParameters({
-    tessedit_char_whitelist: "+0123456789",
-    tessedit_pageseg_mode: "7" as any,
-  });
+  captureOcrWorker = await createOcrWorker();
 }
 
 function takeCapture() {
@@ -2929,7 +2891,7 @@ async function processCaptureOcrQueue() {
         const result = await processScreenshot(img, undefined, captureOcrWorker, customOptions, startId);
         uuidSeq += result.modules.length;
         const thumbnailUrl = createThumbnailDataUrl(img, result.rowPositions);
-        captureOcrGroups.push({ imageUrl: thumbnailUrl, modules: result.modules, rowPositions: result.rowPositions });
+        captureOcrGroups.push({ imageUrl: thumbnailUrl, modules: result.modules });
         img.src = "";
       } catch {
         // 1枚失敗しても続行
