@@ -142,7 +142,10 @@ let allModules: ModuleEntry[] = [];
 let filterRarities: Rarity[] = [];
 let filterStats: number[] = [];      // part_id
 let filterTypes: string[] = [];      // config prefix key: "55001" | "55002" | "55003"
+let filterSumRanges: number[] = [];  // SUM_RANGES のインデックス
 let filterMode: "and" | "or" = "and";
+
+const SUM_RANGES: Array<[number, number]> = [[1, 10], [11, 15], [16, 20], [21, 25]];
 let sortKeys: { k: string; d: number }[] = [];
 
 // Optimizer state (part_ids)
@@ -201,6 +204,15 @@ function renderGrid() {
     ms = filterMode === "and"
       ? ms.filter((m) => filterStats.every((pid) => m.stats.some((s) => s.part_id === pid)))
       : ms.filter((m) => filterStats.some((pid) => m.stats.some((s) => s.part_id === pid)));
+  }
+  if (filterSumRanges.length > 0) {
+    ms = ms.filter((m) => {
+      const total = m.stats.reduce((sum, x) => sum + x.value, 0);
+      return filterSumRanges.some((i) => {
+        const [lo, hi] = SUM_RANGES[i];
+        return total >= lo && total <= hi;
+      });
+    });
   }
 
   ms.sort((a, b) => {
@@ -272,7 +284,7 @@ function renderGrid() {
 
   $("sb-n").textContent = fmt(t.ui.n_modules, { count: ms.length });
   const info: string[] = [];
-  const filterCount = filterRarities.length + filterTypes.length + filterStats.length;
+  const filterCount = filterRarities.length + filterTypes.length + filterStats.length + filterSumRanges.length;
   if (filterCount) info.push(fmt(t.ui.filter_info, { count: filterCount }) + `(${filterMode.toUpperCase()})`);
   $("sb-i").textContent = info.join("　");
 }
@@ -280,7 +292,7 @@ function renderGrid() {
 const RARITY_FILTER_KEYS: Rarity[] = ["gold", "purple", "blue"];
 
 function updateFilterBtnLabel() {
-  const count = filterRarities.length + filterTypes.length + filterStats.length;
+  const count = filterRarities.length + filterTypes.length + filterStats.length + filterSumRanges.length;
   const btn = $("filter-btn");
   btn.textContent = count > 0 ? fmt(t.ui.filter_count, { count }) : t.ui.filter_none;
   btn.classList.toggle("has-items", count > 0);
@@ -349,6 +361,16 @@ function openFilterMultiFly(anchor: HTMLElement) {
       const key = moduleTypeEntries[i][0];
       if (checked) filterTypes.push(key);
       else { const idx = filterTypes.indexOf(key); if (idx >= 0) filterTypes.splice(idx, 1); }
+      refresh();
+    },
+  );
+
+  // Section: 合計値
+  addFlySection(fl, t.ui.fly_sum_total,
+    SUM_RANGES.map(([lo, hi], i) => ({ label: `${lo}-${hi}`, checked: filterSumRanges.includes(i) })),
+    (i, checked) => {
+      if (checked) filterSumRanges.push(i);
+      else { const idx = filterSumRanges.indexOf(i); if (idx >= 0) filterSumRanges.splice(idx, 1); }
       refresh();
     },
   );

@@ -327,7 +327,10 @@ function nextUuid(): number {
 let filterRarities: Rarity[] = [];
 let filterStats: number[] = [];
 let filterTypes: number[] = [];
+let filterSumRanges: number[] = [];
 let filterMode: "and" | "or" = "and";
+
+const SUM_RANGES: Array<[number, number]> = [[1, 10], [11, 15], [16, 20], [21, 25]];
 let sortKeys: { k: string; d: number }[] = [];
 
 interface OcrTargetConfig {
@@ -510,6 +513,15 @@ function renderGrid() {
       ? ms.filter((m) => filterStats.every((id) => m.stats.some((s) => s.part_id === id)))
       : ms.filter((m) => filterStats.some((id) => m.stats.some((s) => s.part_id === id)));
   }
+  if (filterSumRanges.length > 0) {
+    ms = ms.filter((m) => {
+      const total = m.stats.reduce((sum, x) => sum + x.value, 0);
+      return filterSumRanges.some((i) => {
+        const [lo, hi] = SUM_RANGES[i];
+        return total >= lo && total <= hi;
+      });
+    });
+  }
 
   ms.sort((a, b) => {
     for (const s of sortKeys) {
@@ -639,7 +651,7 @@ function renderGrid() {
 
   $("sb-n").textContent = fmt(t.ui.n_modules, { count: ms.length });
   const info: string[] = [];
-  const filterCount = filterRarities.length + filterTypes.length + filterStats.length;
+  const filterCount = filterRarities.length + filterTypes.length + filterStats.length + filterSumRanges.length;
   if (filterCount) info.push(`${fmt(t.ui.filter_info, { count: filterCount })}(${filterMode.toUpperCase()})`);
   $("sb-i").textContent = info.join("\u3000");
 }
@@ -647,7 +659,7 @@ function renderGrid() {
 // ========== Filter flyout ==========
 
 function updateFilterBtnLabel() {
-  const count = filterRarities.length + filterTypes.length + filterStats.length;
+  const count = filterRarities.length + filterTypes.length + filterStats.length + filterSumRanges.length;
   const btn = $("filter-btn");
   btn.textContent = count > 0 ? fmt(t.ui.filter_count, { count }) : t.ui.filter_none;
   btn.classList.toggle("has-items", count > 0);
@@ -681,6 +693,19 @@ function openFilterMultiFly(anchor: HTMLElement) {
           const v = Number(value);
           if (checked) filterTypes.push(v);
           else { const idx = filterTypes.indexOf(v); if (idx >= 0) filterTypes.splice(idx, 1); }
+          refresh();
+        },
+      },
+      {
+        title: t.ui.fly_sum_total,
+        items: SUM_RANGES.map(([lo, hi], i) => ({
+          value: String(i), label: `${lo}-${hi}`,
+          checked: filterSumRanges.includes(i),
+        })),
+        onCheck: (value, checked) => {
+          const i = Number(value);
+          if (checked) filterSumRanges.push(i);
+          else { const idx = filterSumRanges.indexOf(i); if (idx >= 0) filterSumRanges.splice(idx, 1); }
           refresh();
         },
       },
