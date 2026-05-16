@@ -331,7 +331,6 @@ let filterMode: "and" | "or" = "and";
 let sortKeys: { k: string; d: number }[] = [];
 
 interface OcrTargetConfig {
-  enabled: boolean;
   newOnly: boolean;
   stats: number[];
   minStatValue: number;
@@ -342,9 +341,10 @@ interface OcrTargetConfig {
 const OCR_TARGET_CONFIG_KEY = "ocr-target-config";
 
 function defaultOcrTargetConfig(): OcrTargetConfig {
-  return { enabled: false, newOnly: false, stats: [], minStatValue: 1, rarities: [], types: [] };
+  return { newOnly: false, stats: [], minStatValue: 1, rarities: [], types: [] };
 }
 
+let ocrTargetEnabled = false;
 let ocrTargetConfig: OcrTargetConfig = defaultOcrTargetConfig();
 let ocrTargetConfigDraft: OcrTargetConfig | null = null;
 
@@ -360,7 +360,6 @@ function loadOcrTargetConfig() {
     const validRarity = (v: unknown): v is Rarity => v === "gold" || v === "purple" || v === "blue";
     const mv = typeof p.minStatValue === "number" && p.minStatValue >= 1 && p.minStatValue <= 10 ? p.minStatValue : 1;
     ocrTargetConfig = {
-      enabled: !!p.enabled,
       newOnly: !!p.newOnly,
       stats: Array.isArray(p.stats) ? p.stats.filter((v): v is number => typeof v === "number" && ALL_STAT_IDS.includes(v)) : [],
       minStatValue: mv,
@@ -1386,7 +1385,7 @@ function isOcrTargetEligible(m: ModuleInput): boolean {
 }
 
 function applyOcrTargetFilter() {
-  const enabled = ocrTargetConfig.enabled;
+  const enabled = ocrTargetEnabled;
   const body = $("ocr-modal-body");
   const rows = body.querySelectorAll<HTMLElement>(".ocr-row");
   let total = 0;
@@ -1466,8 +1465,7 @@ function closeOcrTargetConfigModal() {
 
 function saveOcrTargetConfigFromDraft() {
   if (!ocrTargetConfigDraft) return;
-  const wasEnabled = ocrTargetConfig.enabled;
-  ocrTargetConfig = { ...ocrTargetConfigDraft, enabled: wasEnabled };
+  ocrTargetConfig = { ...ocrTargetConfigDraft };
   saveOcrTargetConfig();
   ocrTargetConfigDraft = null;
   $("ocr-target-config-modal-bd").classList.remove("on");
@@ -1898,7 +1896,7 @@ function collectOcrWarnings(): { gi: number; mi: number; rLabel: string }[] {
 
 function registerOcrModules() {
   const all = allPendingModules();
-  const toRegister = ocrTargetConfig.enabled ? all.filter(isOcrTargetEligible) : all;
+  const toRegister = ocrTargetEnabled ? all.filter(isOcrTargetEligible) : all;
   if (toRegister.length === 0) {
     hasStoredOcrData = false;
     deleteOcrGroups().catch(() => {});
@@ -3321,7 +3319,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   loadModulesFromStorage();
   loadOcrTargetConfig();
-  ($("ocr-target-only") as HTMLInputElement).checked = ocrTargetConfig.enabled;
   hasOcrGroups().then((v) => { hasStoredOcrData = v; }).catch(() => {});
 
   // タブ切替
@@ -3553,7 +3550,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ocr-warn-register").onclick = () => {
     $("ocr-warn-modal-bd").classList.remove("on");
     const all = allPendingModules();
-    const toRegister = ocrTargetConfig.enabled ? all.filter(isOcrTargetEligible) : all;
+    const toRegister = ocrTargetEnabled ? all.filter(isOcrTargetEligible) : all;
     doRegisterOcrModules(toRegister);
   };
   $("ocr-warn-modal-close").onclick = () => $("ocr-warn-modal-bd").classList.remove("on");
@@ -3561,8 +3558,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ocr-cancel").onclick = cancelOcrModal;
   $("ocr-modal-close").onclick = closeOcrModal;
   ($("ocr-target-only") as HTMLInputElement).onchange = (e) => {
-    ocrTargetConfig.enabled = (e.target as HTMLInputElement).checked;
-    saveOcrTargetConfig();
+    ocrTargetEnabled = (e.target as HTMLInputElement).checked;
     applyOcrTargetFilter();
   };
   $("ocr-target-config-btn").onclick = openOcrTargetConfigModal;
