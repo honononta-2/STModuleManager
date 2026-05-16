@@ -2737,8 +2737,11 @@ function importJson() {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = ".json,application/json";
-  input.onchange = () => {
+  input.style.display = "none";
+  document.body.appendChild(input);
+  input.addEventListener("change", () => {
     const file = input.files?.[0];
+    input.remove();
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
@@ -2780,7 +2783,8 @@ function importJson() {
       }
     };
     reader.readAsText(file);
-  };
+  });
+  input.addEventListener("cancel", () => input.remove());
   input.click();
 }
 
@@ -3347,7 +3351,13 @@ document.addEventListener("DOMContentLoaded", () => {
     input.type = "file";
     input.accept = "image/*";
     input.multiple = true;
-    input.onchange = () => { if (input.files) addOcrSetupFiles(input.files); };
+    input.style.display = "none";
+    document.body.appendChild(input);
+    input.addEventListener("change", () => {
+      if (input.files) addOcrSetupFiles(input.files);
+      input.remove();
+    });
+    input.addEventListener("cancel", () => input.remove());
     input.click();
   };
   dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("dragover"); });
