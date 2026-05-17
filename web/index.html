@@ -86,11 +86,19 @@
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
               </button>
             </div>
-            <div class="fitem uni-dd-item" data-value="json" data-i18n="btn_import_json">JSON取込</div>
+            <div class="fitem uni-dd-item dd-item-with-info" data-value="json">
+              <span data-i18n="btn_import_json">JSON取込</span>
+              <button type="button" class="speed-info-btn dd-item-info-btn" data-info-action="json" title="JSON取込について">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              </button>
+            </div>
             <div class="fitem uni-dd-item" data-value="manual" data-i18n="btn_manual">手動入力</div>
           </div>
         </div>
         <button class="addbtn" id="inventory-btn" data-i18n="btn_inventory">現有管理</button>
+        <button class="speed-info-btn" id="inventory-info-btn" title="現有管理について">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        </button>
         <button class="addbtn" id="clear-btn" data-i18n="btn_clear">クリア</button>
       </div>
       <div class="cmdbar">
@@ -237,6 +245,28 @@
           <button class="modal-close" id="screenshot-info-close">&times;</button>
         </div>
         <div class="modal-body" id="screenshot-info-body"></div>
+      </div>
+    </div>
+
+    <!-- JSON取込説明モーダル -->
+    <div class="modal-bd" id="json-info-bd">
+      <div class="modal">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="json_info_title">JSON取込について</span>
+          <button class="modal-close" id="json-info-close">&times;</button>
+        </div>
+        <div class="modal-body" id="json-info-body"></div>
+      </div>
+    </div>
+
+    <!-- 現有管理説明モーダル -->
+    <div class="modal-bd" id="inventory-info-bd">
+      <div class="modal">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="inventory_info_title">現有管理について</span>
+          <button class="modal-close" id="inventory-info-close">&times;</button>
+        </div>
+        <div class="modal-body" id="inventory-info-body"></div>
       </div>
     </div>
 
@@ -617,53 +647,6 @@
     </div>
 
 
-
-    <!-- Inventory operation modal -->
-    <div class="modal-bd" id="inventory-op-modal-bd">
-      <div class="modal modal--confirm modal--auto-h">
-        <div class="modal-head">
-          <span class="modal-title" data-i18n="inventory_op_title">現有管理</span>
-          <button class="modal-close" id="inventory-op-close">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="inv-op-list">
-            <button class="addbtn inv-op-btn" id="inv-op-edit" data-i18n="inventory_op_edit">編集</button>
-            <button class="addbtn inv-op-btn" id="inv-op-add" data-i18n="inventory_op_add">追加</button>
-            <button class="addbtn inv-op-btn" id="inv-op-match" data-i18n="inventory_op_match">一致条件設定</button>
-            <button class="addbtn inv-op-btn" id="inv-op-clear-shots" data-i18n="inventory_op_clear_shots">スクショ全削除</button>
-            <button class="addbtn inv-op-btn pattern-del-btn" id="inv-op-clear-data" data-i18n="inventory_op_clear_data">現有データ削除</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Inventory match config modal -->
-    <div class="modal-bd" id="inventory-match-modal-bd">
-      <div class="modal modal--form modal--auto-h">
-        <div class="modal-head">
-          <span class="modal-title" data-i18n="inventory_match_title">一致条件設定</span>
-          <button class="modal-close" id="inventory-match-close">&times;</button>
-        </div>
-        <div class="modal-body">
-          <p class="ocr-target-note" data-i18n="inventory_match_desc">ステータスは必須。追加で一致条件にする項目を選択してください。</p>
-          <div class="inv-match-options">
-            <label class="ocr-setup-radio">
-              <input type="checkbox" id="inv-match-rarity">
-              <span class="ocr-setup-radio-title" data-i18n="inventory_match_rarity">レアリティ</span>
-            </label>
-            <label class="ocr-setup-radio">
-              <input type="checkbox" id="inv-match-type">
-              <span class="ocr-setup-radio-title" data-i18n="inventory_match_type">型</span>
-            </label>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <span style="flex:1"></span>
-          <button class="addbtn" id="inv-match-cancel" data-i18n="btn_cancel">キャンセル</button>
-          <button class="opt-run-btn" id="inv-match-save" data-i18n="btn_save">保存</button>
-        </div>
-      </div>
-    </div>
 
     <!-- Inventory clear shots confirm modal -->
     <div class="modal-bd" id="inventory-clear-shots-modal-bd">

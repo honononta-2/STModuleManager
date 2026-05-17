@@ -315,7 +315,8 @@ body {
   user-select:none;
 }
 .fly-section-header:first-child { padding-top:4px; }
-.fitem-check input[type="checkbox"] {
+.fitem-check input[type="checkbox"],
+.fitem-check input[type="radio"] {
   width:16px; height:16px;
   accent-color:var(--acc);
   cursor:pointer; flex-shrink:0;
@@ -455,7 +456,7 @@ body {
 }
 
 .dd-item-with-info { padding-right:6px; }
-.dd-item-with-info .dd-item-info-btn { margin-left:auto; }
+.dd-item-info-btn { margin-left:auto; }
 
 /* Result card */
 .opt-card {
@@ -1494,22 +1495,5 @@ body {
 }
 .addbtn.inv-saved:hover {
   filter: brightness(1.1);
-}
-.inv-op-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.inv-op-btn {
-  justify-content: center;
-  width: 100%;
-  height: 38px;
-  font-size: 14px;
-}
-.inv-match-options {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-top: 10px;
 }
 

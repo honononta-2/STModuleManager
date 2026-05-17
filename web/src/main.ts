@@ -74,6 +74,8 @@ interface FlyoutSection {
   title: string;
   items: FlyoutItem[];
   onCheck?: (value: string, checked: boolean) => void;
+  single?: boolean;
+  onRadio?: (value: string | null) => void;
 }
 
 interface FlyoutOptions {
@@ -94,19 +96,42 @@ function openFlyout(anchor: HTMLElement, opts: FlyoutOptions) {
   const fl = document.createElement("div");
   fl.className = "flyout on";
 
-  const buildItem = (it: FlyoutItem, sectionOnCheck?: (v: string, c: boolean) => void) => {
+  const buildItem = (
+    it: FlyoutItem,
+    sectionOnCheck?: (v: string, c: boolean) => void,
+    radio?: { name: string; onRadio: (value: string | null) => void; selectedRef: { el: HTMLInputElement | null } },
+  ) => {
     if (mode === "multi") {
       const el = document.createElement("label");
       el.className = "fitem-check" + (it.disabled ? " dim" : "");
       const cb = document.createElement("input");
-      cb.type = "checkbox";
+      if (radio) {
+        cb.type = "radio";
+        cb.name = radio.name;
+      } else {
+        cb.type = "checkbox";
+      }
       cb.checked = !!it.checked;
       cb.disabled = !!it.disabled;
+      if (radio && cb.checked) radio.selectedRef.el = cb;
       if (!it.disabled) {
-        cb.onchange = () => {
-          const handler = sectionOnCheck ?? opts.onCheck;
-          if (handler) handler(it.value, cb.checked);
-        };
+        if (radio) {
+          cb.addEventListener("click", () => {
+            if (radio.selectedRef.el === cb) {
+              cb.checked = false;
+              radio.selectedRef.el = null;
+              radio.onRadio(null);
+            } else {
+              radio.selectedRef.el = cb;
+              radio.onRadio(it.value);
+            }
+          });
+        } else {
+          cb.onchange = () => {
+            const handler = sectionOnCheck ?? opts.onCheck;
+            if (handler) handler(it.value, cb.checked);
+          };
+        }
       }
       el.appendChild(cb);
       if (it.buildContent) {
@@ -154,12 +179,21 @@ function openFlyout(anchor: HTMLElement, opts: FlyoutOptions) {
   };
 
   if (opts.sections) {
-    opts.sections.forEach((sec) => {
+    opts.sections.forEach((sec, secIdx) => {
       const hdr = document.createElement("div");
       hdr.className = "fly-section-header";
       hdr.textContent = sec.title;
       fl.appendChild(hdr);
-      sec.items.forEach((it) => buildItem(it, sec.onCheck));
+      if (sec.single && sec.onRadio) {
+        const radio = {
+          name: `fly-radio-${secIdx}-${Date.now()}`,
+          onRadio: sec.onRadio,
+          selectedRef: { el: null as HTMLInputElement | null },
+        };
+        sec.items.forEach((it) => buildItem(it, undefined, radio));
+      } else {
+        sec.items.forEach((it) => buildItem(it, sec.onCheck));
+      }
     });
   } else if (opts.items) {
     opts.items.forEach((it) => buildItem(it));
@@ -340,30 +374,7 @@ let filterInventoryFlags: ("only" | "exclude")[] = [];
 type OcrMode = "register" | "inventory-save" | "inventory-add";
 let ocrMode: OcrMode = "register";
 
-interface InventoryMatchConfig {
-  useRarity: boolean;
-  useType: boolean;
-}
-const INVENTORY_MATCH_KEY = "inventory-match-config";
-let inventoryMatchConfig: InventoryMatchConfig = { useRarity: false, useType: false };
-let inventoryMatchDraft: InventoryMatchConfig | null = null;
 let inventoryGroups: OcrGroup[] = [];
-
-function saveInventoryMatchConfigToStorage() {
-  try { localStorage.setItem(INVENTORY_MATCH_KEY, JSON.stringify(inventoryMatchConfig)); } catch { /* quota */ }
-}
-
-function loadInventoryMatchConfigFromStorage() {
-  try {
-    const raw = localStorage.getItem(INVENTORY_MATCH_KEY);
-    if (!raw) return;
-    const p = JSON.parse(raw) as Partial<InventoryMatchConfig>;
-    inventoryMatchConfig = {
-      useRarity: !!p.useRarity,
-      useType: !!p.useType,
-    };
-  } catch { /* ignore */ }
-}
 
 async function loadInventoryFromStorage() {
   try {
@@ -390,13 +401,7 @@ function statsSignature(stats: StatEntry[]): string {
 }
 
 function inventoryModuleKey(m: ModuleInput): string {
-  const parts: string[] = [statsSignature(m.stats)];
-  if (inventoryMatchConfig.useRarity) parts.push(`R:${qualityToRarity(m.quality)}`);
-  if (inventoryMatchConfig.useType) {
-    const c = configIdToComponents(m.config_id);
-    parts.push(`T:${c?.typeDigit ?? 0}`);
-  }
-  return parts.join("|");
+  return statsSignature(m.stats);
 }
 
 function buildInventoryKeySet(): Set<string> {
@@ -410,8 +415,10 @@ function buildInventoryKeySet(): Set<string> {
 function updateInventoryBtnLabel() {
   const btn = $<HTMLButtonElement>("inventory-btn");
   if (!btn) return;
-  btn.textContent = isInventorySaved() ? t.ui.btn_inventory_saved : t.ui.btn_inventory;
-  btn.classList.toggle("inv-saved", isInventorySaved());
+  const saved = isInventorySaved();
+  btn.textContent = t.ui.btn_inventory;
+  btn.classList.toggle("inv-saved", saved);
+  btn.classList.toggle("opt-multi-btn", saved);
 }
 
 const SUM_RANGES: Array<[number, number]> = [[1, 10], [11, 15], [16, 20], [21, 25]];
@@ -798,14 +805,13 @@ function openFilterMultiFly(anchor: HTMLElement) {
     },
     {
       title: t.ui.fly_sum_total,
+      single: true,
       items: SUM_RANGES.map(([lo, hi], i) => ({
         value: String(i), label: `${lo}-${hi}`,
         checked: filterSumRanges.includes(i),
       })),
-      onCheck: (value, checked) => {
-        const i = Number(value);
-        if (checked) filterSumRanges.push(i);
-        else { const idx = filterSumRanges.indexOf(i); if (idx >= 0) filterSumRanges.splice(idx, 1); }
+      onRadio: (value) => {
+        filterSumRanges = value === null ? [] : [Number(value)];
         refresh();
       },
     },
@@ -828,14 +834,13 @@ function openFilterMultiFly(anchor: HTMLElement) {
   if (isInventorySaved()) {
     sections.push({
       title: t.ui.inventory_filter_label,
+      single: true,
       items: [
         { value: "only", label: t.ui.inventory_filter_only, checked: filterInventoryFlags.includes("only") },
         { value: "exclude", label: t.ui.inventory_filter_exclude, checked: filterInventoryFlags.includes("exclude") },
       ],
-      onCheck: (value, checked) => {
-        const v = value as "only" | "exclude";
-        if (checked) filterInventoryFlags.push(v);
-        else { const idx = filterInventoryFlags.indexOf(v); if (idx >= 0) filterInventoryFlags.splice(idx, 1); }
+      onRadio: (value) => {
+        filterInventoryFlags = value === null ? [] : [value as "only" | "exclude"];
         refresh();
       },
     });
@@ -2482,6 +2487,42 @@ function createThumbnailDataUrl(
 
 const SCREENSHOT_INFO_SEEN_KEY = "screenshot-info-seen";
 
+function showInventoryInfo(onClose?: () => void) {
+  const body = $("inventory-info-body");
+  while (body.firstChild) body.removeChild(body.firstChild);
+  const items = [
+    { text: t.ui.inventory_info_overview, style: "margin:0 0 10px;font-size:13px;line-height:1.6" },
+    { text: t.ui.inventory_info_usage, style: "margin:0 0 10px;font-size:13px;line-height:1.6" },
+    { text: t.ui.inventory_info_filter, style: "margin:0;font-size:13px;line-height:1.6" },
+  ];
+  items.forEach(({ text, style }) => { const p = document.createElement("p"); p.textContent = text; p.style.cssText = style; body.appendChild(p); });
+  inventoryInfoOnClose = onClose ?? null;
+  $("inventory-info-bd").classList.add("on");
+}
+
+let inventoryInfoOnClose: (() => void) | null = null;
+
+function closeInventoryInfo() {
+  $("inventory-info-bd").classList.remove("on");
+  const cb = inventoryInfoOnClose;
+  inventoryInfoOnClose = null;
+  if (cb) cb();
+}
+
+function showJsonInfo() {
+  const body = $("json-info-body");
+  while (body.firstChild) body.removeChild(body.firstChild);
+  const p = document.createElement("p");
+  p.textContent = t.ui.json_info_overview;
+  p.style.cssText = "margin:0;font-size:13px;line-height:1.6";
+  body.appendChild(p);
+  $("json-info-bd").classList.add("on");
+}
+
+function closeJsonInfo() {
+  $("json-info-bd").classList.remove("on");
+}
+
 function showScreenshotInfo(onClose?: () => void) {
   const body = $("screenshot-info-body");
   while (body.firstChild) body.removeChild(body.firstChild);
@@ -3089,21 +3130,28 @@ function onInventoryButtonClick() {
   if (!isInventorySaved()) {
     ocrMode = "inventory-save";
     openOcrSetupModal();
-  } else {
-    openInventoryOpModal();
+    return;
   }
-}
-
-function openInventoryOpModal() {
-  $("inventory-op-modal-bd").classList.add("on");
-}
-
-function closeInventoryOpModal() {
-  $("inventory-op-modal-bd").classList.remove("on");
+  const btn = $<HTMLButtonElement>("inventory-btn");
+  openFlyout(btn, {
+    mode: "single",
+    items: [
+      { value: "edit", label: t.ui.inventory_op_edit },
+      { value: "add", label: t.ui.inventory_op_add },
+      { value: "clear-shots", label: t.ui.inventory_op_clear_shots },
+      { value: "clear-data", label: t.ui.inventory_op_clear_data },
+    ],
+    scrollToSelected: false,
+    onSelect: (value) => {
+      if (value === "edit") invStartEdit();
+      else if (value === "add") invStartAdd();
+      else if (value === "clear-shots") openInventoryClearShotsModal();
+      else if (value === "clear-data") openInventoryClearDataModal();
+    },
+  });
 }
 
 function invStartEdit() {
-  closeInventoryOpModal();
   ocrMode = "inventory-save";
   const copy = inventoryGroups.map((g) => ({
     imageUrl: g.imageUrl,
@@ -3114,35 +3162,11 @@ function invStartEdit() {
 }
 
 function invStartAdd() {
-  closeInventoryOpModal();
   ocrMode = "inventory-add";
   openOcrSetupModal();
 }
 
-function openInventoryMatchModal() {
-  closeInventoryOpModal();
-  inventoryMatchDraft = { ...inventoryMatchConfig };
-  ($("inv-match-rarity") as HTMLInputElement).checked = inventoryMatchDraft.useRarity;
-  ($("inv-match-type") as HTMLInputElement).checked = inventoryMatchDraft.useType;
-  $("inventory-match-modal-bd").classList.add("on");
-}
-
-function closeInventoryMatchModal() {
-  $("inventory-match-modal-bd").classList.remove("on");
-  inventoryMatchDraft = null;
-}
-
-function saveInventoryMatchDraft() {
-  if (!inventoryMatchDraft) return;
-  inventoryMatchConfig = { ...inventoryMatchDraft };
-  saveInventoryMatchConfigToStorage();
-  inventoryMatchDraft = null;
-  $("inventory-match-modal-bd").classList.remove("on");
-  renderGrid();
-}
-
 function openInventoryClearShotsModal() {
-  closeInventoryOpModal();
   $("inventory-clear-shots-modal-bd").classList.add("on");
 }
 
@@ -3158,7 +3182,6 @@ function executeInventoryClearShots() {
 }
 
 function openInventoryClearDataModal() {
-  closeInventoryOpModal();
   $("inventory-clear-data-modal-bd").classList.add("on");
 }
 
@@ -3580,7 +3603,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   loadModulesFromStorage();
   loadOcrTargetConfig();
-  loadInventoryMatchConfigFromStorage();
   hasOcrGroups().then((v) => { hasStoredOcrData = v; }).catch(() => {});
   loadInventoryFromStorage().then(() => {
     updateInventoryBtnLabel();
@@ -3955,29 +3977,18 @@ document.addEventListener("DOMContentLoaded", () => {
     e.stopPropagation();
     closeFlyout();
     if (infoBtn.dataset.infoAction === "screenshot") showScreenshotInfo();
+    else if (infoBtn.dataset.infoAction === "json") showJsonInfo();
   }, true);
   $("screenshot-info-close").onclick = () => closeScreenshotInfo();
   $("screenshot-info-bd").onclick = (e) => { if (e.target === $("screenshot-info-bd")) closeScreenshotInfo(); };
+  $("json-info-close").onclick = () => closeJsonInfo();
+  $("json-info-bd").onclick = (e) => { if (e.target === $("json-info-bd")) closeJsonInfo(); };
 
   // Inventory
   $("inventory-btn").onclick = () => onInventoryButtonClick();
-  $("inventory-op-close").onclick = closeInventoryOpModal;
-  $("inventory-op-modal-bd").onclick = (e) => { if (e.target === $("inventory-op-modal-bd")) closeInventoryOpModal(); };
-  $("inv-op-edit").onclick = invStartEdit;
-  $("inv-op-add").onclick = invStartAdd;
-  $("inv-op-match").onclick = openInventoryMatchModal;
-  $("inv-op-clear-shots").onclick = openInventoryClearShotsModal;
-  $("inv-op-clear-data").onclick = openInventoryClearDataModal;
-  $("inventory-match-close").onclick = closeInventoryMatchModal;
-  $("inv-match-cancel").onclick = closeInventoryMatchModal;
-  $("inv-match-save").onclick = saveInventoryMatchDraft;
-  $("inventory-match-modal-bd").onclick = (e) => { if (e.target === $("inventory-match-modal-bd")) closeInventoryMatchModal(); };
-  ($("inv-match-rarity") as HTMLInputElement).onchange = (e) => {
-    if (inventoryMatchDraft) inventoryMatchDraft.useRarity = (e.target as HTMLInputElement).checked;
-  };
-  ($("inv-match-type") as HTMLInputElement).onchange = (e) => {
-    if (inventoryMatchDraft) inventoryMatchDraft.useType = (e.target as HTMLInputElement).checked;
-  };
+  $("inventory-info-btn").onclick = () => showInventoryInfo();
+  $("inventory-info-close").onclick = () => closeInventoryInfo();
+  $("inventory-info-bd").onclick = (e) => { if (e.target === $("inventory-info-bd")) closeInventoryInfo(); };
   $("inv-clear-shots-close").onclick = closeInventoryClearShotsModal;
   $("inv-clear-shots-cancel").onclick = closeInventoryClearShotsModal;
   $("inv-clear-shots-ok").onclick = executeInventoryClearShots;
