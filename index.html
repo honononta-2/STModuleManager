@@ -97,7 +97,6 @@
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
           <button class="opt-detail-btn" id="opt-detail-btn" data-i18n="detail_settings">詳細設定</button>
-          <button class="opt-detail-btn" id="opt-clear-stats-btn" data-i18n="clear_stats">ステータス解除</button>
         </div>
       </div>
 
@@ -128,7 +127,7 @@
 
     <!-- 詳細設定モーダル -->
     <div class="modal-bd" id="detail-modal-bd">
-      <div class="modal detail-modal">
+      <div class="modal modal--form modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="detail_settings">詳細設定</span>
           <button class="modal-close" id="detail-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
@@ -160,21 +159,22 @@
               <button class="opt-multi-btn" id="detail-btn-excl">未選択</button>
             </div>
           </div>
-          <div class="detail-actions">
-            <button class="opt-run-btn" id="detail-confirm" data-i18n="detail_confirm">決定</button>
-          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn pattern-del-btn" id="opt-clear-stats-btn" data-i18n="clear_stats">ステータス解除</button>
+          <button class="opt-run-btn" id="detail-confirm" data-i18n="detail_confirm">決定</button>
         </div>
       </div>
     </div>
 
     <!-- メニューモーダル -->
     <div class="modal-bd" id="menu-modal-bd">
-      <div class="modal menu-modal">
+      <div class="modal modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="menu_title">メニュー</span>
           <button class="modal-close" id="menu-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
-        <div class="menu-modal-body">
+        <div class="modal-body">
           <div class="menu-section">
             <div class="menu-section-label" data-i18n="menu_export">エクスポート</div>
             <div class="menu-export-btns">
@@ -244,28 +244,28 @@
 
     <!-- 監視確認モーダル -->
     <div class="modal-bd" id="monitor-confirm-bd">
-      <div class="modal monitor-confirm-modal">
+      <div class="modal modal--confirm">
         <div class="modal-head">
           <span class="modal-title" data-i18n="monitor_title">ネットワーク監視</span>
           <button class="modal-close" id="monitor-confirm-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
-          <p class="monitor-confirm-text" data-i18n="monitor_message">次回からアプリ起動時にネットワーク監視を自動的に開始しますか？</p>
-          <label class="monitor-confirm-check">
+          <p data-i18n="monitor_message">次回からアプリ起動時にネットワーク監視を自動的に開始しますか？</p>
+          <label>
             <input type="checkbox" id="monitor-confirm-hide">
             <span data-i18n="monitor_remember">次回から表示しない（メニューから切替可能です）</span>
           </label>
-          <div class="monitor-confirm-actions">
-            <button class="monitor-confirm-btn secondary" id="monitor-confirm-no" data-i18n="monitor_no">いいえ</button>
-            <button class="monitor-confirm-btn primary" id="monitor-confirm-yes" data-i18n="monitor_yes">はい</button>
-          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="monitor-confirm-no" data-i18n="monitor_no">いいえ</button>
+          <button class="opt-run-btn" id="monitor-confirm-yes" data-i18n="monitor_yes">はい</button>
         </div>
       </div>
     </div>
 
     <!-- カスタム言語エディタモーダル -->
     <div class="modal-bd" id="custom-lang-bd">
-      <div class="modal custom-lang-modal">
+      <div class="modal modal--form">
         <div class="modal-head">
           <span class="modal-title">Custom Language</span>
           <button class="modal-close" id="custom-lang-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
@@ -287,22 +287,22 @@
           <button class="custom-lang-tab" data-tab="rarity">Rarity</button>
           <button class="custom-lang-tab" data-tab="ui">UI Text</button>
         </div>
-        <div class="custom-lang-body" id="custom-lang-body"></div>
-        <div class="custom-lang-footer">
-          <button class="custom-lang-footer-btn" id="custom-lang-cancel">Cancel</button>
-          <button class="custom-lang-footer-btn primary" id="custom-lang-save">Save & Apply</button>
+        <div class="modal-body" id="custom-lang-body"></div>
+        <div class="modal-footer">
+          <button class="addbtn" id="custom-lang-cancel">Cancel</button>
+          <button class="opt-run-btn" id="custom-lang-save">Save &amp; Apply</button>
         </div>
       </div>
     </div>
 
     <!-- 初回言語選択モーダル -->
     <div class="modal-bd" id="firstrun-bd">
-      <div class="modal firstrun-modal">
+      <div class="modal modal--confirm">
         <div class="modal-head">
           <span class="modal-title">Language</span>
         </div>
-        <div class="firstrun-body">
-          <div id="firstrun-lang-select" class="uni-dd menu-select firstrun-select" data-value="ja">
+        <div class="modal-body">
+          <div id="firstrun-lang-select" class="uni-dd menu-select" data-value="ja">
             <button type="button" class="opt-multi-btn uni-dd-trigger">日本語</button>
             <div class="uni-dd-menu">
               <div class="fitem uni-dd-item selected" data-value="ja">日本語</div>
@@ -310,48 +310,50 @@
               <div class="fitem uni-dd-item" data-value="en">English</div>
             </div>
           </div>
-          <button class="firstrun-save-btn" id="firstrun-save">OK</button>
+        </div>
+        <div class="modal-footer">
+          <button class="opt-run-btn" id="firstrun-save">OK</button>
         </div>
       </div>
     </div>
 
     <!-- ステータス解除確認モーダル -->
     <div class="modal-bd" id="clear-stats-bd">
-      <div class="modal monitor-confirm-modal">
+      <div class="modal modal--confirm">
         <div class="modal-head">
           <span class="modal-title" data-i18n="clear_stats_title">ステータス解除</span>
           <button class="modal-close" id="clear-stats-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
-          <p class="monitor-confirm-text" data-i18n="clear_stats_msg">ステータスを非選択に変更しますか？</p>
-          <div class="monitor-confirm-actions">
-            <button class="monitor-confirm-btn secondary" id="clear-stats-no" data-i18n="monitor_no">いいえ</button>
-            <button class="monitor-confirm-btn primary" id="clear-stats-yes" data-i18n="monitor_yes">はい</button>
-          </div>
+          <p data-i18n="clear_stats_msg">ステータスを非選択に変更しますか？</p>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="clear-stats-no" data-i18n="monitor_no">いいえ</button>
+          <button class="opt-run-btn" id="clear-stats-yes" data-i18n="monitor_yes">はい</button>
         </div>
       </div>
     </div>
 
     <!-- データ削除確認モーダル -->
     <div class="modal-bd" id="clear-data-bd">
-      <div class="modal monitor-confirm-modal">
+      <div class="modal modal--confirm">
         <div class="modal-head">
           <span class="modal-title" data-i18n="menu_clear_data">データを全て削除して終了</span>
           <button class="modal-close" id="clear-data-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
-          <p class="monitor-confirm-text" data-i18n="clear_data_confirm">保存されたデータをすべて削除してアプリを終了します。この操作は取り消せません。</p>
-          <div class="monitor-confirm-actions">
-            <button class="monitor-confirm-btn secondary" id="clear-data-cancel" data-i18n="monitor_no">いいえ</button>
-            <button class="monitor-confirm-btn danger" id="clear-data-ok" data-i18n="menu_clear_data">削除して終了</button>
-          </div>
+          <p data-i18n="clear_data_confirm">保存されたデータをすべて削除してアプリを終了します。この操作は取り消せません。</p>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="clear-data-cancel" data-i18n="monitor_no">いいえ</button>
+          <button class="addbtn pattern-del-btn" id="clear-data-ok" data-i18n="menu_clear_data">削除して終了</button>
         </div>
       </div>
     </div>
 
     <!-- 探索速度モーダル -->
     <div class="modal-bd" id="speed-info-bd">
-      <div class="modal speed-info-modal">
+      <div class="modal modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="speed_info_title">探索速度について</span>
           <button class="modal-close" id="speed-info-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
