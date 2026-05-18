@@ -362,6 +362,64 @@
       </div>
     </div>
 
+    <!-- 総当たり警告モーダル -->
+    <div class="modal-bd" id="exhaustive-warn-bd">
+      <div class="modal modal--confirm">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="exhaustive_warn_title">総当たり探索の確認</span>
+          <button class="modal-close" id="exhaustive-warn-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <p id="exhaustive-warn-msg"></p>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="exhaustive-warn-no" data-i18n="exhaustive_warn_cancel">キャンセル</button>
+          <button class="opt-run-btn" id="exhaustive-warn-yes" data-i18n="exhaustive_warn_ok">実行する</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- パターン保存モーダル -->
+    <div class="modal-bd" id="patsave-modal-bd">
+      <div class="modal modal--confirm" style="max-height:none">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="modal_pattern_save">パターン保存</span>
+          <button class="modal-close" id="patsave-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <div id="patsave-mode" class="uni-dd patsave-mode-select" data-value="">
+            <button type="button" class="opt-multi-btn uni-dd-trigger"></button>
+            <div class="uni-dd-menu"></div>
+          </div>
+          <div id="patsave-name-row" style="margin-top:8px;display:none">
+            <label style="display:block;font-size:13px;color:var(--tx2);margin-bottom:6px" data-i18n="pattern_name_label">パターン名</label>
+            <input type="text" id="patsave-name" class="patsave-input" placeholder="パターン名を入力してください" data-i18n-placeholder="pattern_prompt" autocomplete="off">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="patsave-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="opt-run-btn" id="patsave-ok" data-i18n="btn_save">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- パターン削除確認モーダル -->
+    <div class="modal-bd" id="patdel-modal-bd">
+      <div class="modal modal--confirm">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="modal_pattern_delete">パターン削除</span>
+          <button class="modal-close" id="patdel-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <p id="patdel-msg"></p>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="patdel-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="pattern-del-btn addbtn" id="patdel-ok" data-i18n="btn_delete">削除</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 結果モーダル -->
     <div class="modal-bd" id="modal-bd">
       <div class="modal" id="modal">

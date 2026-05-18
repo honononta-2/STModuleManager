@@ -912,6 +912,33 @@ body {
 .modal--form    { height:85dvh; }
 .modal--auto-h  { height:auto; max-height:70dvh; }
 
+/* ===== Pattern Save Modal ===== */
+.patsave-mode-select {
+  width:100%;
+}
+.patsave-mode-select .opt-multi-btn {
+  width:100%; height:auto; padding:8px 10px;
+  font-size:14px;
+  border:1px solid var(--str-default);
+  border-radius:6px;
+  background:var(--s-alt);
+  color:var(--tx1);
+}
+.patsave-input {
+  width:100%; padding:8px 10px;
+  font-size:14px; font-family:var(--font);
+  border:1px solid var(--str-default);
+  border-radius:6px;
+  background:var(--s-alt);
+  color:var(--tx1);
+  outline:none;
+  transition:border-color 0.15s;
+}
+.patsave-input:focus {
+  border-color:var(--acc);
+  box-shadow:0 0 0 2px rgba(0,120,212,0.18);
+}
+
 /* Modal: モジュール一覧 */
 .modal-section { margin-bottom:16px; }
 .modal-section-title {

@@ -1023,6 +1023,26 @@ function openDetailFly(
   }
 }
 
+function confirmExhaustive(count: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const bd = $("exhaustive-warn-bd");
+    $("exhaustive-warn-msg").textContent = fmt(t.ui.exhaustive_warn_msg, { count });
+    const cleanup = (result: boolean) => {
+      bd.classList.remove("on");
+      $("exhaustive-warn-yes").onclick = null;
+      $("exhaustive-warn-no").onclick = null;
+      $("exhaustive-warn-close").onclick = null;
+      bd.onclick = null;
+      resolve(result);
+    };
+    $("exhaustive-warn-yes").onclick = () => cleanup(true);
+    $("exhaustive-warn-no").onclick = () => cleanup(false);
+    $("exhaustive-warn-close").onclick = () => cleanup(false);
+    bd.onclick = (e) => { if (e.target === bd) cleanup(false); };
+    bd.classList.add("on");
+  });
+}
+
 async function runOptimize() {
   const btn = $<HTMLButtonElement>("opt-run");
   btn.classList.add("loading");
@@ -1061,8 +1081,8 @@ async function runOptimize() {
         req: { ...req, count_only: true },
       });
       if (countRes.filtered_count > 600) {
-        const msg = fmt(t.ui.exhaustive_warn_msg, { count: countRes.filtered_count });
-        if (!confirm(msg)) {
+        const proceed = await confirmExhaustive(countRes.filtered_count);
+        if (!proceed) {
           overlay.remove();
           btn.classList.remove("loading");
           btn.textContent = t.ui.btn_run;
@@ -1526,42 +1546,116 @@ async function init() {
     if (!isNaN(idx) && idx >= 0) loadPattern(idx);
   };
 
-  $("pattern-save").onclick = async () => {
-    const name = prompt(t.ui.pattern_prompt);
-    if (!name || !name.trim()) return;
-    const quality = Number($("opt-quality").dataset.value);
+  // パターン保存モーダル
+  const patsaveBd = $("patsave-modal-bd");
+  const patsaveInput = $<HTMLInputElement>("patsave-name");
+  const patsaveModeDd = $("patsave-mode");
+  const patsaveNameRow = $("patsave-name-row");
+
+  const updatePatsaveNameRow = () => {
+    const isNew = (patsaveModeDd.dataset.value ?? "") === "new";
+    patsaveNameRow.style.display = isNew ? "block" : "none";
+  };
+  patsaveModeDd.addEventListener("change", updatePatsaveNameRow);
+
+  const openPatsaveModal = () => {
+    const patSelDd = $("pattern-select");
+    const selectedIdx = patSelDd.dataset.value ?? "";
     const patterns = getPatterns();
-    const existing = patterns.findIndex((p) => p.name === name.trim());
-    const entry: OptPattern = {
-      name: name.trim(),
-      required: [...optRequired],
-      desired: [...optDesired],
-      excluded: [...optExcluded],
-      quality,
-      min_required: [...optMinRequired],
-      min_desired: [...optMinDesired],
-    };
-    if (existing >= 0) {
-      patterns[existing] = entry;
-    } else {
-      patterns.push(entry);
+    const options: { value: string; label: string }[] = [];
+
+    if (selectedIdx !== "" && patterns[Number(selectedIdx)]) {
+      const p = patterns[Number(selectedIdx)];
+      options.push({ value: "overwrite", label: fmt(t.ui.pattern_overwrite, { name: p.name }) });
     }
-    await savePatterns(patterns);
-    renderPatternSelect(String(existing >= 0 ? existing : patterns.length - 1));
+    options.push({ value: "new", label: t.ui.pattern_new });
+
+    updateDropdownOptions(patsaveModeDd, options, options[0].value);
+    patsaveInput.value = "";
+    updatePatsaveNameRow();
+    patsaveBd.classList.add("on");
   };
 
-  $("pattern-delete").onclick = async () => {
-    const dd = $("pattern-select");
-    const idx = Number(dd.dataset.value);
-    if (isNaN(idx) || idx < 0) return;
+  const closePatsaveModal = () => { patsaveBd.classList.remove("on"); };
+
+  const confirmPatsave = async () => {
+    const mode = patsaveModeDd.dataset.value ?? "";
+    const quality = Number($("opt-quality").dataset.value);
+    const patterns = getPatterns();
+
+    if (mode === "overwrite") {
+      const idx = Number($("pattern-select").dataset.value);
+      const existing = patterns[idx];
+      if (!existing) return;
+      const entry: OptPattern = {
+        name: existing.name,
+        required: [...optRequired],
+        desired: [...optDesired],
+        excluded: [...optExcluded],
+        quality,
+        min_required: [...optMinRequired],
+        min_desired: [...optMinDesired],
+      };
+      patterns[idx] = entry;
+      await savePatterns(patterns);
+      closePatsaveModal();
+      renderPatternSelect(String(idx));
+    } else {
+      const name = patsaveInput.value.trim();
+      if (!name) return;
+      const duplicateIdx = patterns.findIndex((p) => p.name === name);
+      const entry: OptPattern = {
+        name,
+        required: [...optRequired],
+        desired: [...optDesired],
+        excluded: [...optExcluded],
+        quality,
+        min_required: [...optMinRequired],
+        min_desired: [...optMinDesired],
+      };
+      if (duplicateIdx >= 0) patterns[duplicateIdx] = entry;
+      else patterns.push(entry);
+      await savePatterns(patterns);
+      closePatsaveModal();
+      renderPatternSelect(String(duplicateIdx >= 0 ? duplicateIdx : patterns.length - 1));
+    }
+  };
+
+  $("pattern-save").onclick = openPatsaveModal;
+  $("patsave-modal-close").onclick = closePatsaveModal;
+  $("patsave-cancel").onclick = closePatsaveModal;
+  $("patsave-ok").onclick = confirmPatsave;
+  patsaveInput.addEventListener("keydown", (e) => { if (e.key === "Enter") confirmPatsave(); });
+  patsaveBd.addEventListener("click", (e) => { if (e.target === patsaveBd) closePatsaveModal(); });
+
+  // パターン削除モーダル
+  const patdelBd = $("patdel-modal-bd");
+  const closePatdelModal = () => { patdelBd.classList.remove("on"); };
+  let patdelIdx = -1;
+  $("pattern-delete").onclick = () => {
+    const selVal = $("pattern-select").dataset.value ?? "";
+    const idx = Number(selVal);
+    if (selVal === "" || isNaN(idx) || idx < 0) return;
     const patterns = getPatterns();
     const p = patterns[idx];
     if (!p) return;
-    if (!confirm(fmt(t.ui.pattern_delete_confirm, { name: p.name }))) return;
-    patterns.splice(idx, 1);
-    await savePatterns(patterns);
-    renderPatternSelect("");
+    patdelIdx = idx;
+    $("patdel-msg").textContent = fmt(t.ui.pattern_delete_confirm, { name: p.name });
+    patdelBd.classList.add("on");
   };
+  $("patdel-ok").onclick = async () => {
+    closePatdelModal();
+    const patterns = getPatterns();
+    if (patdelIdx >= 0 && patdelIdx < patterns.length) {
+      patterns.splice(patdelIdx, 1);
+      await savePatterns(patterns);
+      renderPatternSelect("");
+    }
+    patdelIdx = -1;
+  };
+  $("patdel-modal-close").onclick = closePatdelModal;
+  $("patdel-cancel").onclick = closePatdelModal;
+  patdelBd.addEventListener("click", (e) => { if (e.target === patdelBd) closePatdelModal(); });
 
   // モーダル閉じ
   $("modal-close").onclick = closeModal;
