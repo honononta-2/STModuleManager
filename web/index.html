@@ -70,6 +70,17 @@
       </div>
       <div class="sidebar-section">
         <div class="sidebar-section-title" data-i18n="maintenance_title">メンテナンス</div>
+        <div class="sidebar-row">
+          <span class="sidebar-row-label" data-i18n="card_delete_btn_label">削除ボタン</span>
+          <div id="card-delete-btn-mode-dd" class="uni-dd sidebar-inline-dd" data-value="off">
+            <button type="button" class="opt-multi-btn uni-dd-trigger" data-i18n="card_delete_btn_off">非表示</button>
+            <div class="uni-dd-menu">
+              <div class="fitem uni-dd-item selected" data-value="off" data-i18n="card_delete_btn_off">非表示</div>
+              <div class="fitem uni-dd-item" data-value="on" data-i18n="card_delete_btn_on">表示</div>
+              <div class="fitem uni-dd-item" data-value="no_confirm" data-i18n="card_delete_btn_no_confirm">表示（確認なしで削除）</div>
+            </div>
+          </div>
+        </div>
         <button class="addbtn sidebar-export-btn" id="data-cleanup-btn" data-i18n="btn_data_refresh">データリフレッシュ</button>
       </div>
       <div class="sidebar-section">
@@ -484,6 +495,23 @@
         <div class="modal-footer">
           <button class="addbtn" id="clear-stats-no" data-i18n="btn_no">いいえ</button>
           <button class="opt-run-btn" id="clear-stats-yes" data-i18n="btn_yes">はい</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card module delete confirm modal -->
+    <div class="modal-bd" id="card-delete-modal-bd">
+      <div class="modal modal--confirm">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="modal_module_delete">モジュール削除</span>
+          <button class="modal-close" id="card-delete-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <p data-i18n="module_delete_confirm">このモジュールを削除しますか？</p>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="card-delete-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="pattern-del-btn addbtn" id="card-delete-ok" data-i18n="btn_delete">削除</button>
         </div>
       </div>
     </div>

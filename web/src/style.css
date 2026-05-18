@@ -233,17 +233,25 @@ body {
   gap:10px;
   margin-bottom:10px;
 }
-.card-edit-btn {
+.card-head-actions {
   margin-left:auto;
+  display:flex; align-items:center;
+  gap:6px;
+}
+.card-edit-btn, .card-delete-btn {
   background:none; border:1px solid var(--str-soft);
-  border-radius:6px; padding:4px 6px;
+  border-radius:6px; padding:5px;
   cursor:pointer; color:var(--tx3);
   display:flex; align-items:center; justify-content:center;
   opacity:0; transition:opacity 0.12s, color 0.12s, border-color 0.12s;
 }
+.card-delete-btn { display:none; }
+body.cards-delete-btn-on .card-delete-btn { display:flex; }
 @media (hover: hover) {
-  .card:hover .card-edit-btn { opacity:1; }
+  .card:hover .card-edit-btn,
+  .card:hover .card-delete-btn { opacity:1; }
   .card-edit-btn:hover { color:var(--tx1); border-color:var(--str-default); }
+  .card-delete-btn:hover { color:#c42b1c; border-color:#c42b1c; }
 }
 
 /* Module icon (rarity bg + type fg) */
@@ -1213,7 +1221,8 @@ body {
   .card {
     padding: 12px;
   }
-  .card-edit-btn {
+  .card-edit-btn,
+  .card-delete-btn {
     opacity: 1;
   }
 
@@ -1437,6 +1446,25 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-bottom: 10px;
+}
+.sidebar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.sidebar-row-label {
+  font-size: 13px;
+  color: var(--tx1);
+  white-space: nowrap;
+}
+.sidebar-inline-dd { flex: 1; min-width: 0; }
+.sidebar-inline-dd .uni-dd-trigger {
+  width: 100%;
+  height: 28px;
+  font-size: 12px;
+  justify-content: space-between;
 }
 .sidebar-export-btn {
   width: 100%;

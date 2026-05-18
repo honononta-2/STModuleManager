@@ -21,6 +21,10 @@ const $ = <T extends HTMLElement>(id: string) =>
   (document.getElementById(id) ?? capturePipWindow?.document?.getElementById(id)) as T;
 
 const X_ICON = '<svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg>';
+const TRASH_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+
+type CardDeleteBtnMode = "off" | "on" | "no_confirm";
+let cardDeleteBtnMode: CardDeleteBtnMode = "off";
 
 // ========== Unified Flyout System ==========
 
@@ -717,12 +721,21 @@ function renderGrid() {
     const iconWrap = document.createElement("span");
     iconWrap.innerHTML = moduleIconHtml(m.config_id);
     head.appendChild(iconWrap.firstElementChild || document.createTextNode(""));
+    const actions = document.createElement("div");
+    actions.className = "card-head-actions";
+    const delBtn = document.createElement("button");
+    delBtn.className = "card-delete-btn";
+    delBtn.title = t.ui.btn_delete;
+    delBtn.appendChild(document.createRange().createContextualFragment(TRASH_ICON_SVG));
+    delBtn.onclick = (e) => { e.stopPropagation(); handleCardDeleteClick(m.uuid); };
+    actions.appendChild(delBtn);
     const editBtn = document.createElement("button");
     editBtn.className = "card-edit-btn";
     editBtn.title = t.ui.modal_edit;
     editBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
     editBtn.onclick = (e) => { e.stopPropagation(); openEditModal(m.uuid); };
-    head.appendChild(editBtn);
+    actions.appendChild(editBtn);
+    head.appendChild(actions);
     c.appendChild(head);
 
     const divider = document.createElement("div");
@@ -2276,6 +2289,33 @@ function deleteEditModule() {
   renderGrid();
   updateOptRunBtn();
   closeEditModal();
+}
+
+function deleteModuleByUuid(uuid: number) {
+  const idx = modules.findIndex((mod) => mod.uuid === uuid);
+  if (idx < 0) return;
+  modules.splice(idx, 1);
+  saveModulesToStorage();
+  renderGrid();
+  updateOptRunBtn();
+}
+
+let cardDeleteTargetUuid: number | null = null;
+
+function handleCardDeleteClick(uuid: number) {
+  if (cardDeleteBtnMode === "no_confirm") {
+    deleteModuleByUuid(uuid);
+    return;
+  }
+  if (cardDeleteBtnMode === "on") {
+    cardDeleteTargetUuid = uuid;
+    $("card-delete-modal-bd").classList.add("on");
+  }
+}
+
+function setCardDeleteBtnMode(mode: CardDeleteBtnMode) {
+  cardDeleteBtnMode = mode;
+  document.body.classList.toggle("cards-delete-btn-on", mode !== "off");
 }
 
 // ========== Manual Input Modal ==========
@@ -4024,6 +4064,21 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll<HTMLInputElement>('#lang-options input[name="lang"]').forEach((radio) => {
     radio.onchange = () => { if (radio.checked) switchLanguage(radio.value); };
   });
+  const cardDelDd = $("card-delete-btn-mode-dd");
+  cardDelDd.addEventListener("change", () => {
+    const v = cardDelDd.dataset.value as CardDeleteBtnMode;
+    setCardDeleteBtnMode(v);
+  });
+
+  const cardDelBd = $("card-delete-modal-bd");
+  const closeCardDelModal = () => { cardDelBd.classList.remove("on"); cardDeleteTargetUuid = null; };
+  $("card-delete-modal-close").onclick = closeCardDelModal;
+  $("card-delete-cancel").onclick = closeCardDelModal;
+  $("card-delete-ok").onclick = () => {
+    if (cardDeleteTargetUuid !== null) deleteModuleByUuid(cardDeleteTargetUuid);
+    closeCardDelModal();
+  };
+  cardDelBd.addEventListener("click", (e) => { if (e.target === cardDelBd) closeCardDelModal(); });
 
   restoreOptState();
   restoreOptResults();
