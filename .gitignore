@@ -31,3 +31,9 @@ release-v*/
 # Skills
 .agents/
 skills-lock.json
+
+# Editor settings
+.vscode/
+
+# Tauri auto-generated schemas
+src-tauri/gen/
