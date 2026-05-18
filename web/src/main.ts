@@ -3797,15 +3797,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const patSelDd = $("pattern-select");
     const selectedIdx = patSelDd.dataset.value ?? "";
     const patterns = getPatterns();
-    const options: { value: string; label: string }[] = [];
+    const options: { value: string; label: string }[] = [{ value: "new", label: t.ui.pattern_new }];
+    patterns.forEach((p, i) => {
+      options.push({ value: `overwrite_${i}`, label: fmt(t.ui.pattern_overwrite, { name: p.name }) });
+    });
 
-    if (selectedIdx !== "" && patterns[Number(selectedIdx)]) {
-      const p = patterns[Number(selectedIdx)];
-      options.push({ value: "overwrite", label: fmt(t.ui.pattern_overwrite, { name: p.name }) });
-    }
-    options.push({ value: "new", label: t.ui.pattern_new });
-
-    updateDropdownOptions(patsaveModeDd, options, options[0].value);
+    const defaultValue = (selectedIdx !== "" && patterns[Number(selectedIdx)]) ? `overwrite_${selectedIdx}` : "new";
+    updateDropdownOptions(patsaveModeDd, options, defaultValue);
     patsaveInput.value = "";
     updatePatsaveNameRow();
     patsaveBd.classList.add("on");
@@ -3818,8 +3816,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const quality = Number($("opt-quality").dataset.value);
     const patterns = getPatterns();
 
-    if (mode === "overwrite") {
-      const idx = Number($("pattern-select").dataset.value);
+    if (mode.startsWith("overwrite_")) {
+      const idx = Number(mode.slice("overwrite_".length));
       const existing = patterns[idx];
       if (!existing) return;
       const entry: OptPattern = { name: existing.name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality, min_required: [...optMinRequired], min_desired: [...optMinDesired] };
