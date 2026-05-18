@@ -419,6 +419,10 @@ function updateInventoryBtnLabel() {
   btn.textContent = t.ui.btn_inventory;
   btn.classList.toggle("inv-saved", saved);
   btn.classList.toggle("opt-multi-btn", saved);
+  const visible = filterInventoryFlags.length > 0;
+  btn.style.display = visible ? "" : "none";
+  const infoBtn = $<HTMLButtonElement>("inventory-info-btn");
+  if (infoBtn) infoBtn.style.display = visible ? "" : "none";
 }
 
 const SUM_RANGES: Array<[number, number]> = [[1, 10], [11, 15], [16, 20], [21, 25]];
@@ -816,6 +820,19 @@ function openFilterMultiFly(anchor: HTMLElement) {
       },
     },
     {
+      title: t.ui.inventory_filter_label,
+      single: true,
+      items: [
+        { value: "only", label: t.ui.inventory_filter_only, checked: filterInventoryFlags.includes("only") },
+        { value: "exclude", label: t.ui.inventory_filter_exclude, checked: filterInventoryFlags.includes("exclude") },
+      ],
+      onRadio: (value) => {
+        filterInventoryFlags = value === null ? [] : [value as "only" | "exclude"];
+        updateInventoryBtnLabel();
+        refresh();
+      },
+    },
+    {
       title: t.ui.fly_stat,
       items: ALL_STAT_IDS.map((id) => ({
         value: String(id), label: statName(id),
@@ -830,21 +847,6 @@ function openFilterMultiFly(anchor: HTMLElement) {
       },
     },
   ];
-
-  if (isInventorySaved()) {
-    sections.push({
-      title: t.ui.inventory_filter_label,
-      single: true,
-      items: [
-        { value: "only", label: t.ui.inventory_filter_only, checked: filterInventoryFlags.includes("only") },
-        { value: "exclude", label: t.ui.inventory_filter_exclude, checked: filterInventoryFlags.includes("exclude") },
-      ],
-      onRadio: (value) => {
-        filterInventoryFlags = value === null ? [] : [value as "only" | "exclude"];
-        refresh();
-      },
-    });
-  }
 
   openFlyout(anchor, { mode: "multi", sections });
 }

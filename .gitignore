@@ -13,8 +13,8 @@ src-tauri/target/
 WinDivert.dll
 WinDivert64.sys
 
-# Documentation & game assets
-docs/
+# Internal dev assets, working notes, scripts
+dev/
 
 # Temporary files
 tmp/
