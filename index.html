@@ -7,6 +7,12 @@
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="x-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6 6 18"/>
+    <path d="m6 6 12 12"/>
+  </symbol>
+</svg>
 <div class="app">
 
   <!-- Title bar -->
@@ -116,7 +122,7 @@
       <div class="modal detail-modal">
         <div class="modal-head">
           <span class="modal-title" data-i18n="detail_settings">詳細設定</span>
-          <button class="modal-close" id="detail-modal-close">&times;</button>
+          <button class="modal-close" id="detail-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <div class="detail-row">
@@ -157,7 +163,7 @@
       <div class="modal menu-modal">
         <div class="modal-head">
           <span class="modal-title" data-i18n="menu_title">メニュー</span>
-          <button class="modal-close" id="menu-modal-close">&times;</button>
+          <button class="modal-close" id="menu-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="menu-modal-body">
           <div class="menu-section">
@@ -226,7 +232,7 @@
       <div class="modal monitor-confirm-modal">
         <div class="modal-head">
           <span class="modal-title" data-i18n="monitor_title">ネットワーク監視</span>
-          <button class="modal-close" id="monitor-confirm-close">&times;</button>
+          <button class="modal-close" id="monitor-confirm-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <p class="monitor-confirm-text" data-i18n="monitor_message">次回からアプリ起動時にネットワーク監視を自動的に開始しますか？</p>
@@ -247,7 +253,7 @@
       <div class="modal custom-lang-modal">
         <div class="modal-head">
           <span class="modal-title">Custom Language</span>
-          <button class="modal-close" id="custom-lang-close">&times;</button>
+          <button class="modal-close" id="custom-lang-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="custom-lang-toolbar">
           <input type="text" class="custom-lang-search" id="custom-lang-search" placeholder="Filter by key...">
@@ -296,7 +302,7 @@
       <div class="modal monitor-confirm-modal">
         <div class="modal-head">
           <span class="modal-title" data-i18n="clear_stats_title">ステータス解除</span>
-          <button class="modal-close" id="clear-stats-close">&times;</button>
+          <button class="modal-close" id="clear-stats-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <p class="monitor-confirm-text" data-i18n="clear_stats_msg">ステータスを非選択に変更しますか？</p>
@@ -313,7 +319,7 @@
       <div class="modal monitor-confirm-modal">
         <div class="modal-head">
           <span class="modal-title" data-i18n="menu_clear_data">データを全て削除して終了</span>
-          <button class="modal-close" id="clear-data-close">&times;</button>
+          <button class="modal-close" id="clear-data-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <p class="monitor-confirm-text" data-i18n="clear_data_confirm">保存されたデータをすべて削除してアプリを終了します。この操作は取り消せません。</p>
@@ -330,7 +336,7 @@
       <div class="modal speed-info-modal">
         <div class="modal-head">
           <span class="modal-title" data-i18n="speed_info_title">探索速度について</span>
-          <button class="modal-close" id="speed-info-close">&times;</button>
+          <button class="modal-close" id="speed-info-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body" id="speed-info-body"></div>
       </div>
@@ -341,7 +347,7 @@
       <div class="modal" id="modal">
         <div class="modal-head">
           <span class="modal-title" id="modal-title">組み合わせ詳細</span>
-          <button class="modal-close" id="modal-close">&times;</button>
+          <button class="modal-close" id="modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body" id="modal-body"></div>
       </div>

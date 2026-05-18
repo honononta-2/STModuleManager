@@ -30,6 +30,12 @@
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="x-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6 6 18"/>
+    <path d="m6 6 12 12"/>
+  </symbol>
+</svg>
 <div class="app">
 
   <!-- Web header -->
@@ -47,7 +53,7 @@
   <div class="sidebar" id="sidebar">
     <div class="sidebar-head">
       <span class="sidebar-title" data-i18n="settings_title">設定</span>
-      <button class="modal-close" id="sidebar-close">&times;</button>
+      <button class="modal-close" id="sidebar-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
     </div>
     <div class="sidebar-body">
       <div class="sidebar-section">
@@ -190,7 +196,7 @@
       <div class="modal modal--form modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="detail_settings">詳細設定</span>
-          <button class="modal-close" id="detail-modal-close">&times;</button>
+          <button class="modal-close" id="detail-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <div class="detail-row">
@@ -232,7 +238,7 @@
       <div class="modal">
         <div class="modal-head">
           <span class="modal-title" data-i18n="speed_info_title">探索速度について</span>
-          <button class="modal-close" id="speed-info-close">&times;</button>
+          <button class="modal-close" id="speed-info-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body" id="speed-info-body"></div>
       </div>
@@ -243,7 +249,7 @@
       <div class="modal">
         <div class="modal-head">
           <span class="modal-title" data-i18n="screenshot_info_title">スクショ取込について</span>
-          <button class="modal-close" id="screenshot-info-close">&times;</button>
+          <button class="modal-close" id="screenshot-info-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body" id="screenshot-info-body"></div>
       </div>
@@ -254,7 +260,7 @@
       <div class="modal">
         <div class="modal-head">
           <span class="modal-title" data-i18n="json_info_title">JSON取込について</span>
-          <button class="modal-close" id="json-info-close">&times;</button>
+          <button class="modal-close" id="json-info-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body" id="json-info-body"></div>
       </div>
@@ -265,7 +271,7 @@
       <div class="modal">
         <div class="modal-head">
           <span class="modal-title" data-i18n="inventory_info_title">現有管理について</span>
-          <button class="modal-close" id="inventory-info-close">&times;</button>
+          <button class="modal-close" id="inventory-info-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body" id="inventory-info-body"></div>
       </div>
@@ -276,7 +282,7 @@
       <div class="modal" id="modal">
         <div class="modal-head">
           <span class="modal-title" id="modal-title" data-i18n="combo_detail">組み合わせ詳細</span>
-          <button class="modal-close" id="modal-close">&times;</button>
+          <button class="modal-close" id="modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body" id="modal-body"></div>
       </div>
@@ -287,7 +293,7 @@
       <div class="modal modal--form ocr-modal">
         <div class="modal-head">
           <span class="modal-title" data-i18n="ocr_title">OCR結果確認</span>
-          <button class="modal-close" id="ocr-modal-close">&times;</button>
+          <button class="modal-close" id="ocr-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body" id="ocr-modal-body"></div>
         <div class="modal-footer">
@@ -313,7 +319,7 @@
       <div class="modal modal--confirm">
         <div class="modal-head">
           <span class="modal-title" data-i18n="ocr_prev_data_title">前回の取込データ</span>
-          <button class="modal-close" id="ocr-prev-modal-close">&times;</button>
+          <button class="modal-close" id="ocr-prev-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <p data-i18n="ocr_prev_data_msg">前回の取込データが残っています。復元しますか？</p>
@@ -330,7 +336,7 @@
       <div class="modal modal--confirm">
         <div class="modal-head">
           <span class="modal-title" data-i18n="ocr_cancel_title">取込データの削除</span>
-          <button class="modal-close" id="ocr-cancel-modal-close">&times;</button>
+          <button class="modal-close" id="ocr-cancel-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <p data-i18n="ocr_cancel_msg">取込データを削除します。この操作は元に戻せません。</p>
@@ -347,7 +353,7 @@
       <div class="modal modal--form modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="ocr_target_modal_title">登録対象の設定</span>
-          <button class="modal-close" id="ocr-target-config-close">&times;</button>
+          <button class="modal-close" id="ocr-target-config-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <div class="detail-row">
@@ -396,7 +402,7 @@
       <div class="modal modal--confirm">
         <div class="modal-head">
           <span class="modal-title" data-i18n="ocr_warn_title">警告</span>
-          <button class="modal-close" id="ocr-warn-modal-close">&times;</button>
+          <button class="modal-close" id="ocr-warn-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <p data-i18n="ocr_warn_msg">警告が残っています</p>
@@ -413,7 +419,7 @@
       <div class="modal modal--confirm modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="clear_modal_title">モジュール削除</span>
-          <button class="modal-close" id="clear-modal-close">&times;</button>
+          <button class="modal-close" id="clear-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <div style="margin-bottom:14px">
@@ -470,7 +476,7 @@
       <div class="modal modal--confirm">
         <div class="modal-head">
           <span class="modal-title" data-i18n="clear_stats_title">ステータス解除</span>
-          <button class="modal-close" id="clear-stats-modal-close">&times;</button>
+          <button class="modal-close" id="clear-stats-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <p data-i18n="clear_stats_msg">ステータスを非選択に変更しますか？</p>
@@ -487,7 +493,7 @@
       <div class="modal modal--confirm">
         <div class="modal-head">
           <span class="modal-title" data-i18n="modal_pattern_delete">パターン削除</span>
-          <button class="modal-close" id="patdel-modal-close">&times;</button>
+          <button class="modal-close" id="patdel-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <p id="patdel-msg"></p>
@@ -504,7 +510,7 @@
       <div class="modal modal--confirm" style="max-height:none">
         <div class="modal-head">
           <span class="modal-title" data-i18n="modal_pattern_save">パターン保存</span>
-          <button class="modal-close" id="patsave-modal-close">&times;</button>
+          <button class="modal-close" id="patsave-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <div id="patsave-mode" class="uni-dd patsave-mode-select" data-value="">
@@ -528,7 +534,7 @@
       <div class="modal modal--form modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="modal_manual">モジュール手動入力</span>
-          <button class="modal-close" id="manual-modal-close">&times;</button>
+          <button class="modal-close" id="manual-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body" id="manual-modal-body"></div>
         <div class="modal-footer">
@@ -543,7 +549,7 @@
       <div class="modal modal--form modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="modal_edit">モジュール編集</span>
-          <button class="modal-close" id="edit-modal-close">&times;</button>
+          <button class="modal-close" id="edit-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body" id="edit-modal-body"></div>
         <div class="modal-footer">
@@ -560,7 +566,7 @@
       <div class="modal modal--form modal--auto-h">
         <div class="modal-head">
           <span class="modal-title" data-i18n="ocr_setup_title">スクショ取込設定</span>
-          <button class="modal-close" id="ocr-setup-close">&times;</button>
+          <button class="modal-close" id="ocr-setup-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <div class="ocr-setup-section">
@@ -654,7 +660,7 @@
       <div class="modal modal--confirm">
         <div class="modal-head">
           <span class="modal-title" data-i18n="inventory_clear_shots_title">スクショ全削除</span>
-          <button class="modal-close" id="inv-clear-shots-close">&times;</button>
+          <button class="modal-close" id="inv-clear-shots-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <p data-i18n="inventory_clear_shots_msg">保存されたスクリーンショット画像を削除しますか？モジュールデータは保持されます。</p>
@@ -671,7 +677,7 @@
       <div class="modal modal--confirm">
         <div class="modal-head">
           <span class="modal-title" data-i18n="inventory_clear_data_title">現有データ削除</span>
-          <button class="modal-close" id="inv-clear-data-close">&times;</button>
+          <button class="modal-close" id="inv-clear-data-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
           <p data-i18n="inventory_clear_data_msg">現有データを全て削除しますか？この操作は元に戻せません。</p>
@@ -688,7 +694,7 @@
       <div class="modal">
         <div class="modal-head">
           <span class="modal-title">Credits</span>
-          <button class="modal-close" id="license-modal-close">&times;</button>
+          <button class="modal-close" id="license-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body license-body" id="license-modal-body"></div>
       </div>

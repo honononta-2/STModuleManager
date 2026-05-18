@@ -20,6 +20,8 @@ import {
 const $ = <T extends HTMLElement>(id: string) =>
   (document.getElementById(id) ?? capturePipWindow?.document?.getElementById(id)) as T;
 
+const X_ICON = '<svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg>';
+
 // ========== Unified Flyout System ==========
 
 let _flyMenu: HTMLElement | null = null;
@@ -668,8 +670,13 @@ function renderGrid() {
         vb = b.stats.reduce((sum, x) => sum + x.value, 0);
       } else {
         const partId = Number(s.k);
-        va = a.stats.find((x) => x.part_id === partId)?.value ?? 0;
-        vb = b.stats.find((x) => x.part_id === partId)?.value ?? 0;
+        const sa = a.stats.find((x) => x.part_id === partId);
+        const sb = b.stats.find((x) => x.part_id === partId);
+        if (!sa && !sb) continue;
+        if (!sa) return 1;
+        if (!sb) return -1;
+        va = sa.value;
+        vb = sb.value;
       }
       if (va < vb) return s.d;
       if (va > vb) return -s.d;
@@ -869,7 +876,7 @@ function renderSChips() {
     el.appendChild(arrSpan);
     const rm = document.createElement("button");
     rm.className = "schip-rm";
-    rm.textContent = "\u00d7";
+    rm.innerHTML = X_ICON;
     rm.onclick = (e) => {
       e.stopPropagation();
       const idx = sortKeys.indexOf(s);
@@ -1843,7 +1850,7 @@ function renderOcrModalBody() {
       return `<div class="ocr-stat-row">
         ${statDropdownHtml("ocr-stat-name", s.part_id, { gi: String(gi), mi: String(mi), si: String(si) })}
         ${valueDropdownHtml(s.value, "ocr-stat-value", { gi: String(gi), mi: String(mi), si: String(si) })}
-        <button class="ocr-stat-remove" data-gi="${gi}" data-mi="${mi}" data-si="${si}">&times;</button>
+        <button class="ocr-stat-remove" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${X_ICON}</button>
         <span class="ocr-stat-warn${warn ? "" : " hidden"}" data-gi="${gi}" data-mi="${mi}" data-si="${si}" title="${warnTitle}"><img src="icons/triangle-alert.svg" width="18" height="18"></span>
       </div>`;
     }).join("");
@@ -1869,7 +1876,7 @@ function renderOcrModalBody() {
               `${raritySubDropdownHtml(raritySub, "ocr-rarity-sub", { gi: String(gi), mi: String(mi) })}`,
             `</label>`,
           `</div>`,
-          `<button class="ocr-row-remove" data-gi="${gi}" data-mi="${mi}">&times;</button>`,
+          `<button class="ocr-row-remove" data-gi="${gi}" data-mi="${mi}">${X_ICON}</button>`,
         `</div>`,
         `<div class="ocr-row-stats">`,
           `<div class="ocr-stat-divider"></div>`,
@@ -2157,7 +2164,7 @@ function renderEditModalBody() {
     statRows.push(`<div class="ocr-stat-row" data-si="${i}">
       ${statDropdownHtml("edit-stat-name", curStat?.part_id, undefined, curStat ? undefined : t.ui.select_placeholder)}
       ${valueDropdownHtml(curStat?.value ?? 1, "ocr-stat-value edit-stat-value")}
-      <button class="ocr-stat-remove edit-remove-stat" data-si="${i}">&times;</button>
+      <button class="ocr-stat-remove edit-remove-stat" data-si="${i}">${X_ICON}</button>
     </div>`);
   }
 
@@ -2293,7 +2300,7 @@ function renderManualModalBody() {
     statRows.push(`<div class="ocr-stat-row" data-si="${i}">
       ${statDropdownHtml("manual-stat-name", undefined, undefined, t.ui.select_placeholder)}
       ${valueDropdownHtml(1, "ocr-stat-value manual-stat-value")}
-      <button class="ocr-stat-remove manual-remove-stat" data-si="${i}">&times;</button>
+      <button class="ocr-stat-remove manual-remove-stat" data-si="${i}">${X_ICON}</button>
       <span class="ocr-stat-warn hidden" data-si="${i}"><img src="icons/triangle-alert.svg" width="18" height="18"></span>
     </div>`);
   }

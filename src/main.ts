@@ -29,6 +29,8 @@ const STAT_ICONS: Record<number, string> = {
   2406: "mod_effect_icon_017.png",
 };
 
+const X_ICON = '<svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg>';
+
 /** HTML特殊文字をエスケープ（カスタム言語データを innerHTML に挿入する際に使用） */
 function esc(str: string): string {
   return str
@@ -230,8 +232,13 @@ function renderGrid() {
         vb = b.stats.reduce((sum, x) => sum + x.value, 0);
       } else {
         const pid = Number(s.k);
-        va = a.stats.find((x) => x.part_id === pid)?.value ?? 0;
-        vb = b.stats.find((x) => x.part_id === pid)?.value ?? 0;
+        const sa = a.stats.find((x) => x.part_id === pid);
+        const sb = b.stats.find((x) => x.part_id === pid);
+        if (!sa && !sb) continue;
+        if (!sa) return 1;
+        if (!sb) return -1;
+        va = sa.value;
+        vb = sb.value;
       }
       if (va < vb) return s.d;
       if (va > vb) return -s.d;
@@ -414,7 +421,7 @@ function renderSChips() {
     arrSpan.textContent = s.d === 1 ? "\u2193" : "\u2191";
     const rmBtn = document.createElement("button");
     rmBtn.className = "schip-rm";
-    rmBtn.textContent = "\u00d7";
+    rmBtn.innerHTML = X_ICON;
     el.appendChild(labelSpan);
     el.appendChild(arrSpan);
     el.appendChild(rmBtn);
