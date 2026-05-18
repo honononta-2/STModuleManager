@@ -182,7 +182,15 @@ function applyI18n(): void {
   $("sb-n").textContent = fmt(t.ui.n_modules, { count: 0 });
 }
 
+let _gridScrollCleanup: (() => void) | null = null;
+
 function renderGrid() {
+  // 前回のスクロールリスナーを確実に削除
+  if (_gridScrollCleanup) {
+    _gridScrollCleanup();
+    _gridScrollCleanup = null;
+  }
+
   let ms = [...allModules];
 
   if (filterRarities.length > 0) {
@@ -254,7 +262,10 @@ function renderGrid() {
     return;
   }
 
-  ms.forEach((m, i) => {
+  const INITIAL_COUNT = 60;
+  let rendered = 0;
+
+  function buildCard(m: ModuleEntry, i: number): HTMLDivElement {
     const c = document.createElement("div");
     c.className = "card";
     c.style.animationDelay = `${Math.min(i, 16) * 14}ms`;
@@ -275,8 +286,37 @@ function renderGrid() {
       </div>
       <div class="divider"></div>
       <div class="stats">${statsHtml}</div>`;
-    g.appendChild(c);
-  });
+    return c;
+  }
+
+  function renderBatch() {
+    const end = Math.min(rendered + INITIAL_COUNT, ms.length);
+    for (let i = rendered; i < end; i++) {
+      g.appendChild(buildCard(ms[i], i));
+    }
+    rendered = end;
+  }
+
+  renderBatch();
+
+  // スクロールで残りを遅延描画
+  if (ms.length > INITIAL_COUNT) {
+    const scroll = g.closest(".scroll");
+    const onScroll = () => {
+      if (rendered >= ms.length) {
+        scroll?.removeEventListener("scroll", onScroll);
+        _gridScrollCleanup = null;
+        return;
+      }
+      if (!scroll) return;
+      const { scrollTop, scrollHeight, clientHeight } = scroll;
+      if (scrollTop + clientHeight >= scrollHeight - 200) {
+        renderBatch();
+      }
+    };
+    scroll?.addEventListener("scroll", onScroll);
+    _gridScrollCleanup = () => scroll?.removeEventListener("scroll", onScroll);
+  }
 
   $("sb-n").textContent = fmt(t.ui.n_modules, { count: ms.length });
   const info: string[] = [];
