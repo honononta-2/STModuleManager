@@ -65,11 +65,18 @@ function closeFlyout() {
   if (_flyAnchor) { _flyAnchor.classList.remove("open"); _flyAnchor = null; }
 }
 
+function copyChildren(src: HTMLElement, dst: HTMLElement) {
+  while (dst.firstChild) dst.removeChild(dst.firstChild);
+  for (const child of Array.from(src.childNodes)) {
+    dst.appendChild(child.cloneNode(true));
+  }
+}
+
 interface FlyoutItem {
   value: string;
   label: string;
   icon?: string;
-  html?: string;
+  contentSource?: HTMLElement;
   selected?: boolean;
   disabled?: boolean;
   checked?: boolean;
@@ -158,8 +165,8 @@ function openFlyout(anchor: HTMLElement, opts: FlyoutOptions) {
     } else {
       const el = document.createElement("div");
       el.className = "fitem" + (it.selected ? " selected" : "") + (it.disabled ? " dim" : "");
-      if (it.html) {
-        el.innerHTML = it.html;
+      if (it.contentSource) {
+        copyChildren(it.contentSource, el);
       } else {
         if (it.icon) {
           const img = document.createElement("img");
@@ -219,9 +226,11 @@ function openFlyout(anchor: HTMLElement, opts: FlyoutOptions) {
 
 function initDropdowns(container: HTMLElement | Document = document) {
   container.querySelectorAll<HTMLElement>(".uni-dd").forEach((dd) => {
+    if (dd.dataset.ddInit === "1") return;
     const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger")!;
     const menuTpl = dd.querySelector<HTMLElement>(".uni-dd-menu")!;
     if (!trigger || !menuTpl) return;
+    dd.dataset.ddInit = "1";
     const isMenu = dd.dataset.menu === "true";
 
     trigger.addEventListener("click", (e) => {
@@ -231,7 +240,7 @@ function initDropdowns(container: HTMLElement | Document = document) {
         items.push({
           value: el.dataset.value ?? "",
           label: el.textContent ?? "",
-          html: el.innerHTML,
+          contentSource: el,
           selected: !isMenu && el.classList.contains("selected"),
         });
       });
@@ -250,7 +259,7 @@ function initDropdowns(container: HTMLElement | Document = document) {
           const picked = menuTpl.querySelector<HTMLElement>(`.uni-dd-item[data-value="${value}"]`);
           if (picked) {
             picked.classList.add("selected");
-            trigger.innerHTML = picked.innerHTML;
+            copyChildren(picked, trigger);
           }
           dd.dispatchEvent(new Event("change", { bubbles: true }));
         },
@@ -268,7 +277,7 @@ function setDropdownValue(dd: HTMLElement, value: string) {
   const item = menu.querySelector<HTMLElement>(`.uni-dd-item[data-value="${value}"]`);
   if (item) {
     item.classList.add("selected");
-    trigger.innerHTML = item.innerHTML;
+    copyChildren(item, trigger);
   }
 }
 

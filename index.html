@@ -65,20 +65,26 @@
       <div class="cmdbar opt-cmdbar">
         <div class="cmd-grp">
           <span class="cmd-lbl" data-i18n="rarity_label">レアリティ</span>
-          <select id="opt-quality" class="opt-select">
-            <option value="3">紫以上</option>
-            <option value="4">金のみ</option>
-          </select>
+          <div id="opt-quality" class="uni-dd" data-value="3">
+            <button type="button" class="opt-multi-btn uni-dd-trigger" data-i18n="rarity_purple_up">紫以上</button>
+            <div class="uni-dd-menu">
+              <div class="fitem uni-dd-item selected" data-value="3" data-i18n="rarity_purple_up">紫以上</div>
+              <div class="fitem uni-dd-item" data-value="4" data-i18n="rarity_gold_only">金のみ</div>
+            </div>
+          </div>
         </div>
         <div class="cmd-sep"></div>
         <div class="cmd-grp">
           <span class="cmd-lbl" data-i18n="speed_label">探索速度</span>
-          <select id="opt-speed" class="opt-select">
-            <option value="standard" data-i18n="speed_standard">標準</option>
-            <option value="precise" data-i18n="speed_precise">高精度</option>
-            <option value="most_precise" data-i18n="speed_most_precise">最高精度</option>
-            <option value="exhaustive" data-i18n="speed_exhaustive">総当たり</option>
-          </select>
+          <div id="opt-speed" class="uni-dd" data-value="standard">
+            <button type="button" class="opt-multi-btn uni-dd-trigger" data-i18n="speed_standard">標準</button>
+            <div class="uni-dd-menu">
+              <div class="fitem uni-dd-item selected" data-value="standard" data-i18n="speed_standard">標準</div>
+              <div class="fitem uni-dd-item" data-value="precise" data-i18n="speed_precise">高精度</div>
+              <div class="fitem uni-dd-item" data-value="most_precise" data-i18n="speed_most_precise">最高精度</div>
+              <div class="fitem uni-dd-item" data-value="exhaustive" data-i18n="speed_exhaustive">総当たり</div>
+            </div>
+          </div>
           <button class="speed-info-btn" id="speed-info-btn" title="探索速度について">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
           </button>
@@ -98,9 +104,12 @@
       <!-- パターン管理バー -->
       <div class="opt-pattern-bar">
         <span class="cmd-lbl" data-i18n="pattern_label">パターン</span>
-        <select id="pattern-select" class="opt-select pattern-select">
-          <option value="">-- 選択 --</option>
-        </select>
+        <div id="pattern-select" class="uni-dd pattern-select" data-value="">
+          <button type="button" class="opt-multi-btn uni-dd-trigger" data-i18n="pattern_placeholder">-- 選択 --</button>
+          <div class="uni-dd-menu">
+            <div class="fitem uni-dd-item selected" data-value="" data-i18n="pattern_placeholder">-- 選択 --</div>
+          </div>
+        </div>
         <button class="addbtn" id="pattern-load" data-i18n="btn_load">読込</button>
         <button class="addbtn" id="pattern-save" data-i18n="btn_save">保存</button>
         <button class="addbtn pattern-del-btn" id="pattern-delete" data-i18n="btn_delete">削除</button>
@@ -198,21 +207,27 @@
             </div>
             <div class="menu-row">
               <span class="menu-row-label" data-i18n="menu_theme">テーマ</span>
-              <select class="menu-select" id="menu-theme-select">
-                <option value="system">システム設定に従う</option>
-                <option value="light">ライト</option>
-                <option value="dark">ダーク</option>
-              </select>
+              <div id="menu-theme-select" class="uni-dd menu-select" data-value="system">
+                <button type="button" class="opt-multi-btn uni-dd-trigger" data-i18n="theme_system">システム設定に従う</button>
+                <div class="uni-dd-menu">
+                  <div class="fitem uni-dd-item selected" data-value="system" data-i18n="theme_system">システム設定に従う</div>
+                  <div class="fitem uni-dd-item" data-value="light" data-i18n="theme_light">ライト</div>
+                  <div class="fitem uni-dd-item" data-value="dark" data-i18n="theme_dark">ダーク</div>
+                </div>
+              </div>
             </div>
             <div class="menu-row">
               <span class="menu-row-label">Language</span>
               <div class="menu-lang-controls">
-                <select class="menu-select" id="menu-lang-select">
-                  <option value="ja">日本語</option>
-                  <option value="ko">한국어</option>
-                  <option value="en">English</option>
-                  <option value="custom">カスタム</option>
-                </select>
+                <div id="menu-lang-select" class="uni-dd menu-select" data-value="ja">
+                  <button type="button" class="opt-multi-btn uni-dd-trigger" data-i18n="lang_ja">日本語</button>
+                  <div class="uni-dd-menu">
+                    <div class="fitem uni-dd-item selected" data-value="ja" data-i18n="lang_ja">日本語</div>
+                    <div class="fitem uni-dd-item" data-value="ko" data-i18n="lang_ko">한국어</div>
+                    <div class="fitem uni-dd-item" data-value="en" data-i18n="lang_en">English</div>
+                    <div class="fitem uni-dd-item" data-value="custom" data-i18n="lang_custom">Custom</div>
+                  </div>
+                </div>
                 <button class="menu-lang-edit-btn" id="menu-lang-edit-btn" style="display:none">Edit</button>
               </div>
             </div>
@@ -287,11 +302,14 @@
           <span class="modal-title">Language</span>
         </div>
         <div class="firstrun-body">
-          <select class="menu-select firstrun-select" id="firstrun-lang-select">
-            <option value="ja">日本語</option>
-            <option value="ko">한국어</option>
-            <option value="en">English</option>
-          </select>
+          <div id="firstrun-lang-select" class="uni-dd menu-select firstrun-select" data-value="ja">
+            <button type="button" class="opt-multi-btn uni-dd-trigger">日本語</button>
+            <div class="uni-dd-menu">
+              <div class="fitem uni-dd-item selected" data-value="ja">日本語</div>
+              <div class="fitem uni-dd-item" data-value="ko">한국어</div>
+              <div class="fitem uni-dd-item" data-value="en">English</div>
+            </div>
+          </div>
           <button class="firstrun-save-btn" id="firstrun-save">OK</button>
         </div>
       </div>
@@ -367,13 +385,6 @@
     </div>
   </div>
 </div>
-
-<div class="bd" id="bd"></div>
-<div class="flyout" id="fly-f"></div>
-<div class="flyout" id="fly-s"></div>
-<div class="flyout" id="fly-multi"></div>
-<div class="flyout" id="fly-detail"></div>
-<div class="flyout" id="fly-filter"></div>
 
 <script type="module" src="/src/main.ts"></script>
 </body>

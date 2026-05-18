@@ -170,23 +170,12 @@ function applyI18n(): void {
     const key = el.dataset.i18nAria!;
     el.setAttribute("aria-label", t.ui[key] ?? "");
   });
-  // select options
-  const qualSel = $<HTMLSelectElement>("opt-quality");
-  qualSel.options[0].text = t.ui.rarity_purple_up;
-  qualSel.options[1].text = t.ui.rarity_gold_only;
-  // pattern select placeholder
-  const patSel = $<HTMLSelectElement>("pattern-select");
-  if (patSel.options.length > 0) patSel.options[0].text = t.ui.pattern_placeholder;
-  // theme/lang select options
-  const themeSel = $<HTMLSelectElement>("menu-theme-select");
-  themeSel.options[0].text = t.ui.theme_system;
-  themeSel.options[1].text = t.ui.theme_light;
-  themeSel.options[2].text = t.ui.theme_dark;
-  const langSel = $<HTMLSelectElement>("menu-lang-select");
-  langSel.options[0].text = t.ui.lang_ja;
-  langSel.options[1].text = t.ui.lang_ko;
-  langSel.options[2].text = t.ui.lang_en;
-  langSel.options[3].text = t.ui.lang_custom;
+  // uni-dd の選択中アイテムの内容を trigger に同期（data-i18n 反映後）
+  document.querySelectorAll<HTMLElement>(".uni-dd").forEach((dd) => {
+    const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger");
+    const selected = dd.querySelector<HTMLElement>(".uni-dd-item.selected");
+    if (trigger && selected) copyChildren(selected, trigger);
+  });
   // opt-empty 初期テキスト
   $("opt-empty-text").textContent = t.ui.opt_empty;
   // ステータスバー初期値
@@ -305,102 +294,75 @@ function updateFilterBtnLabel() {
   btn.classList.toggle("has-items", count > 0);
 }
 
-function addFlySection(
-  fl: HTMLElement,
-  title: string,
-  items: { label: string; checked: boolean; iconSrc?: string }[],
-  onChange: (index: number, checked: boolean) => void,
-) {
-  const header = document.createElement("div");
-  header.className = "fly-section-header";
-  header.textContent = title;
-  fl.appendChild(header);
-
-  items.forEach((item, i) => {
-    const el = document.createElement("label");
-    el.className = "fitem-check";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = item.checked;
-    cb.onchange = () => onChange(i, cb.checked);
-    el.appendChild(cb);
-    if (item.iconSrc) {
-      const img = document.createElement("img");
-      img.className = "sicon";
-      img.src = item.iconSrc;
-      img.alt = "";
-      el.appendChild(img);
-    }
-    const span = document.createElement("span");
-    span.textContent = item.label;
-    el.appendChild(span);
-    fl.appendChild(el);
-  });
-}
-
 function openFilterMultiFly(anchor: HTMLElement) {
-  const fl = $("fly-filter");
-  if (fl.classList.contains("on")) {
-    closeFly();
-    return;
-  }
-  closeFly();
-  fl.innerHTML = "";
-
   const refresh = () => { updateFilterBtnLabel(); renderGrid(); };
-
-  // Section: レアリティ
-  addFlySection(fl, t.ui.fly_rarity,
-    RARITY_FILTER_KEYS.map((r) => ({ label: t.rarity[r], checked: filterRarities.includes(r) })),
-    (i, checked) => {
-      const val = RARITY_FILTER_KEYS[i];
-      if (checked) filterRarities.push(val);
-      else { const idx = filterRarities.indexOf(val); if (idx >= 0) filterRarities.splice(idx, 1); }
-      refresh();
-    },
-  );
-
-  // Section: 型
-  const moduleTypeEntries = Object.entries(t.module_types);
-  addFlySection(fl, t.ui.fly_type,
-    moduleTypeEntries.map(([key]) => ({ label: t.module_types[key], checked: filterTypes.includes(key) })),
-    (i, checked) => {
-      const key = moduleTypeEntries[i][0];
-      if (checked) filterTypes.push(key);
-      else { const idx = filterTypes.indexOf(key); if (idx >= 0) filterTypes.splice(idx, 1); }
-      refresh();
-    },
-  );
-
-  // Section: 合計値
-  addFlySection(fl, t.ui.fly_sum_total,
-    SUM_RANGES.map(([lo, hi], i) => ({ label: `${lo}-${hi}`, checked: filterSumRanges.includes(i) })),
-    (i, checked) => {
-      if (checked) filterSumRanges.push(i);
-      else { const idx = filterSumRanges.indexOf(i); if (idx >= 0) filterSumRanges.splice(idx, 1); }
-      refresh();
-    },
-  );
-
-  // Section: ステータス
   const allStatIds = Object.keys(t.stat_names).map(Number);
-  addFlySection(fl, t.ui.fly_stat,
-    allStatIds.map((pid) => {
-      const icon = STAT_ICONS[pid];
-      return { label: statName(pid), checked: filterStats.includes(pid), iconSrc: icon ? `/icons/${icon}` : undefined };
-    }),
-    (i, checked) => {
-      const pid = allStatIds[i];
-      if (checked) filterStats.push(pid);
-      else { const idx = filterStats.indexOf(pid); if (idx >= 0) filterStats.splice(idx, 1); }
-      refresh();
-    },
-  );
+  const moduleTypeEntries = Object.entries(t.module_types);
 
-  fl.classList.add("on");
-  activeFlyout = fl;
-  activeFlyAnchor = anchor;
-  positionFly(fl, anchor);
+  openFlyout(anchor, {
+    mode: "multi",
+    sections: [
+      {
+        title: t.ui.fly_rarity,
+        items: RARITY_FILTER_KEYS.map((r) => ({
+          value: r,
+          label: t.rarity[r],
+          checked: filterRarities.includes(r),
+        })),
+        onCheck: (value, checked) => {
+          const val = value as Rarity;
+          if (checked) filterRarities.push(val);
+          else { const idx = filterRarities.indexOf(val); if (idx >= 0) filterRarities.splice(idx, 1); }
+          refresh();
+        },
+      },
+      {
+        title: t.ui.fly_type,
+        items: moduleTypeEntries.map(([key]) => ({
+          value: key,
+          label: t.module_types[key],
+          checked: filterTypes.includes(key),
+        })),
+        onCheck: (value, checked) => {
+          if (checked) filterTypes.push(value);
+          else { const idx = filterTypes.indexOf(value); if (idx >= 0) filterTypes.splice(idx, 1); }
+          refresh();
+        },
+      },
+      {
+        title: t.ui.fly_sum_total,
+        items: SUM_RANGES.map(([lo, hi], i) => ({
+          value: String(i),
+          label: `${lo}-${hi}`,
+          checked: filterSumRanges.includes(i),
+        })),
+        onCheck: (value, checked) => {
+          const i = Number(value);
+          if (checked) filterSumRanges.push(i);
+          else { const idx = filterSumRanges.indexOf(i); if (idx >= 0) filterSumRanges.splice(idx, 1); }
+          refresh();
+        },
+      },
+      {
+        title: t.ui.fly_stat,
+        items: allStatIds.map((pid) => {
+          const icon = STAT_ICONS[pid];
+          return {
+            value: String(pid),
+            label: statName(pid),
+            icon: icon ? `/icons/${icon}` : undefined,
+            checked: filterStats.includes(pid),
+          };
+        }),
+        onCheck: (value, checked) => {
+          const pid = Number(value);
+          if (checked) filterStats.push(pid);
+          else { const idx = filterStats.indexOf(pid); if (idx >= 0) filterStats.splice(idx, 1); }
+          refresh();
+        },
+      },
+    ],
+  });
 }
 
 function renderSChips() {
@@ -442,79 +404,291 @@ function renderSChips() {
   });
 }
 
-// --- Flyout ---
-function openFly(
-  flyId: string,
-  anchor: HTMLElement,
-  items: { label: string; val: string; disabled: boolean; iconSrc?: string }[],
-  onPick: (item: { label: string; val: string }) => void
-) {
-  closeFly();
-  const fl = $(flyId);
-  fl.textContent = "";
-  items.forEach((it) => {
-    const el = document.createElement("div");
-    el.className = "fitem" + (it.disabled ? " dim" : "");
-    if (it.iconSrc) {
-      const img = document.createElement("img");
-      img.className = "sicon";
-      img.src = it.iconSrc;
-      img.alt = "";
-      el.appendChild(img);
-      const span = document.createElement("span");
-      span.textContent = it.label;
-      el.appendChild(span);
-    } else {
-      el.textContent = it.label;
-    }
-    if (!it.disabled)
-      el.onclick = () => {
-        closeFly();
-        onPick(it);
-      };
-    fl.appendChild(el);
-  });
-  fl.classList.add("on");
-  activeFlyout = fl;
-  activeFlyAnchor = anchor;
-  positionFly(fl, anchor);
-}
+// ========== Unified Flyout System ==========
 
-let activeFlyout: HTMLElement | null = null;
-let activeFlyAnchor: HTMLElement | null = null;
+let _flyMenu: HTMLElement | null = null;
+let _flyAnchor: HTMLElement | null = null;
 
-function positionFly(fl: HTMLElement, anchor: HTMLElement) {
-  const r = anchor.getBoundingClientRect();
+function positionFlyout(fl: HTMLElement, anchor: HTMLElement) {
+  const rect = anchor.getBoundingClientRect();
   const menuH = fl.scrollHeight;
-  const spaceBelow = window.innerHeight - r.bottom - 4;
-  const spaceAbove = r.top - 4;
+  const vw = document.documentElement.clientWidth;
+  const spaceBelow = window.innerHeight - rect.bottom - 4;
+  const spaceAbove = rect.top - 4;
 
-  fl.style.left = r.left + "px";
-  fl.style.minWidth = r.width + "px";
+  fl.style.minWidth = rect.width + "px";
+
+  const triggerCenter = (rect.left + rect.right) / 2;
+  if (triggerCenter > vw / 2) {
+    fl.style.left = "auto";
+    fl.style.right = Math.max(8, vw - rect.right) + "px";
+  } else {
+    fl.style.right = "auto";
+    fl.style.left = Math.max(8, rect.left) + "px";
+  }
 
   if (spaceBelow >= menuH || spaceBelow >= spaceAbove) {
-    fl.style.top = r.bottom + 2 + "px";
+    fl.style.top = rect.bottom + 2 + "px";
     fl.style.bottom = "";
     fl.style.maxHeight = Math.min(240, spaceBelow) + "px";
   } else {
     fl.style.top = "";
-    fl.style.bottom = (window.innerHeight - r.top + 2) + "px";
+    fl.style.bottom = (window.innerHeight - rect.top + 2) + "px";
     fl.style.maxHeight = Math.min(240, spaceAbove) + "px";
   }
 }
 
-function closeFly() {
-  document.querySelectorAll(".flyout").forEach((f) => {
-    (f as HTMLElement).classList.remove("on");
-    (f as HTMLElement).style.top = "";
-    (f as HTMLElement).style.bottom = "";
-    (f as HTMLElement).style.maxHeight = "";
-    (f as HTMLElement).style.minWidth = "";
-  });
-  activeFlyout = null;
-  activeFlyAnchor = null;
-  detailFlyAnchor = null;
+function closeFlyout() {
+  if (_flyMenu) { _flyMenu.remove(); _flyMenu = null; }
+  if (_flyAnchor) { _flyAnchor.classList.remove("open"); _flyAnchor = null; }
 }
+
+function copyChildren(src: HTMLElement, dst: HTMLElement) {
+  while (dst.firstChild) dst.removeChild(dst.firstChild);
+  for (const child of Array.from(src.childNodes)) {
+    dst.appendChild(child.cloneNode(true));
+  }
+}
+
+interface FlyoutItem {
+  value: string;
+  label: string;
+  icon?: string;
+  contentSource?: HTMLElement;
+  selected?: boolean;
+  disabled?: boolean;
+  checked?: boolean;
+  buildContent?: () => HTMLElement;
+}
+
+interface FlyoutSection {
+  title: string;
+  items: FlyoutItem[];
+  onCheck?: (value: string, checked: boolean) => void;
+  single?: boolean;
+  onRadio?: (value: string | null) => void;
+}
+
+interface FlyoutOptions {
+  mode?: "single" | "multi";
+  items?: FlyoutItem[];
+  sections?: FlyoutSection[];
+  onSelect?: (value: string) => void;
+  onCheck?: (value: string, checked: boolean) => void;
+  scrollToSelected?: boolean;
+}
+
+function openFlyout(anchor: HTMLElement, opts: FlyoutOptions) {
+  const wasOpen = _flyAnchor === anchor;
+  closeFlyout();
+  if (wasOpen) return;
+
+  const mode = opts.mode ?? "single";
+  const fl = document.createElement("div");
+  fl.className = "flyout on";
+
+  const buildItem = (
+    it: FlyoutItem,
+    sectionOnCheck?: (v: string, c: boolean) => void,
+    radio?: { name: string; onRadio: (value: string | null) => void; selectedRef: { el: HTMLInputElement | null } },
+  ) => {
+    if (mode === "multi") {
+      const el = document.createElement("label");
+      el.className = "fitem-check" + (it.disabled ? " dim" : "");
+      const cb = document.createElement("input");
+      if (radio) {
+        cb.type = "radio";
+        cb.name = radio.name;
+      } else {
+        cb.type = "checkbox";
+      }
+      cb.checked = !!it.checked;
+      cb.disabled = !!it.disabled;
+      if (radio && cb.checked) radio.selectedRef.el = cb;
+      if (!it.disabled) {
+        if (radio) {
+          cb.addEventListener("click", () => {
+            if (radio.selectedRef.el === cb) {
+              cb.checked = false;
+              radio.selectedRef.el = null;
+              radio.onRadio(null);
+            } else {
+              radio.selectedRef.el = cb;
+              radio.onRadio(it.value);
+            }
+          });
+        } else {
+          cb.onchange = () => {
+            const handler = sectionOnCheck ?? opts.onCheck;
+            if (handler) handler(it.value, cb.checked);
+          };
+        }
+      }
+      el.appendChild(cb);
+      if (it.buildContent) {
+        el.appendChild(it.buildContent());
+      } else {
+        if (it.icon) {
+          const img = document.createElement("img");
+          img.className = "sicon";
+          img.src = it.icon;
+          img.alt = "";
+          el.appendChild(img);
+        }
+        const span = document.createElement("span");
+        span.textContent = it.label;
+        el.appendChild(span);
+      }
+      fl.appendChild(el);
+    } else {
+      const el = document.createElement("div");
+      el.className = "fitem" + (it.selected ? " selected" : "") + (it.disabled ? " dim" : "");
+      if (it.contentSource) {
+        copyChildren(it.contentSource, el);
+      } else {
+        if (it.icon) {
+          const img = document.createElement("img");
+          img.className = "sicon";
+          img.src = it.icon;
+          img.alt = "";
+          el.appendChild(img);
+        }
+        const span = document.createElement("span");
+        span.textContent = it.label;
+        el.appendChild(span);
+      }
+      el.dataset.value = it.value;
+      if (!it.disabled) {
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          closeFlyout();
+          if (opts.onSelect) opts.onSelect(it.value);
+        });
+      }
+      fl.appendChild(el);
+    }
+  };
+
+  if (opts.sections) {
+    opts.sections.forEach((sec, secIdx) => {
+      const hdr = document.createElement("div");
+      hdr.className = "fly-section-header";
+      hdr.textContent = sec.title;
+      fl.appendChild(hdr);
+      if (sec.single && sec.onRadio) {
+        const radio = {
+          name: `fly-radio-${secIdx}-${Date.now()}`,
+          onRadio: sec.onRadio,
+          selectedRef: { el: null as HTMLInputElement | null },
+        };
+        sec.items.forEach((it) => buildItem(it, undefined, radio));
+      } else {
+        sec.items.forEach((it) => buildItem(it, sec.onCheck));
+      }
+    });
+  } else if (opts.items) {
+    opts.items.forEach((it) => buildItem(it));
+  }
+
+  document.body.appendChild(fl);
+  positionFlyout(fl, anchor);
+  _flyMenu = fl;
+  _flyAnchor = anchor;
+  anchor.classList.add("open");
+
+  if (opts.scrollToSelected !== false && mode === "single") {
+    const sel = fl.querySelector<HTMLElement>(".fitem.selected");
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function initDropdowns(container: HTMLElement | Document = document) {
+  container.querySelectorAll<HTMLElement>(".uni-dd").forEach((dd) => {
+    if (dd.dataset.ddInit === "1") return;
+    const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger")!;
+    const menuTpl = dd.querySelector<HTMLElement>(".uni-dd-menu")!;
+    if (!trigger || !menuTpl) return;
+    dd.dataset.ddInit = "1";
+    const isMenu = dd.dataset.menu === "true";
+
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const items: FlyoutItem[] = [];
+      menuTpl.querySelectorAll<HTMLElement>(".uni-dd-item").forEach((el) => {
+        items.push({
+          value: el.dataset.value ?? "",
+          label: el.textContent ?? "",
+          contentSource: el,
+          selected: !isMenu && el.classList.contains("selected"),
+        });
+      });
+
+      openFlyout(trigger, {
+        mode: "single",
+        items,
+        scrollToSelected: !isMenu,
+        onSelect: (value) => {
+          if (isMenu) {
+            dd.dispatchEvent(new CustomEvent("menu-select", { detail: { value }, bubbles: true }));
+            return;
+          }
+          dd.dataset.value = value;
+          menuTpl.querySelectorAll(".uni-dd-item.selected").forEach((s) => s.classList.remove("selected"));
+          const picked = menuTpl.querySelector<HTMLElement>(`.uni-dd-item[data-value="${value}"]`);
+          if (picked) {
+            picked.classList.add("selected");
+            copyChildren(picked, trigger);
+          }
+          dd.dispatchEvent(new Event("change", { bubbles: true }));
+        },
+      });
+    });
+  });
+}
+
+function setDropdownValue(dd: HTMLElement, value: string) {
+  dd.dataset.value = value;
+  const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger");
+  const menu = dd.querySelector<HTMLElement>(".uni-dd-menu");
+  if (!trigger || !menu) return;
+  menu.querySelectorAll(".uni-dd-item.selected").forEach((s) => s.classList.remove("selected"));
+  const item = menu.querySelector<HTMLElement>(`.uni-dd-item[data-value="${value}"]`);
+  if (item) {
+    item.classList.add("selected");
+    copyChildren(item, trigger);
+  }
+}
+
+function updateDropdownOptions(dd: HTMLElement, options: { value: string; label: string }[], selectedValue?: string) {
+  const menu = dd.querySelector<HTMLElement>(".uni-dd-menu");
+  const trigger = dd.querySelector<HTMLButtonElement>(".uni-dd-trigger");
+  if (!menu || !trigger) return;
+  menu.textContent = "";
+  const sel = selectedValue ?? dd.dataset.value ?? "";
+  options.forEach((opt) => {
+    const item = document.createElement("div");
+    item.className = "fitem uni-dd-item";
+    item.dataset.value = opt.value;
+    item.textContent = opt.label;
+    if (opt.value === sel) {
+      item.classList.add("selected");
+      trigger.textContent = opt.label;
+      dd.dataset.value = opt.value;
+    }
+    menu.appendChild(item);
+  });
+}
+
+document.addEventListener("click", (e) => {
+  if (_flyMenu && !_flyMenu.contains(e.target as Node) &&
+      (!_flyAnchor || !_flyAnchor.contains(e.target as Node))) {
+    closeFlyout();
+  }
+});
+window.addEventListener("resize", () => closeFlyout());
+document.addEventListener("scroll", (e) => {
+  if (_flyMenu && !_flyMenu.contains(e.target as Node)) closeFlyout();
+}, true);
 
 // --- Optimizer state persistence ---
 
@@ -543,7 +717,7 @@ interface OptPattern {
 }
 
 function saveOptState() {
-  const quality = Number(($<HTMLSelectElement>("opt-quality")).value);
+  const quality = Number($("opt-quality").dataset.value);
   localStorage.setItem(OPT_STATE_KEY, JSON.stringify({
     required: optRequired,
     desired: optDesired,
@@ -562,7 +736,7 @@ function restoreOptState() {
     if (Array.isArray(s.required)) optRequired = toPartIds(s.required);
     if (Array.isArray(s.desired)) optDesired = toPartIds(s.desired);
     if (Array.isArray(s.excluded)) optExcluded = toPartIds(s.excluded);
-    if (s.quality) ($<HTMLSelectElement>("opt-quality")).value = String(s.quality);
+    if (s.quality) setDropdownValue($("opt-quality"), String(s.quality));
     if (Array.isArray(s.min_required)) optMinRequired = toPartIds(s.min_required).filter((id) => optRequired.includes(id));
     if (Array.isArray(s.min_desired)) optMinDesired = toPartIds(s.min_desired).filter((id) => optDesired.includes(id));
   } catch { /* ignore */ }
@@ -589,20 +763,22 @@ async function savePatterns(patterns: OptPattern[]) {
   }
 }
 
-function renderPatternSelect() {
-  const sel = $<HTMLSelectElement>("pattern-select");
+function renderPatternSelect(selectedValue?: string) {
+  const dd = $("pattern-select");
   const patterns = getPatterns();
-  sel.innerHTML = "";
-  const defaultOpt = document.createElement("option");
-  defaultOpt.value = "";
-  defaultOpt.textContent = t.ui.pattern_placeholder;
-  sel.appendChild(defaultOpt);
-  patterns.forEach((p, i) => {
-    const opt = document.createElement("option");
-    opt.value = String(i);
-    opt.textContent = p.name;
-    sel.appendChild(opt);
-  });
+  const options: { value: string; label: string }[] = [
+    { value: "", label: t.ui.pattern_placeholder },
+    ...patterns.map((p, i) => ({ value: String(i), label: p.name })),
+  ];
+  updateDropdownOptions(dd, options, selectedValue ?? dd.dataset.value ?? "");
+  updatePatternButtons();
+}
+
+function updatePatternButtons() {
+  const dd = $("pattern-select");
+  const hasSelection = (dd.dataset.value ?? "") !== "";
+  ($<HTMLButtonElement>("pattern-delete")).disabled = !hasSelection;
+  ($<HTMLButtonElement>("pattern-load")).disabled = !hasSelection;
 }
 
 function loadPattern(idx: number) {
@@ -614,7 +790,7 @@ function loadPattern(idx: number) {
   optExcluded = toPartIds(p.excluded);
   optMinRequired = Array.isArray(p.min_required) ? toPartIds(p.min_required).filter((id) => optRequired.includes(id)) : [];
   optMinDesired = Array.isArray(p.min_desired) ? toPartIds(p.min_desired).filter((id) => optDesired.includes(id)) : [];
-  if (p.quality) ($<HTMLSelectElement>("opt-quality")).value = String(p.quality);
+  if (p.quality) setDropdownValue($("opt-quality"), String(p.quality));
   updateOptBtnLabel("req");
   updateOptBtnLabel("des");
   updateOptBtnLabel("excl");
@@ -634,62 +810,40 @@ function updateOptBtnLabel(category: "req" | "des" | "excl") {
 }
 
 function openOptMultiFly(anchor: HTMLElement, category: "req" | "des" | "excl") {
-  const fl = $("fly-multi");
-  if (fl.classList.contains("on") && fl.dataset.category === category) {
-    closeFly();
-    return;
-  }
-  closeFly();
-  fl.dataset.category = category;
   const current = { req: optRequired, des: optDesired, excl: optExcluded }[category];
   const others = (["req", "des", "excl"] as const)
     .filter((k) => k !== category)
     .flatMap((k) => ({ req: optRequired, des: optDesired, excl: optExcluded }[k]));
   const otherSet = new Set(others);
 
-  fl.innerHTML = "";
   const allStatIds = Object.keys(t.stat_names).map(Number);
-  allStatIds.forEach((pid) => {
-    const isSelected = current.includes(pid);
-    const isOther = otherSet.has(pid);
-    const el = document.createElement("label");
-    el.className = "fitem-check" + (isOther ? " dim" : "");
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = isSelected;
-    cb.disabled = isOther;
-    if (!isOther) {
-      cb.onchange = () => {
-        if (cb.checked) {
-          current.push(pid);
-        } else {
-          const idx = current.indexOf(pid);
-          if (idx >= 0) current.splice(idx, 1);
-        }
-        updateOptBtnLabel(category);
-        updateOptRunBtn();
-        saveOptState();
-      };
-    }
-    el.appendChild(cb);
+  const items: FlyoutItem[] = allStatIds.map((pid) => {
     const iconFile = STAT_ICONS[pid];
-    if (iconFile) {
-      const img = document.createElement("img");
-      img.className = "sicon";
-      img.src = `/icons/${iconFile}`;
-      img.alt = "";
-      el.appendChild(img);
-    }
-    const span = document.createElement("span");
-    span.textContent = statName(pid);
-    el.appendChild(span);
-    fl.appendChild(el);
+    return {
+      value: String(pid),
+      label: statName(pid),
+      icon: iconFile ? `/icons/${iconFile}` : undefined,
+      checked: current.includes(pid),
+      disabled: otherSet.has(pid),
+    };
   });
 
-  fl.classList.add("on");
-  activeFlyout = fl;
-  activeFlyAnchor = anchor;
-  positionFly(fl, anchor);
+  openFlyout(anchor, {
+    mode: "multi",
+    items,
+    onCheck: (value, checked) => {
+      const pid = Number(value);
+      if (checked) {
+        current.push(pid);
+      } else {
+        const idx = current.indexOf(pid);
+        if (idx >= 0) current.splice(idx, 1);
+      }
+      updateOptBtnLabel(category);
+      updateOptRunBtn();
+      saveOptState();
+    },
+  });
 }
 
 function updateOptRunBtn() {
@@ -711,25 +865,14 @@ function updateDetailBtnLabels() {
   setBtn("detail-btn-min-des", optMinDesired);
 }
 
-let detailFlyAnchor: HTMLElement | null = null;
-
-function closeDetailFly() {
-  const fl = $("fly-detail");
-  fl.classList.remove("on");
-  fl.style.top = "";
-  fl.style.bottom = "";
-  fl.style.maxHeight = "";
-  detailFlyAnchor = null;
-}
-
 function openDetailModal() {
-  closeFly();
+  closeFlyout();
   updateDetailBtnLabels();
   $("detail-modal-bd").classList.add("on");
 }
 
 function closeDetailModal() {
-  closeDetailFly();
+  closeFlyout();
   $("detail-modal-bd").classList.remove("on");
   updateOptBtnLabel("req");
   updateOptRunBtn();
@@ -740,16 +883,6 @@ function openDetailFly(
   anchor: HTMLElement,
   category: "req" | "des" | "excl" | "min-req" | "min-des",
 ) {
-  const fl = $("fly-detail");
-  if (fl.classList.contains("on") && fl.dataset.category === category) {
-    closeDetailFly();
-    return;
-  }
-  closeDetailFly();
-  fl.dataset.category = category;
-  detailFlyAnchor = anchor;
-  fl.textContent = "";
-
   const allStatIds = Object.keys(t.stat_names).map(Number);
 
   if (category === "min-req" || category === "min-des") {
@@ -770,48 +903,41 @@ function openDetailFly(
     }
 
     if (sourceArr.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "fitem";
-      empty.style.opacity = "0.5";
-      empty.textContent = t.ui.filter_none;
-      fl.appendChild(empty);
-    } else {
-      sourceArr.forEach((pid) => {
-        const isSelected = minArr.includes(pid);
-        const el = document.createElement("label");
-        el.className = "fitem-check";
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.checked = isSelected;
-        cb.onchange = () => {
-          if (cb.checked) {
-            if (!minArr.includes(pid)) minArr.push(pid);
-            // +20に追加時、+16から除去
-            if (category === "min-req") {
-              const idx16 = optMinDesired.indexOf(pid);
-              if (idx16 >= 0) optMinDesired.splice(idx16, 1);
-            }
-          } else {
-            const idx = minArr.indexOf(pid);
-            if (idx >= 0) minArr.splice(idx, 1);
-          }
-          updateDetailBtnLabels();
-        };
-        el.appendChild(cb);
-        const iconFile = STAT_ICONS[pid];
-        if (iconFile) {
-          const img = document.createElement("img");
-          img.className = "sicon";
-          img.src = `/icons/${iconFile}`;
-          img.alt = "";
-          el.appendChild(img);
-        }
-        const span = document.createElement("span");
-        span.textContent = statName(pid);
-        el.appendChild(span);
-        fl.appendChild(el);
+      openFlyout(anchor, {
+        mode: "single",
+        items: [{ value: "", label: t.ui.filter_none, disabled: true }],
       });
+      return;
     }
+
+    const items: FlyoutItem[] = sourceArr.map((pid) => {
+      const iconFile = STAT_ICONS[pid];
+      return {
+        value: String(pid),
+        label: statName(pid),
+        icon: iconFile ? `/icons/${iconFile}` : undefined,
+        checked: minArr.includes(pid),
+      };
+    });
+
+    openFlyout(anchor, {
+      mode: "multi",
+      items,
+      onCheck: (value, checked) => {
+        const pid = Number(value);
+        if (checked) {
+          if (!minArr.includes(pid)) minArr.push(pid);
+          if (category === "min-req") {
+            const idx16 = optMinDesired.indexOf(pid);
+            if (idx16 >= 0) optMinDesired.splice(idx16, 1);
+          }
+        } else {
+          const idx = minArr.indexOf(pid);
+          if (idx >= 0) minArr.splice(idx, 1);
+        }
+        updateDetailBtnLabels();
+      },
+    });
   } else {
     const current = { req: optRequired, des: optDesired, excl: optExcluded }[category];
     const others = (["req", "des", "excl"] as const)
@@ -819,54 +945,42 @@ function openDetailFly(
       .flatMap((k) => ({ req: optRequired, des: optDesired, excl: optExcluded }[k]));
     const otherSet = new Set(others);
 
-    allStatIds.forEach((pid) => {
-      const isSelected = current.includes(pid);
-      const isOther = otherSet.has(pid);
-      const el = document.createElement("label");
-      el.className = "fitem-check" + (isOther ? " dim" : "");
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = isSelected;
-      cb.disabled = isOther;
-      if (!isOther) {
-        cb.onchange = () => {
-          if (cb.checked) {
-            current.push(pid);
-          } else {
-            const idx = current.indexOf(pid);
-            if (idx >= 0) current.splice(idx, 1);
-            if (category === "req") {
-              const mi = optMinRequired.indexOf(pid);
-              if (mi >= 0) optMinRequired.splice(mi, 1);
-            }
-            if (category === "des") {
-              const mi = optMinDesired.indexOf(pid);
-              if (mi >= 0) optMinDesired.splice(mi, 1);
-            }
-          }
-          updateDetailBtnLabels();
-          updateOptBtnLabel("req");
-          updateOptRunBtn();
-        };
-      }
-      el.appendChild(cb);
+    const items: FlyoutItem[] = allStatIds.map((pid) => {
       const iconFile = STAT_ICONS[pid];
-      if (iconFile) {
-        const img = document.createElement("img");
-        img.className = "sicon";
-        img.src = `/icons/${iconFile}`;
-        img.alt = "";
-        el.appendChild(img);
-      }
-      const span = document.createElement("span");
-      span.textContent = statName(pid);
-      el.appendChild(span);
-      fl.appendChild(el);
+      return {
+        value: String(pid),
+        label: statName(pid),
+        icon: iconFile ? `/icons/${iconFile}` : undefined,
+        checked: current.includes(pid),
+        disabled: otherSet.has(pid),
+      };
+    });
+
+    openFlyout(anchor, {
+      mode: "multi",
+      items,
+      onCheck: (value, checked) => {
+        const pid = Number(value);
+        if (checked) {
+          current.push(pid);
+        } else {
+          const idx = current.indexOf(pid);
+          if (idx >= 0) current.splice(idx, 1);
+          if (category === "req") {
+            const mi = optMinRequired.indexOf(pid);
+            if (mi >= 0) optMinRequired.splice(mi, 1);
+          }
+          if (category === "des") {
+            const mi = optMinDesired.indexOf(pid);
+            if (mi >= 0) optMinDesired.splice(mi, 1);
+          }
+        }
+        updateDetailBtnLabels();
+        updateOptBtnLabel("req");
+        updateOptRunBtn();
+      },
     });
   }
-
-  fl.classList.add("on");
-  positionFly(fl, anchor);
 }
 
 async function runOptimize() {
@@ -886,8 +1000,8 @@ async function runOptimize() {
     <li class="hexagon hex_7"></li></ul></div>`;
   scrollArea.appendChild(overlay);
 
-  const quality = Number(($<HTMLSelectElement>("opt-quality")).value);
-  const speedMode = ($<HTMLSelectElement>("opt-speed")).value;
+  const quality = Number($("opt-quality").dataset.value);
+  const speedMode = $("opt-speed").dataset.value ?? "standard";
   const minThresholds: Record<number, number> = {};
   optMinRequired.forEach((pid) => { minThresholds[pid] = 20; });
   optMinDesired.forEach((pid) => { minThresholds[pid] = 16; });
@@ -1260,59 +1374,32 @@ async function init() {
   // Sort add
   $("add-s").onclick = (e) => {
     const ex = new Set(sortKeys.map((s) => s.k));
-    const extraItems: { label: string; val: string; disabled: boolean }[] = [
-      { label: t.ui.sort_date, val: "date", disabled: ex.has("date") },
-      { label: t.ui.sort_rarity, val: "rarity", disabled: ex.has("rarity") },
-      { label: t.ui.sort_total, val: "total", disabled: ex.has("total") },
-    ];
     const allStatIds = Object.keys(t.stat_names).map(Number);
-    const statItems = allStatIds.map((pid) => {
-      const iconFile = STAT_ICONS[pid];
-      return {
-        label: statName(pid),
-        val: String(pid),
-        disabled: ex.has(String(pid)),
-        iconSrc: iconFile ? `/icons/${iconFile}` : undefined,
-      };
-    });
-    openFly(
-      "fly-s",
-      e.currentTarget as HTMLElement,
-      [...extraItems, ...statItems],
-      (it) => {
-        sortKeys.push({ k: it.val, d: 1 });
+    const items: FlyoutItem[] = [
+      { value: "date", label: t.ui.sort_date, disabled: ex.has("date") },
+      { value: "rarity", label: t.ui.sort_rarity, disabled: ex.has("rarity") },
+      { value: "total", label: t.ui.sort_total, disabled: ex.has("total") },
+      ...allStatIds.map((pid) => {
+        const iconFile = STAT_ICONS[pid];
+        return {
+          value: String(pid),
+          label: statName(pid),
+          icon: iconFile ? `/icons/${iconFile}` : undefined,
+          disabled: ex.has(String(pid)),
+        };
+      }),
+    ];
+    openFlyout(e.currentTarget as HTMLElement, {
+      mode: "single",
+      items,
+      scrollToSelected: false,
+      onSelect: (value) => {
+        sortKeys.push({ k: value, d: 1 });
         renderSChips();
         renderGrid();
-      }
-    );
+      },
+    });
   };
-
-  // Close flyout on outside click / wheel / resize
-  document.addEventListener("click", (e) => {
-    if (activeFlyout && !activeFlyout.contains(e.target as Node) &&
-        (!activeFlyAnchor || !activeFlyAnchor.contains(e.target as Node))) {
-      closeFly();
-    }
-    const fl = $("fly-detail");
-    if (fl.classList.contains("on") &&
-        !fl.contains(e.target as Node) &&
-        (!detailFlyAnchor || !detailFlyAnchor.contains(e.target as Node))) {
-      closeDetailFly();
-    }
-  });
-  window.addEventListener("resize", () => {
-    closeFly();
-    closeDetailFly();
-  });
-  document.addEventListener("wheel", (e) => {
-    if (activeFlyout && !activeFlyout.contains(e.target as Node)) {
-      closeFly();
-    }
-    const fl = $("fly-detail");
-    if (fl.classList.contains("on") && !fl.contains(e.target as Node)) {
-      closeDetailFly();
-    }
-  }, true);
 
   // --- Optimizer panel ---
 
@@ -1358,7 +1445,7 @@ async function init() {
     closeClearStatsModal();
   };
 
-  $("opt-quality").onchange = () => saveOptState();
+  $("opt-quality").addEventListener("change", () => saveOptState());
   $("opt-run").onclick = () => runOptimize();
 
   // 探索速度インフォモーダル
@@ -1392,16 +1479,17 @@ async function init() {
   // --- パターン管理 ---
   await loadPatternsFromBackend();
   renderPatternSelect();
+  $("pattern-select").addEventListener("change", () => updatePatternButtons());
 
   $("pattern-load").onclick = () => {
-    const idx = Number(($<HTMLSelectElement>("pattern-select")).value);
+    const idx = Number($("pattern-select").dataset.value);
     if (!isNaN(idx) && idx >= 0) loadPattern(idx);
   };
 
   $("pattern-save").onclick = async () => {
     const name = prompt(t.ui.pattern_prompt);
     if (!name || !name.trim()) return;
-    const quality = Number(($<HTMLSelectElement>("opt-quality")).value);
+    const quality = Number($("opt-quality").dataset.value);
     const patterns = getPatterns();
     const existing = patterns.findIndex((p) => p.name === name.trim());
     const entry: OptPattern = {
@@ -1419,13 +1507,12 @@ async function init() {
       patterns.push(entry);
     }
     await savePatterns(patterns);
-    renderPatternSelect();
-    ($<HTMLSelectElement>("pattern-select")).value = String(existing >= 0 ? existing : patterns.length - 1);
+    renderPatternSelect(String(existing >= 0 ? existing : patterns.length - 1));
   };
 
   $("pattern-delete").onclick = async () => {
-    const sel = $<HTMLSelectElement>("pattern-select");
-    const idx = Number(sel.value);
+    const dd = $("pattern-select");
+    const idx = Number(dd.dataset.value);
     if (isNaN(idx) || idx < 0) return;
     const patterns = getPatterns();
     const p = patterns[idx];
@@ -1433,7 +1520,7 @@ async function init() {
     if (!confirm(fmt(t.ui.pattern_delete_confirm, { name: p.name }))) return;
     patterns.splice(idx, 1);
     await savePatterns(patterns);
-    renderPatternSelect();
+    renderPatternSelect("");
   };
 
   // モーダル閉じ
@@ -1483,9 +1570,6 @@ async function init() {
       document.head.appendChild(meta);
     }
     meta.content = resolved;
-    document.querySelectorAll<HTMLSelectElement>("select").forEach((sel) => {
-      sel.style.setProperty("color-scheme", resolved);
-    });
   };
 
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
@@ -1518,12 +1602,13 @@ async function init() {
   };
 
   // --- テーマ select ---
-  const themeSelect = $<HTMLSelectElement>("menu-theme-select");
-  themeSelect.value = appSettings.theme;
-  themeSelect.onchange = () => {
-    applyTheme(themeSelect.value);
-    saveSettings({ theme: themeSelect.value });
-  };
+  const themeSelect = $("menu-theme-select");
+  setDropdownValue(themeSelect, appSettings.theme);
+  themeSelect.addEventListener("change", () => {
+    const val = themeSelect.dataset.value ?? "system";
+    applyTheme(val);
+    saveSettings({ theme: val });
+  });
 
   // --- 言語切替 ---
   const switchLanguage = async (lang: string) => {
@@ -1533,17 +1618,18 @@ async function init() {
     renderGrid();
   };
 
-  const langSelect = $<HTMLSelectElement>("menu-lang-select");
-  langSelect.value = appSettings.language ?? "ja";
+  const langSelect = $("menu-lang-select");
+  setDropdownValue(langSelect, appSettings.language ?? "ja");
 
   // --- カスタム言語エディタ ---
   const updateLangEditBtn = () => {
-    $("menu-lang-edit-btn").style.display = langSelect.value === "custom" ? "" : "none";
+    $("menu-lang-edit-btn").style.display = langSelect.dataset.value === "custom" ? "" : "none";
   };
-  langSelect.onchange = () => {
-    switchLanguage(langSelect.value);
+  langSelect.addEventListener("change", () => {
+    const val = langSelect.dataset.value ?? "ja";
+    switchLanguage(val);
     updateLangEditBtn();
-  };
+  });
   updateLangEditBtn();
 
   type CLSection = "stat" | "type" | "rarity" | "ui";
@@ -1687,7 +1773,7 @@ async function init() {
   $("custom-lang-save").onclick = async () => {
     await invoke("save_custom_language", { content: JSON.stringify(clData, null, 2) });
     closeCustomLangEditor();
-    if (langSelect.value === "custom") {
+    if (langSelect.dataset.value === "custom") {
       await loadLanguage("custom");
       applyI18n();
       renderGrid();
@@ -1818,12 +1904,15 @@ async function main() {
   if (!settings.language_configured) {
     const locale = await invoke<string>("get_system_locale").catch(() => "ja");
     const suggested = locale.startsWith("ko") ? "ko" : locale.startsWith("en") ? "en" : "ja";
-    const sel = $<HTMLSelectElement>("firstrun-lang-select");
-    sel.value = suggested;
+    await loadLanguage(suggested);
+    applyI18n();
+    initDropdowns();
+    const sel = $("firstrun-lang-select");
+    setDropdownValue(sel, suggested);
     $("firstrun-bd").classList.add("on");
     initLang = await new Promise<string>((resolve) => {
       $("firstrun-save").onclick = async () => {
-        const lang = sel.value;
+        const lang = sel.dataset.value ?? "ja";
         await invoke("update_settings", { settings: { ...settings, language: lang, language_configured: true } });
         $("firstrun-bd").classList.remove("on");
         resolve(lang);
@@ -1833,6 +1922,7 @@ async function main() {
 
   await loadLanguage(initLang);
   applyI18n();
+  initDropdowns();
   await init();
 }
 
