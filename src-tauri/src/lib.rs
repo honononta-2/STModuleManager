@@ -21,7 +21,6 @@ pub fn run() {
             restore_window(app);
         }))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             // アプリデータディレクトリにDB用パスを設定
             let app_data_dir = app
