@@ -2341,20 +2341,68 @@ function closeManualModal() {
   $("manual-modal-bd").classList.remove("on");
 }
 
+function manualStatRowHtml(si: number): string {
+  return `<div class="ocr-stat-row" data-si="${si}">
+    ${statDropdownHtml("manual-stat-name", undefined, undefined, t.ui.select_placeholder)}
+    ${valueDropdownHtml(1, "ocr-stat-value manual-stat-value")}
+    <button class="ocr-stat-remove manual-remove-stat" data-si="${si}">${X_ICON}</button>
+    <span class="ocr-stat-warn hidden" data-si="${si}"><img src="icons/triangle-alert.svg" width="18" height="18"></span>
+  </div>`;
+}
+
+function renumberManualStatRows() {
+  const container = document.getElementById("manual-stat-rows");
+  if (!container) return;
+  container.querySelectorAll<HTMLElement>(".ocr-stat-row").forEach((r, i) => {
+    r.dataset.si = String(i);
+    const btn = r.querySelector<HTMLElement>(".manual-remove-stat");
+    if (btn) btn.dataset.si = String(i);
+    const warn = r.querySelector<HTMLElement>(".ocr-stat-warn");
+    if (warn) warn.dataset.si = String(i);
+  });
+}
+
+function updateManualAddBtnVisibility() {
+  const addStatRow = document.getElementById("manual-add-stat-row");
+  if (addStatRow) addStatRow.style.display = manualStatCount < 3 ? "" : "none";
+}
+
+function addManualStatRow() {
+  if (manualStatCount >= 3) return;
+  const container = document.getElementById("manual-stat-rows");
+  if (!container) return;
+  container.insertAdjacentHTML("beforeend", manualStatRowHtml(manualStatCount));
+  manualStatCount++;
+  const newRow = container.lastElementChild as HTMLElement | null;
+  if (newRow) {
+    initDropdowns(newRow);
+    const nameDd = newRow.querySelector<HTMLElement>(".manual-stat-name");
+    if (nameDd) nameDd.addEventListener("change", updateManualStatWarnings);
+    const removeBtn = newRow.querySelector<HTMLButtonElement>(".manual-remove-stat");
+    if (removeBtn) removeBtn.onclick = () => removeManualStatRow(newRow);
+  }
+  updateManualAddBtnVisibility();
+  updateManualStatWarnings();
+}
+
+function removeManualStatRow(row: HTMLElement) {
+  row.remove();
+  manualStatCount--;
+  renumberManualStatRows();
+  updateManualAddBtnVisibility();
+  updateManualStatWarnings();
+}
+
 function renderManualModalBody() {
   const body = $("manual-modal-body");
 
   const statRows: string[] = [];
   for (let i = 0; i < manualStatCount; i++) {
-    statRows.push(`<div class="ocr-stat-row" data-si="${i}">
-      ${statDropdownHtml("manual-stat-name", undefined, undefined, t.ui.select_placeholder)}
-      ${valueDropdownHtml(1, "ocr-stat-value manual-stat-value")}
-      <button class="ocr-stat-remove manual-remove-stat" data-si="${i}">${X_ICON}</button>
-      <span class="ocr-stat-warn hidden" data-si="${i}"><img src="icons/triangle-alert.svg" width="18" height="18"></span>
-    </div>`);
+    statRows.push(manualStatRowHtml(i));
   }
 
   const defaultConfigId = buildConfigId(1, 1);
+  const addRowHidden = manualStatCount < 3 ? "" : ' style="display:none"';
   body.innerHTML = `<div class="ocr-row-content">
     <div class="ocr-row-header">
       <div class="ocr-row-icon" id="manual-icon-preview">${moduleIconHtml(defaultConfigId)}</div>
@@ -2372,7 +2420,7 @@ function renderManualModalBody() {
     <div class="ocr-row-stats">
       <div class="ocr-stat-divider"></div>
       <div id="manual-stat-rows">${statRows.join("")}</div>
-      ${manualStatCount < 3 ? `<div class="ocr-add-stat-row" id="manual-add-stat-row"><button class="addbtn" id="manual-add-stat">${t.ui.add_stat}</button></div>` : ""}
+      <div class="ocr-add-stat-row" id="manual-add-stat-row"${addRowHidden}><button class="addbtn" id="manual-add-stat">${t.ui.add_stat}</button></div>
     </div>
   </div>`;
 
@@ -2388,14 +2436,13 @@ function renderManualModalBody() {
   initDropdowns(body);
 
   const addBtn = document.getElementById("manual-add-stat");
-  if (addBtn) addBtn.onclick = () => { manualStatCount++; renderManualModalBody(); };
+  if (addBtn) addBtn.onclick = () => addManualStatRow();
 
-  body.querySelectorAll<HTMLButtonElement>(".manual-remove-stat").forEach((btn) => {
-    btn.onclick = () => { manualStatCount--; renderManualModalBody(); };
-  });
-
-  body.querySelectorAll<HTMLElement>(".manual-stat-name").forEach((dd) => {
-    dd.addEventListener("change", updateManualStatWarnings);
+  body.querySelectorAll<HTMLElement>("#manual-stat-rows .ocr-stat-row").forEach((row) => {
+    const nameDd = row.querySelector<HTMLElement>(".manual-stat-name");
+    if (nameDd) nameDd.addEventListener("change", updateManualStatWarnings);
+    const removeBtn = row.querySelector<HTMLButtonElement>(".manual-remove-stat");
+    if (removeBtn) removeBtn.onclick = () => removeManualStatRow(row);
   });
 
   updateManualStatWarnings();
