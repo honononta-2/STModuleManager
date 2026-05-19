@@ -371,15 +371,14 @@ function openFilterMultiFly(anchor: HTMLElement) {
       },
       {
         title: t.ui.fly_sum_total,
+        single: true,
         items: SUM_RANGES.map(([lo, hi], i) => ({
           value: String(i),
           label: `${lo}-${hi}`,
           checked: filterSumRanges.includes(i),
         })),
-        onCheck: (value, checked) => {
-          const i = Number(value);
-          if (checked) filterSumRanges.push(i);
-          else { const idx = filterSumRanges.indexOf(i); if (idx >= 0) filterSumRanges.splice(idx, 1); }
+        onRadio: (value) => {
+          filterSumRanges = value === null ? [] : [Number(value)];
           refresh();
         },
       },
