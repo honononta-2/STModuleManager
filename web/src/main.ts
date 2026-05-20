@@ -2827,6 +2827,9 @@ function openOcrSetupModal() {
   // プラットフォーム選択をリセット
   const mobileRadio = document.querySelector<HTMLInputElement>('input[name="ocr-platform"][value="mobile"]');
   if (mobileRadio) mobileRadio.checked = true;
+  // モード選択をリセット
+  const normalModeRadio = document.querySelector<HTMLInputElement>('input[name="ocr-mode"][value="normal"]');
+  if (normalModeRadio) normalModeRadio.checked = true;
   // フィルターボタンのラベルをリセット
   updateOcrRarityFilterBtn();
   updateOcrTypeFilterBtn();
@@ -2878,10 +2881,12 @@ async function startOcrFromSetup() {
 
   // プラットフォーム・フィルター取得
   const platform = (document.querySelector<HTMLInputElement>('input[name="ocr-platform"]:checked')?.value ?? "mobile") as "mobile" | "pc";
+  const fastMode = document.querySelector<HTMLInputElement>('input[name="ocr-mode"]:checked')?.value === "fast";
   const customOptions: OcrCustomOptions = {
     platform,
     filterRarities: ocrSetupFilterRarities.length > 0 ? [...ocrSetupFilterRarities] : undefined,
     filterTypes: ocrSetupFilterTypes.length > 0 ? [...ocrSetupFilterTypes] : undefined,
+    fastMode,
   };
 
   closeOcrSetupModal();
