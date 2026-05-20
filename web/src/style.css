@@ -596,6 +596,7 @@ body.cards-delete-btn-on .card-delete-btn { display:flex; }
   animation:fadeIn 0.12s ease-out;
 }
 .modal-bd.on { display:flex; }
+#issue-modal-bd { z-index:300; }
 @keyframes fadeIn { from{opacity:0} to{opacity:1} }
 
 .modal {
@@ -1138,7 +1139,7 @@ body.cards-delete-btn-on .card-delete-btn { display:flex; }
 }
 .form-field .cmd-lbl { min-width:auto; }
 
-.manual-stat-value { min-width:56px; width:56px; flex:0 0 56px; }
+.module-stat-value { min-width:56px; width:56px; flex:0 0 56px; }
 
 /* ===== Toast ===== */
 .toast {

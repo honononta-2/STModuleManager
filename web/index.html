@@ -408,19 +408,20 @@
       </div>
     </div>
 
-    <!-- OCR warning confirm modal -->
-    <div class="modal-bd" id="ocr-warn-modal-bd">
+    <!-- 入力チェック確認モーダル -->
+    <div class="modal-bd" id="issue-modal-bd">
       <div class="modal modal--confirm">
         <div class="modal-head">
-          <span class="modal-title" data-i18n="ocr_warn_title">警告</span>
-          <button class="modal-close" id="ocr-warn-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
+          <span class="modal-title" data-i18n="issue_modal_title">確認</span>
+          <button class="modal-close" id="issue-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
         <div class="modal-body">
-          <p data-i18n="ocr_warn_msg">警告が残っています</p>
+          <p id="issue-modal-msg"></p>
         </div>
         <div class="modal-footer">
-          <button class="addbtn" id="ocr-warn-go" data-i18n="ocr_warn_go">警告に移動</button>
-          <button class="addbtn" id="ocr-warn-register" data-i18n="ocr_warn_register">そのまま登録</button>
+          <button class="addbtn" id="issue-modal-go" data-i18n="issue_modal_go">該当箇所へ移動</button>
+          <button class="addbtn" id="issue-modal-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="addbtn" id="issue-modal-register" data-i18n="issue_modal_register">そのまま登録</button>
         </div>
       </div>
     </div>
@@ -557,34 +558,19 @@
       </div>
     </div>
 
-    <!-- Manual input modal -->
-    <div class="modal-bd" id="manual-modal-bd">
+    <!-- Module input/edit modal -->
+    <div class="modal-bd" id="module-modal-bd">
       <div class="modal modal--form modal--auto-h">
         <div class="modal-head">
-          <span class="modal-title" data-i18n="modal_manual">モジュール手動入力</span>
-          <button class="modal-close" id="manual-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
+          <span class="modal-title" id="module-modal-title" data-i18n="modal_manual">モジュール手動入力</span>
+          <button class="modal-close" id="module-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
         </div>
-        <div class="modal-body" id="manual-modal-body"></div>
+        <div class="modal-body" id="module-modal-body"></div>
         <div class="modal-footer">
-          <button class="addbtn" id="manual-cancel" data-i18n="btn_cancel">キャンセル</button>
-          <button class="opt-run-btn" id="manual-add" data-i18n="btn_add">追加</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Edit module modal -->
-    <div class="modal-bd" id="edit-modal-bd">
-      <div class="modal modal--form modal--auto-h">
-        <div class="modal-head">
-          <span class="modal-title" data-i18n="modal_edit">モジュール編集</span>
-          <button class="modal-close" id="edit-modal-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
-        </div>
-        <div class="modal-body" id="edit-modal-body"></div>
-        <div class="modal-footer">
-          <button class="addbtn pattern-del-btn" id="edit-delete" data-i18n="btn_delete">削除</button>
-          <span style="flex:1"></span>
-          <button class="addbtn" id="edit-cancel" data-i18n="btn_cancel">キャンセル</button>
-          <button class="opt-run-btn" id="edit-save" data-i18n="btn_save">保存</button>
+          <button class="addbtn pattern-del-btn" id="module-delete" data-i18n="btn_delete">削除</button>
+          <span style="flex:1" id="module-footer-spacer"></span>
+          <button class="addbtn" id="module-cancel" data-i18n="btn_cancel">キャンセル</button>
+          <button class="opt-run-btn" id="module-confirm" data-i18n="btn_add">追加</button>
         </div>
       </div>
     </div>

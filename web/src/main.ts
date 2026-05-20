@@ -593,7 +593,154 @@ function statDropdownHtml(
   </div>`;
 }
 
+function statRowDataAttrStr(attrs?: Record<string, string>): string {
+  return attrs ? " " + Object.entries(attrs).map(([k, v]) => `data-${k}="${v}"`).join(" ") : "";
+}
 
+interface StatRowOptions {
+  si: number;
+  nameClass: string;
+  valueClass: string;
+  removeClass: string;
+  partId?: number;
+  value?: number;
+  placeholder?: string;
+  /** ステータス名・数値ドロップダウンに付与するdata属性 */
+  ddDataAttrs?: Record<string, string>;
+  /** 削除ボタン・警告アイコンに付与するdata属性 */
+  metaDataAttrs?: Record<string, string>;
+  /** 指定時のみ警告アイコンを描画 */
+  warn?: { show: boolean; title?: string };
+}
+
+/** モーダル共通のステータス行HTMLを生成 */
+function statRowHtml(o: StatRowOptions): string {
+  const meta = statRowDataAttrStr(o.metaDataAttrs);
+  const warnHtml = o.warn
+    ? `<span class="ocr-stat-warn${o.warn.show ? "" : " hidden"}"${meta}${o.warn.title != null ? ` title="${o.warn.title}"` : ""}><img src="icons/triangle-alert.svg" width="18" height="18"></span>`
+    : "";
+  return `<div class="ocr-stat-row" data-si="${o.si}">
+    ${statDropdownHtml(o.nameClass, o.partId, o.ddDataAttrs, o.placeholder)}
+    ${valueDropdownHtml(o.value ?? 1, o.valueClass, o.ddDataAttrs)}
+    <button class="${o.removeClass}"${meta}>${X_ICON}</button>
+    ${warnHtml}
+  </div>`;
+}
+
+/** コンテナ内のステータス行と子要素のdata-siを0から振り直す */
+function renumberStatRows(container: HTMLElement) {
+  container.querySelectorAll<HTMLElement>(".ocr-stat-row").forEach((r, i) => {
+    r.dataset.si = String(i);
+    r.querySelectorAll<HTMLElement>("[data-si]").forEach((el) => { el.dataset.si = String(i); });
+  });
+}
+
+/** 追加ボタン行の表示を行数で切り替える */
+function setAddStatRowVisible(addRow: HTMLElement | null, count: number, max = 3) {
+  if (addRow) addRow.style.display = count < max ? "" : "none";
+}
+
+interface StatWarningOptions {
+  /** .ocr-stat-row を含むコンテナ */
+  container: HTMLElement;
+  /** ステータス数不足の警告を付ける追加ボタン行 */
+  addRow: HTMLElement | null;
+  typeDigit: number;
+  expected: number;
+  rowCount: number;
+  /** 各行のpart_idを返す（0/NaN は未選択として警告をスキップ） */
+  partIdOf: (row: HTMLElement, si: number) => number;
+}
+
+/** ステータス行の警告アイコンを更新し、不一致があればtrueを返す */
+function applyStatWarnings(o: StatWarningOptions): boolean {
+  let hasInvalid = false;
+  const seen = new Set<number>();
+  o.container.querySelectorAll<HTMLElement>(".ocr-stat-row").forEach((row, si) => {
+    const warn = row.querySelector<HTMLElement>(".ocr-stat-warn");
+    if (!warn) return;
+    const partId = o.partIdOf(row, si);
+    if (!partId) { warn.classList.add("hidden"); return; }
+    const tooMany = si >= o.expected;
+    const dup = seen.has(partId);
+    seen.add(partId);
+    const invalid = tooMany || dup || !isStatValidForTypeSlot(o.typeDigit, si, partId);
+    warn.classList.toggle("hidden", !invalid);
+    warn.title = dup ? t.ui.stat_duplicate : tooMany ? t.ui.stat_count_mismatch : t.ui.stat_type_mismatch;
+    if (invalid) hasInvalid = true;
+  });
+
+  const tooFew = o.rowCount < o.expected;
+  if (tooFew) hasInvalid = true;
+
+  if (o.addRow) {
+    const countWarn = o.addRow.querySelector<HTMLElement>(".ocr-stat-warn");
+    if (tooFew && !countWarn) {
+      const span = document.createElement("span");
+      span.className = "ocr-stat-warn";
+      span.title = t.ui.stat_count_mismatch;
+      const img = document.createElement("img");
+      img.src = "icons/triangle-alert.svg";
+      img.width = 18;
+      img.height = 18;
+      span.appendChild(img);
+      o.addRow.appendChild(span);
+    } else if (!tooFew && countWarn) {
+      countWarn.remove();
+    }
+  }
+  return hasInvalid;
+}
+
+type ModuleIssueKind = "duplicate" | "empty" | "count" | "type";
+
+/** モジュールの問題（重複・未入力・数不一致・種類不一致）を検査する */
+function detectModuleIssues(m: ModuleInput): Set<ModuleIssueKind> {
+  const comp = configIdToComponents(m.config_id);
+  const typeDigit = comp?.typeDigit ?? 1;
+  const expected = EXPECTED_STAT_COUNT[comp?.raritySub ?? 2] ?? 3;
+  const kinds = new Set<ModuleIssueKind>();
+  const seen = new Set<number>();
+  for (const s of m.stats) {
+    if (seen.has(s.part_id)) kinds.add("duplicate");
+    seen.add(s.part_id);
+  }
+  if (m.stats.length === 0) kinds.add("empty");
+  else if (m.stats.length !== expected) kinds.add("count");
+  if (m.stats.some((s, si) => !isStatValidForTypeSlot(typeDigit, si, s.part_id))) kinds.add("type");
+  return kinds;
+}
+
+function issuesAreBlocking(kinds: Set<ModuleIssueKind>): boolean {
+  return kinds.has("duplicate") || kinds.has("empty");
+}
+
+function issuesHaveWarning(kinds: Set<ModuleIssueKind>): boolean {
+  return kinds.has("count") || kinds.has("type");
+}
+
+// ========== 入力チェック確認モーダル ==========
+
+let issueModalGo: (() => void) | null = null;
+let issueModalRegister: (() => void) | null = null;
+
+function showIssueModal(o: {
+  blocking: boolean;
+  message: string;
+  onGo?: () => void;
+  onRegister?: () => void;
+}) {
+  $("issue-modal-msg").textContent = o.message;
+  $("issue-modal-go").style.display = o.onGo ? "" : "none";
+  $("issue-modal-register").style.display = (!o.blocking && o.onRegister) ? "" : "none";
+  issueModalGo = o.onGo ?? null;
+  issueModalRegister = o.onRegister ?? null;
+  $("issue-modal-bd").classList.add("on");
+}
+
+function closeIssueModal() {
+  $("issue-modal-bd").classList.remove("on");
+}
 
 // ========== Grid rendering ==========
 
@@ -742,7 +889,7 @@ function renderGrid() {
     editBtn.className = "card-edit-btn";
     editBtn.title = t.ui.modal_edit;
     editBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`;
-    editBtn.onclick = (e) => { e.stopPropagation(); openEditModal(m.uuid); };
+    editBtn.onclick = (e) => { e.stopPropagation(); openModuleModal(m.uuid); };
     actions.appendChild(editBtn);
     head.appendChild(actions);
     c.appendChild(head);
@@ -1795,6 +1942,88 @@ function updateOcrPager() {
   next.disabled = ocrCurrentPage >= total - 1;
 }
 
+function ocrStatRowHtml(
+  gi: number, mi: number, si: number,
+  s: { part_id: number; value: number }, typeDigit: number, expected: number, dup = false,
+): string {
+  const tooMany = si >= expected;
+  const meta = { gi: String(gi), mi: String(mi), si: String(si) };
+  return statRowHtml({
+    si,
+    nameClass: "ocr-stat-name",
+    valueClass: "ocr-stat-value",
+    removeClass: "ocr-stat-remove",
+    partId: s.part_id,
+    value: s.value,
+    ddDataAttrs: meta,
+    metaDataAttrs: meta,
+    warn: {
+      show: tooMany || dup || !isStatValidForTypeSlot(typeDigit, si, s.part_id),
+      title: dup ? t.ui.stat_duplicate : tooMany ? t.ui.stat_count_mismatch : t.ui.stat_type_mismatch,
+    },
+  });
+}
+
+/** OCR結果のステータス行1つにイベントハンドラを設定 */
+function attachOcrStatRowHandlers(row: HTMLElement) {
+  const nameDd = row.querySelector<HTMLElement>(".ocr-stat-name");
+  if (nameDd) nameDd.addEventListener("change", () => {
+    const gi = Number(nameDd.dataset.gi), mi = Number(nameDd.dataset.mi), si = Number(nameDd.dataset.si);
+    pendingOcrGroups[gi].modules[mi].stats[si].part_id = Number(nameDd.dataset.value);
+    saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+    refreshOcrDuplicateState();
+    updateStatWarnings(gi, mi);
+  });
+  const valDd = row.querySelector<HTMLElement>(".ocr-stat-value");
+  if (valDd) valDd.addEventListener("change", () => {
+    const gi = Number(valDd.dataset.gi), mi = Number(valDd.dataset.mi), si = Number(valDd.dataset.si);
+    pendingOcrGroups[gi].modules[mi].stats[si].value = Number(valDd.dataset.value);
+    saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+    refreshOcrDuplicateState();
+  });
+  const rmBtn = row.querySelector<HTMLButtonElement>(".ocr-stat-remove");
+  if (rmBtn) rmBtn.onclick = () => removeOcrStat(Number(rmBtn.dataset.gi), Number(rmBtn.dataset.mi), Number(rmBtn.dataset.si));
+}
+
+/** OCR結果のモジュールにステータス行を1つ追加 */
+function addOcrStat(gi: number, mi: number) {
+  const m = pendingOcrGroups[gi]?.modules[mi];
+  if (!m || m.stats.length >= 3) return;
+  const comp = configIdToComponents(m.config_id);
+  const typeDigit = comp?.typeDigit ?? 1;
+  const raritySub = comp?.raritySub ?? 2;
+  const expected = EXPECTED_STAT_COUNT[raritySub] ?? 3;
+  const si = m.stats.length;
+  m.stats.push({ part_id: ALL_STAT_IDS[0], value: 1 });
+  const row = document.querySelector<HTMLElement>(`.ocr-row[data-gi="${gi}"][data-mi="${mi}"]`);
+  const addRow = row?.querySelector<HTMLElement>(".ocr-add-stat-row");
+  if (!addRow) return;
+  addRow.insertAdjacentHTML("beforebegin", ocrStatRowHtml(gi, mi, si, m.stats[si], typeDigit, expected));
+  const newRow = addRow.previousElementSibling as HTMLElement | null;
+  if (newRow) {
+    initDropdowns(newRow);
+    attachOcrStatRowHandlers(newRow);
+  }
+  setAddStatRowVisible(addRow, m.stats.length);
+  saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+  refreshOcrDuplicateState();
+  updateStatWarnings(gi, mi);
+}
+
+/** OCR結果のモジュールからステータス行を1つ削除 */
+function removeOcrStat(gi: number, mi: number, si: number) {
+  const m = pendingOcrGroups[gi]?.modules[mi];
+  if (!m) return;
+  m.stats.splice(si, 1);
+  const row = document.querySelector<HTMLElement>(`.ocr-row[data-gi="${gi}"][data-mi="${mi}"]`);
+  row?.querySelector<HTMLElement>(`.ocr-stat-row[data-si="${si}"]`)?.remove();
+  if (row) renumberStatRows(row);
+  setAddStatRowVisible(row?.querySelector<HTMLElement>(".ocr-add-stat-row") ?? null, m.stats.length);
+  saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
+  refreshOcrDuplicateState();
+  updateStatWarnings(gi, mi);
+}
+
 function renderOcrModalBody() {
   const body = $("ocr-modal-body");
 
@@ -1859,29 +2088,22 @@ function renderOcrModalBody() {
 
     const expected = EXPECTED_STAT_COUNT[raritySub] ?? 3;
     const tooFew = m.stats.length < expected;
-    const hasInvalidStat = tooFew || m.stats.some((s, si) => si >= expected || !isStatValidForTypeSlot(typeDigit, si, s.part_id));
+    const hasInvalidStat = detectModuleIssues(m).size > 0;
     row.className = "ocr-row"
       + (isModuleDuplicate(m) ? " ocr-row--duplicate" : "")
       + (hasInvalidStat ? " ocr-row--warn" : "");
 
+    const seenStat = new Set<number>();
     const statsHtml = m.stats.map((s, si) => {
-      const tooMany = si >= expected;
-      const typeMismatch = !tooMany && !isStatValidForTypeSlot(typeDigit, si, s.part_id);
-      const warn = tooMany || typeMismatch;
-      const warnTitle = tooMany ? t.ui.stat_count_mismatch : t.ui.stat_type_mismatch;
-      return `<div class="ocr-stat-row">
-        ${statDropdownHtml("ocr-stat-name", s.part_id, { gi: String(gi), mi: String(mi), si: String(si) })}
-        ${valueDropdownHtml(s.value, "ocr-stat-value", { gi: String(gi), mi: String(mi), si: String(si) })}
-        <button class="ocr-stat-remove" data-gi="${gi}" data-mi="${mi}" data-si="${si}">${X_ICON}</button>
-        <span class="ocr-stat-warn${warn ? "" : " hidden"}" data-gi="${gi}" data-mi="${mi}" data-si="${si}" title="${warnTitle}"><img src="icons/triangle-alert.svg" width="18" height="18"></span>
-      </div>`;
+      const dup = seenStat.has(s.part_id);
+      seenStat.add(s.part_id);
+      return ocrStatRowHtml(gi, mi, si, s, typeDigit, expected, dup);
     }).join("");
     const countWarnHtml = tooFew
       ? `<span class="ocr-stat-warn" title="${t.ui.stat_count_mismatch}"><img src="icons/triangle-alert.svg" width="18" height="18"></span>`
       : "";
-    const addStatHtml = m.stats.length < 3
-      ? `<div class="ocr-add-stat-row"><button class="addbtn ocr-add-stat" data-gi="${gi}" data-mi="${mi}">${t.ui.add_stat}</button>${countWarnHtml}</div>`
-      : "";
+    const addRowHidden = m.stats.length < 3 ? "" : ' style="display:none"';
+    const addStatHtml = `<div class="ocr-add-stat-row"${addRowHidden}><button class="addbtn ocr-add-stat" data-gi="${gi}" data-mi="${mi}">${t.ui.add_stat}</button>${countWarnHtml}</div>`;
 
     row.innerHTML = [
       `<span class="ocr-row-index">R${group.originalRowIndices?.[mi] ?? mi + 1}</span>`,
@@ -1950,22 +2172,7 @@ function renderOcrModalBody() {
       refreshOcrDuplicateState();
     });
   });
-  body.querySelectorAll<HTMLElement>(".ocr-stat-name").forEach((dd) => {
-    dd.addEventListener("change", () => {
-      const gi = Number(dd.dataset.gi), mi = Number(dd.dataset.mi);
-      pendingOcrGroups[gi].modules[mi].stats[Number(dd.dataset.si)].part_id = Number(dd.dataset.value);
-      saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
-      refreshOcrDuplicateState();
-      updateStatWarnings(gi, mi);
-    });
-  });
-  body.querySelectorAll<HTMLElement>(".ocr-stat-value").forEach((dd) => {
-    dd.addEventListener("change", () => {
-      pendingOcrGroups[Number(dd.dataset.gi)].modules[Number(dd.dataset.mi)].stats[Number(dd.dataset.si)].value = Number(dd.dataset.value);
-      saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
-      refreshOcrDuplicateState();
-    });
-  });
+  body.querySelectorAll<HTMLElement>(".ocr-stat-row").forEach((row) => attachOcrStatRowHandlers(row));
   body.querySelectorAll<HTMLButtonElement>(".ocr-row-remove").forEach((btn) => {
     btn.onclick = () => {
       const g = Number(btn.dataset.gi);
@@ -1981,24 +2188,8 @@ function renderOcrModalBody() {
       renderOcrModalBody();
     };
   });
-  body.querySelectorAll<HTMLButtonElement>(".ocr-stat-remove").forEach((btn) => {
-    btn.onclick = () => {
-      const g = Number(btn.dataset.gi);
-      const mi = Number(btn.dataset.mi);
-      const si = Number(btn.dataset.si);
-      pendingOcrGroups[g].modules[mi].stats.splice(si, 1);
-      saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
-      renderOcrModalBody();
-    };
-  });
   body.querySelectorAll<HTMLButtonElement>(".ocr-add-stat").forEach((btn) => {
-    btn.onclick = () => {
-      const g = Number(btn.dataset.gi);
-      const mi = Number(btn.dataset.mi);
-      pendingOcrGroups[g].modules[mi].stats.push({ part_id: ALL_STAT_IDS[0], value: 1 });
-      saveOcrGroups(pendingOcrGroups, ocrCurrentPage).catch(() => {});
-      renderOcrModalBody();
-    };
+    btn.onclick = () => addOcrStat(Number(btn.dataset.gi), Number(btn.dataset.mi));
   });
 
   initDropdowns(body);
@@ -2025,61 +2216,18 @@ function updateStatWarnings(gi: number, mi: number) {
   if (!m) return;
   const comp = configIdToComponents(m.config_id);
   const typeDigit = comp?.typeDigit ?? 1;
-  const raritySub = comp?.raritySub ?? 2;
-  const expected = EXPECTED_STAT_COUNT[raritySub] ?? 3;
-
-  let hasInvalid = false;
-  m.stats.forEach((s, si) => {
-    const warn = document.querySelector<HTMLElement>(`.ocr-stat-warn[data-gi="${gi}"][data-mi="${mi}"][data-si="${si}"]`);
-    if (!warn) return;
-    const tooMany = si >= expected;
-    const invalid = tooMany || !isStatValidForTypeSlot(typeDigit, si, s.part_id);
-    warn.classList.toggle("hidden", !invalid);
-    if (invalid) hasInvalid = true;
-  });
-  const tooFew = m.stats.length < expected;
-  if (tooFew) hasInvalid = true;
+  const expected = EXPECTED_STAT_COUNT[comp?.raritySub ?? 2] ?? 3;
   const row = document.querySelector<HTMLElement>(`.ocr-row[data-gi="${gi}"][data-mi="${mi}"]`);
-  row?.classList.toggle("ocr-row--warn", hasInvalid);
-
-  // 追加ボタン横のステータス数不足警告を更新
-  const addStatRow = row?.querySelector<HTMLElement>(".ocr-add-stat-row");
-  if (addStatRow) {
-    const countWarn = addStatRow.querySelector<HTMLElement>(".ocr-stat-warn");
-    if (tooFew && !countWarn) {
-      const span = document.createElement("span");
-      span.className = "ocr-stat-warn";
-      span.title = t.ui.stat_count_mismatch;
-      const img = document.createElement("img");
-      img.src = "icons/triangle-alert.svg";
-      img.width = 18;
-      img.height = 18;
-      span.appendChild(img);
-      addStatRow.appendChild(span);
-    } else if (!tooFew && countWarn) {
-      countWarn.remove();
-    }
-  }
-}
-
-/** 全ページの警告があるモジュールを収集 */
-function collectOcrWarnings(): { gi: number; mi: number; rLabel: string }[] {
-  const warnings: { gi: number; mi: number; rLabel: string }[] = [];
-  pendingOcrGroups.forEach((group, gi) => {
-    group.modules.forEach((m, mi) => {
-      const comp = configIdToComponents(m.config_id);
-      const typeDigit = comp?.typeDigit ?? 1;
-      const raritySub = comp?.raritySub ?? 2;
-      const expected = EXPECTED_STAT_COUNT[raritySub] ?? 3;
-      const countMismatch = m.stats.length !== expected;
-      const statInvalid = m.stats.some((s, si) => !isStatValidForTypeSlot(typeDigit, si, s.part_id));
-      if (countMismatch || statInvalid) {
-        const rLabel = `R${group.originalRowIndices?.[mi] ?? mi + 1}`;
-        warnings.push({ gi, mi, rLabel });
-      }
-    });
+  if (!row) return;
+  const hasInvalid = applyStatWarnings({
+    container: row,
+    addRow: row.querySelector<HTMLElement>(".ocr-add-stat-row"),
+    typeDigit,
+    expected,
+    rowCount: m.stats.length,
+    partIdOf: (_row, si) => m.stats[si]?.part_id ?? 0,
   });
-  return warnings;
+  row.classList.toggle("ocr-row--warn", hasInvalid);
 }
 
 function registerOcrModules() {
@@ -2097,14 +2245,51 @@ function registerOcrModules() {
     return;
   }
 
-  // 警告チェック
-  const warnings = collectOcrWarnings();
-  if (warnings.length > 0) {
-    showOcrWarnModal(warnings);
+  const blockLoc = findFirstOcrModule(issuesAreBlocking);
+  if (blockLoc) {
+    showIssueModal({
+      blocking: true,
+      message: t.ui.issue_block_msg,
+      onGo: () => jumpToOcr(blockLoc),
+    });
+    return;
+  }
+
+  const warnLoc = findFirstOcrModule(issuesHaveWarning);
+  if (warnLoc) {
+    showIssueModal({
+      blocking: false,
+      message: t.ui.issue_warn_msg,
+      onGo: () => jumpToOcr(warnLoc),
+      onRegister: () => doRegisterOcrModules(toRegister),
+    });
     return;
   }
 
   doRegisterOcrModules(toRegister);
+}
+
+/** 条件に合う最初のモジュールの位置を返す */
+function findFirstOcrModule(
+  pred: (kinds: Set<ModuleIssueKind>) => boolean,
+): { gi: number; mi: number } | null {
+  for (let gi = 0; gi < pendingOcrGroups.length; gi++) {
+    const mods = pendingOcrGroups[gi].modules;
+    for (let mi = 0; mi < mods.length; mi++) {
+      if (pred(detectModuleIssues(mods[mi]))) return { gi, mi };
+    }
+  }
+  return null;
+}
+
+/** 指定モジュールのページへ移動して該当行へスクロール */
+function jumpToOcr(loc: { gi: number; mi: number }) {
+  ocrCurrentPage = loc.gi;
+  renderOcrModalBody();
+  requestAnimationFrame(() => {
+    const row = document.querySelector<HTMLElement>(`.ocr-row[data-gi="${loc.gi}"][data-mi="${loc.mi}"]`);
+    row?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
 }
 
 function doRegisterOcrModules(toRegister: ModuleInput[]) {
@@ -2144,160 +2329,234 @@ function doRegisterOcrModules(toRegister: ModuleInput[]) {
   ocrCurrentPage = 0;
 }
 
-/** 最初の警告箇所を保持 */
-let firstOcrWarning: { gi: number; mi: number } | null = null;
+// ========== Module Input/Edit Modal ==========
 
-function showOcrWarnModal(warnings: { gi: number; mi: number; rLabel: string }[]) {
-  firstOcrWarning = warnings[0];
-  $("ocr-warn-modal-bd").classList.add("on");
+let modalEditingUuid: number | null = null;
+let modalStatCount = 1;
+
+function openModuleModal(uuid: number | null) {
+  const m = uuid != null ? (modules.find((mod) => mod.uuid === uuid) ?? null) : null;
+  if (uuid != null && !m) return;
+  modalEditingUuid = uuid;
+  modalStatCount = m ? m.stats.length || 1 : 1;
+
+  const isEdit = m != null;
+  const title = $("module-modal-title");
+  title.dataset.i18n = isEdit ? "modal_edit" : "modal_manual";
+  title.textContent = isEdit ? t.ui.modal_edit : t.ui.modal_manual;
+
+  const confirmBtn = $("module-confirm");
+  confirmBtn.dataset.i18n = isEdit ? "btn_save" : "btn_add";
+  confirmBtn.textContent = isEdit ? t.ui.btn_save : t.ui.btn_add;
+  confirmBtn.onclick = isEdit ? saveEditedModule : addNewModule;
+
+  $("module-delete").style.display = isEdit ? "" : "none";
+  $("module-footer-spacer").style.display = isEdit ? "" : "none";
+
+  renderModuleModalBody(m);
+  $("module-modal-bd").classList.add("on");
 }
 
-// ========== Edit Module Modal ==========
-
-let editingUuid: number | null = null;
-let editStatCount = 1;
-
-function openEditModal(uuid: number) {
-  const m = modules.find((mod) => mod.uuid === uuid);
-  if (!m) return;
-  editingUuid = uuid;
-  editStatCount = m.stats.length || 1;
-  renderEditModalBody();
-  $("edit-modal-bd").classList.add("on");
+function closeModuleModal() {
+  $("module-modal-bd").classList.remove("on");
+  modalEditingUuid = null;
 }
 
-function closeEditModal() {
-  $("edit-modal-bd").classList.remove("on");
-  editingUuid = null;
+function moduleStatRowHtml(si: number, partId?: number, value?: number, placeholder?: string): string {
+  return statRowHtml({
+    si,
+    nameClass: "module-stat-name",
+    valueClass: "ocr-stat-value module-stat-value",
+    removeClass: "ocr-stat-remove module-remove-stat",
+    partId,
+    value,
+    placeholder,
+    metaDataAttrs: { si: String(si) },
+    warn: { show: false },
+  });
 }
 
-function renderEditModalBody() {
-  const m = modules.find((mod) => mod.uuid === editingUuid);
-  if (!m) return;
-  const body = $("edit-modal-body");
+/** モーダルのステータス行1つにイベントハンドラを設定 */
+function attachModuleStatRowHandlers(row: HTMLElement) {
+  const nameDd = row.querySelector<HTMLElement>(".module-stat-name");
+  if (nameDd) nameDd.addEventListener("change", updateModuleStatWarnings);
+  const removeBtn = row.querySelector<HTMLButtonElement>(".module-remove-stat");
+  if (removeBtn) removeBtn.onclick = () => removeModuleStatRow(row);
+}
 
-  const comp = configIdToComponents(m.config_id);
+function addModuleStatRow() {
+  if (modalStatCount >= 3) return;
+  const container = document.getElementById("module-stat-rows");
+  if (!container) return;
+  container.insertAdjacentHTML("beforeend", moduleStatRowHtml(modalStatCount, undefined, undefined, t.ui.select_placeholder));
+  modalStatCount++;
+  const newRow = container.lastElementChild as HTMLElement | null;
+  if (newRow) {
+    initDropdowns(newRow);
+    attachModuleStatRowHandlers(newRow);
+  }
+  setAddStatRowVisible(document.getElementById("module-add-stat-row"), modalStatCount);
+  updateModuleStatWarnings();
+}
+
+function removeModuleStatRow(row: HTMLElement) {
+  row.remove();
+  modalStatCount--;
+  const container = document.getElementById("module-stat-rows");
+  if (container) renumberStatRows(container);
+  setAddStatRowVisible(document.getElementById("module-add-stat-row"), modalStatCount);
+  updateModuleStatWarnings();
+}
+
+/** モーダルのステータス警告アイコンを更新 */
+function updateModuleStatWarnings() {
+  const typeDigit = Number($<HTMLElement>("module-type").dataset.value);
+  const raritySub = Number($<HTMLElement>("module-rarity-sub").dataset.value);
+  const expected = EXPECTED_STAT_COUNT[raritySub] ?? 3;
+  const container = document.getElementById("module-stat-rows");
+  if (!container) return;
+  applyStatWarnings({
+    container,
+    addRow: document.getElementById("module-add-stat-row"),
+    typeDigit,
+    expected,
+    rowCount: modalStatCount,
+    partIdOf: (row) => Number(row.querySelector<HTMLElement>(".module-stat-name")?.dataset.value),
+  });
+}
+
+function renderModuleModalBody(m: ModuleInput | null) {
+  const body = $("module-modal-body");
+
+  const comp = m ? configIdToComponents(m.config_id) : null;
   const typeDigit = comp?.typeDigit ?? 1;
-  const raritySub = comp?.raritySub ?? 2;
+  const raritySub = comp?.raritySub ?? 1;
 
   const statRows: string[] = [];
-  for (let i = 0; i < editStatCount; i++) {
-    const curStat = m.stats[i];
-    statRows.push(`<div class="ocr-stat-row" data-si="${i}">
-      ${statDropdownHtml("edit-stat-name", curStat?.part_id, undefined, curStat ? undefined : t.ui.select_placeholder)}
-      ${valueDropdownHtml(curStat?.value ?? 1, "ocr-stat-value edit-stat-value")}
-      <button class="ocr-stat-remove edit-remove-stat" data-si="${i}">${X_ICON}</button>
-    </div>`);
+  for (let i = 0; i < modalStatCount; i++) {
+    const curStat = m?.stats[i];
+    statRows.push(moduleStatRowHtml(i, curStat?.part_id, curStat?.value ?? 1, curStat ? undefined : t.ui.select_placeholder));
   }
 
-  body.innerHTML = `<div class="ocr-row-content">
+  const iconConfigId = m ? m.config_id : buildConfigId(typeDigit, raritySub);
+  const addRowHidden = modalStatCount < 3 ? "" : ' style="display:none"';
+  body.replaceChildren();
+  body.insertAdjacentHTML("beforeend", `<div class="ocr-row-content">
     <div class="ocr-row-header">
-      <div class="ocr-row-icon" id="edit-icon-preview">${moduleIconHtml(m.config_id)}</div>
+      <div class="ocr-row-icon" id="module-icon-preview">${moduleIconHtml(iconConfigId)}</div>
       <div class="ocr-row-fields">
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.type_label}</span>
-          ${typeDropdownHtml(typeDigit, "", undefined, "edit-type")}
+          ${typeDropdownHtml(typeDigit, "", undefined, "module-type")}
         </label>
         <label class="form-field">
           <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
-          ${raritySubDropdownHtml(raritySub, "", undefined, "edit-rarity-sub")}
+          ${raritySubDropdownHtml(raritySub, "", undefined, "module-rarity-sub")}
         </label>
       </div>
     </div>
     <div class="ocr-row-stats">
       <div class="ocr-stat-divider"></div>
-      <div id="edit-stat-rows">${statRows.join("")}</div>
-      ${editStatCount < 3 ? `<button class="addbtn" id="edit-add-stat">${t.ui.add_stat}</button>` : ""}
+      <div id="module-stat-rows">${statRows.join("")}</div>
+      <div class="ocr-add-stat-row" id="module-add-stat-row"${addRowHidden}><button class="addbtn" id="module-add-stat">${t.ui.add_stat}</button></div>
     </div>
-  </div>`;
+  </div>`);
 
   const updateIconPreview = () => {
-    const td = Number($<HTMLElement>("edit-type").dataset.value);
-    const rs = Number($<HTMLElement>("edit-rarity-sub").dataset.value);
-    const preview = document.getElementById("edit-icon-preview");
-    if (preview) preview.innerHTML = moduleIconHtml(buildConfigId(td, rs));
+    const td = Number($<HTMLElement>("module-type").dataset.value);
+    const rs = Number($<HTMLElement>("module-rarity-sub").dataset.value);
+    const preview = document.getElementById("module-icon-preview");
+    if (preview) {
+      preview.replaceChildren();
+      preview.insertAdjacentHTML("beforeend", moduleIconHtml(buildConfigId(td, rs)));
+    }
   };
-  $<HTMLElement>("edit-type").addEventListener("change", updateIconPreview);
-  $<HTMLElement>("edit-rarity-sub").addEventListener("change", updateIconPreview);
+  $<HTMLElement>("module-type").addEventListener("change", () => { updateIconPreview(); updateModuleStatWarnings(); });
+  $<HTMLElement>("module-rarity-sub").addEventListener("change", () => { updateIconPreview(); updateModuleStatWarnings(); });
 
   initDropdowns(body);
 
-  const addBtn = document.getElementById("edit-add-stat");
-  if (addBtn) addBtn.onclick = () => {
-    syncEditStatsToModule();
-    editStatCount++;
-    const m2 = modules.find((mod) => mod.uuid === editingUuid);
-    if (m2 && m2.stats.length < editStatCount) {
-      m2.stats.push({ part_id: ALL_STAT_IDS[0], value: 1 });
-    }
-    renderEditModalBody();
-  };
+  const addBtn = document.getElementById("module-add-stat");
+  if (addBtn) addBtn.onclick = () => addModuleStatRow();
 
-  body.querySelectorAll<HTMLButtonElement>(".edit-remove-stat").forEach((btn) => {
-    btn.onclick = () => {
-      syncEditStatsToModule();
-      const si = Number(btn.dataset.si);
-      const m2 = modules.find((mod) => mod.uuid === editingUuid);
-      if (m2) m2.stats.splice(si, 1);
-      editStatCount--;
-      renderEditModalBody();
-    };
-  });
+  body.querySelectorAll<HTMLElement>("#module-stat-rows .ocr-stat-row").forEach((row) => attachModuleStatRowHandlers(row));
+
+  updateModuleStatWarnings();
 }
 
-function syncEditStatsToModule() {
-  const m = modules.find((mod) => mod.uuid === editingUuid);
-  if (!m) return;
-  const rows = document.querySelectorAll<HTMLElement>("#edit-stat-rows .ocr-stat-row");
-  const newStats: StatEntry[] = [];
-  rows.forEach((row) => {
-    const nameDd = row.querySelector<HTMLElement>(".edit-stat-name");
-    const valueDd = row.querySelector<HTMLElement>(".edit-stat-value");
-    if (!nameDd || !valueDd) return;
-    const partId = Number(nameDd.dataset.value);
-    if (!partId) return;
-    newStats.push({ part_id: partId, value: Number(valueDd.dataset.value) });
-  });
-  m.stats = newStats;
-}
-
-function saveEditModule() {
-  const m = modules.find((mod) => mod.uuid === editingUuid);
-  if (!m) return;
-  const typeDigit = Number($<HTMLElement>("edit-type").dataset.value);
-  const raritySub = Number($<HTMLElement>("edit-rarity-sub").dataset.value);
-  m.config_id = buildConfigId(typeDigit, raritySub);
-  m.quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
+/** モーダルの入力からconfig_id・quality・statsを取得する。未選択の行は除外する */
+function collectModuleModalInput(): { configId: number; quality: number | null; stats: StatEntry[] } {
+  const typeDigit = Number($<HTMLElement>("module-type").dataset.value);
+  const raritySub = Number($<HTMLElement>("module-rarity-sub").dataset.value);
+  const configId = buildConfigId(typeDigit, raritySub);
+  const quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
 
   const stats: StatEntry[] = [];
-  const usedIds = new Set<number>();
-  const rows = document.querySelectorAll<HTMLElement>("#edit-stat-rows .ocr-stat-row");
+  const rows = document.querySelectorAll<HTMLElement>("#module-stat-rows .ocr-stat-row");
   for (const row of rows) {
-    const nameDd = row.querySelector<HTMLElement>(".edit-stat-name");
-    const valueDd = row.querySelector<HTMLElement>(".edit-stat-value");
+    const nameDd = row.querySelector<HTMLElement>(".module-stat-name");
+    const valueDd = row.querySelector<HTMLElement>(".module-stat-value");
     if (!nameDd || !valueDd) continue;
     const partId = Number(nameDd.dataset.value);
     if (!partId) continue;
-    if (usedIds.has(partId)) return;
-    usedIds.add(partId);
     stats.push({ part_id: partId, value: Number(valueDd.dataset.value) });
   }
-  if (stats.length === 0) return;
-  m.stats = stats;
-  saveModulesToStorage();
-  renderGrid();
-  updateOptRunBtn();
-  closeEditModal();
+  return { configId, quality, stats };
 }
 
-function deleteEditModule() {
-  const idx = modules.findIndex((mod) => mod.uuid === editingUuid);
+/** 候補モジュールを検査し、問題がなければrunを実行。あれば確認モーダルを表示 */
+function validateModuleThenRun(candidate: ModuleInput, run: () => void) {
+  const kinds = detectModuleIssues(candidate);
+  if (issuesAreBlocking(kinds)) {
+    showIssueModal({ blocking: true, message: t.ui.issue_block_msg });
+    return;
+  }
+  if (issuesHaveWarning(kinds)) {
+    showIssueModal({ blocking: false, message: t.ui.issue_warn_msg, onRegister: run });
+    return;
+  }
+  run();
+}
+
+function addNewModule() {
+  const input = collectModuleModalInput();
+  const candidate: ModuleInput = { uuid: 0, config_id: input.configId, quality: input.quality, stats: input.stats };
+  validateModuleThenRun(candidate, () => {
+    modules.push({ uuid: nextUuid(), config_id: input.configId, quality: input.quality, stats: input.stats });
+    saveModulesToStorage();
+    renderGrid();
+    updateOptRunBtn();
+    showToast(t.ui.module_added, "success");
+    modalStatCount = 1;
+    renderModuleModalBody(null);
+  });
+}
+
+function saveEditedModule() {
+  const m = modules.find((mod) => mod.uuid === modalEditingUuid);
+  if (!m) return;
+  const input = collectModuleModalInput();
+  const candidate: ModuleInput = { uuid: m.uuid, config_id: input.configId, quality: input.quality, stats: input.stats };
+  validateModuleThenRun(candidate, () => {
+    m.config_id = input.configId;
+    m.quality = input.quality;
+    m.stats = input.stats;
+    saveModulesToStorage();
+    renderGrid();
+    updateOptRunBtn();
+    showToast(t.ui.module_updated, "success");
+    closeModuleModal();
+  });
+}
+
+function deleteEditedModule() {
+  const idx = modules.findIndex((mod) => mod.uuid === modalEditingUuid);
   if (idx < 0) return;
   modules.splice(idx, 1);
   saveModulesToStorage();
   renderGrid();
   updateOptRunBtn();
-  closeEditModal();
+  closeModuleModal();
 }
 
 function deleteModuleByUuid(uuid: number) {
@@ -2325,219 +2584,6 @@ function handleCardDeleteClick(uuid: number) {
 function setCardDeleteBtnMode(mode: CardDeleteBtnMode) {
   cardDeleteBtnMode = mode;
   document.body.classList.toggle("cards-delete-btn-on", mode !== "off");
-}
-
-// ========== Manual Input Modal ==========
-
-let manualStatCount = 1;
-
-function openManualInputModal() {
-  manualStatCount = 1;
-  renderManualModalBody();
-  $("manual-modal-bd").classList.add("on");
-}
-
-function closeManualModal() {
-  $("manual-modal-bd").classList.remove("on");
-}
-
-function manualStatRowHtml(si: number): string {
-  return `<div class="ocr-stat-row" data-si="${si}">
-    ${statDropdownHtml("manual-stat-name", undefined, undefined, t.ui.select_placeholder)}
-    ${valueDropdownHtml(1, "ocr-stat-value manual-stat-value")}
-    <button class="ocr-stat-remove manual-remove-stat" data-si="${si}">${X_ICON}</button>
-    <span class="ocr-stat-warn hidden" data-si="${si}"><img src="icons/triangle-alert.svg" width="18" height="18"></span>
-  </div>`;
-}
-
-function renumberManualStatRows() {
-  const container = document.getElementById("manual-stat-rows");
-  if (!container) return;
-  container.querySelectorAll<HTMLElement>(".ocr-stat-row").forEach((r, i) => {
-    r.dataset.si = String(i);
-    const btn = r.querySelector<HTMLElement>(".manual-remove-stat");
-    if (btn) btn.dataset.si = String(i);
-    const warn = r.querySelector<HTMLElement>(".ocr-stat-warn");
-    if (warn) warn.dataset.si = String(i);
-  });
-}
-
-function updateManualAddBtnVisibility() {
-  const addStatRow = document.getElementById("manual-add-stat-row");
-  if (addStatRow) addStatRow.style.display = manualStatCount < 3 ? "" : "none";
-}
-
-function addManualStatRow() {
-  if (manualStatCount >= 3) return;
-  const container = document.getElementById("manual-stat-rows");
-  if (!container) return;
-  container.insertAdjacentHTML("beforeend", manualStatRowHtml(manualStatCount));
-  manualStatCount++;
-  const newRow = container.lastElementChild as HTMLElement | null;
-  if (newRow) {
-    initDropdowns(newRow);
-    const nameDd = newRow.querySelector<HTMLElement>(".manual-stat-name");
-    if (nameDd) nameDd.addEventListener("change", updateManualStatWarnings);
-    const removeBtn = newRow.querySelector<HTMLButtonElement>(".manual-remove-stat");
-    if (removeBtn) removeBtn.onclick = () => removeManualStatRow(newRow);
-  }
-  updateManualAddBtnVisibility();
-  updateManualStatWarnings();
-}
-
-function removeManualStatRow(row: HTMLElement) {
-  row.remove();
-  manualStatCount--;
-  renumberManualStatRows();
-  updateManualAddBtnVisibility();
-  updateManualStatWarnings();
-}
-
-function renderManualModalBody() {
-  const body = $("manual-modal-body");
-
-  const statRows: string[] = [];
-  for (let i = 0; i < manualStatCount; i++) {
-    statRows.push(manualStatRowHtml(i));
-  }
-
-  const defaultConfigId = buildConfigId(1, 1);
-  const addRowHidden = manualStatCount < 3 ? "" : ' style="display:none"';
-  body.innerHTML = `<div class="ocr-row-content">
-    <div class="ocr-row-header">
-      <div class="ocr-row-icon" id="manual-icon-preview">${moduleIconHtml(defaultConfigId)}</div>
-      <div class="ocr-row-fields">
-        <label class="form-field">
-          <span class="cmd-lbl">${t.ui.type_label}</span>
-          ${typeDropdownHtml(1, "", undefined, "manual-type")}
-        </label>
-        <label class="form-field">
-          <span class="cmd-lbl">${t.ui.rarity_sub_label}</span>
-          ${raritySubDropdownHtml(1, "", undefined, "manual-rarity-sub")}
-        </label>
-      </div>
-    </div>
-    <div class="ocr-row-stats">
-      <div class="ocr-stat-divider"></div>
-      <div id="manual-stat-rows">${statRows.join("")}</div>
-      <div class="ocr-add-stat-row" id="manual-add-stat-row"${addRowHidden}><button class="addbtn" id="manual-add-stat">${t.ui.add_stat}</button></div>
-    </div>
-  </div>`;
-
-  const updateManualIconPreview = () => {
-    const td = Number($<HTMLElement>("manual-type").dataset.value);
-    const rs = Number($<HTMLElement>("manual-rarity-sub").dataset.value);
-    const preview = document.getElementById("manual-icon-preview");
-    if (preview) preview.innerHTML = moduleIconHtml(buildConfigId(td, rs));
-  };
-  $<HTMLElement>("manual-type").addEventListener("change", () => { updateManualIconPreview(); updateManualStatWarnings(); });
-  $<HTMLElement>("manual-rarity-sub").addEventListener("change", () => { updateManualIconPreview(); updateManualStatWarnings(); });
-
-  initDropdowns(body);
-
-  const addBtn = document.getElementById("manual-add-stat");
-  if (addBtn) addBtn.onclick = () => addManualStatRow();
-
-  body.querySelectorAll<HTMLElement>("#manual-stat-rows .ocr-stat-row").forEach((row) => {
-    const nameDd = row.querySelector<HTMLElement>(".manual-stat-name");
-    if (nameDd) nameDd.addEventListener("change", updateManualStatWarnings);
-    const removeBtn = row.querySelector<HTMLButtonElement>(".manual-remove-stat");
-    if (removeBtn) removeBtn.onclick = () => removeManualStatRow(row);
-  });
-
-  updateManualStatWarnings();
-}
-
-/** 手動入力モーダルのステータス警告アイコンを更新 */
-function updateManualStatWarnings() {
-  const typeDigit = Number($<HTMLElement>("manual-type").dataset.value);
-  const raritySub = Number($<HTMLElement>("manual-rarity-sub").dataset.value);
-  const expected = EXPECTED_STAT_COUNT[raritySub] ?? 3;
-
-  document.querySelectorAll<HTMLElement>("#manual-stat-rows .ocr-stat-row").forEach((row) => {
-    const si = Number(row.dataset.si);
-    const nameDd = row.querySelector<HTMLElement>(".manual-stat-name");
-    const warn = row.querySelector<HTMLElement>(".ocr-stat-warn");
-    if (!nameDd || !warn) return;
-
-    const partId = Number(nameDd.dataset.value);
-    // 未選択の場合は警告を出さない
-    if (!partId) {
-      warn.classList.add("hidden");
-      return;
-    }
-
-    const tooMany = si >= expected;
-    const typeMismatch = !tooMany && !isStatValidForTypeSlot(typeDigit, si, partId);
-    const invalid = tooMany || typeMismatch;
-    warn.classList.toggle("hidden", !invalid);
-    warn.title = tooMany ? t.ui.stat_count_mismatch : t.ui.stat_type_mismatch;
-  });
-
-  // 追加ボタン横のステータス数不足警告を更新
-  const addStatRow = document.getElementById("manual-add-stat-row");
-  if (addStatRow) {
-    const countWarn = addStatRow.querySelector<HTMLElement>(".ocr-stat-warn");
-    const tooFew = manualStatCount < expected;
-    if (tooFew && !countWarn) {
-      const span = document.createElement("span");
-      span.className = "ocr-stat-warn";
-      span.title = t.ui.stat_count_mismatch;
-      const img = document.createElement("img");
-      img.src = "icons/triangle-alert.svg";
-      img.width = 18;
-      img.height = 18;
-      span.appendChild(img);
-      addStatRow.appendChild(span);
-    } else if (!tooFew && countWarn) {
-      countWarn.remove();
-    }
-  }
-}
-
-function addManualModule() {
-  const typeDigit = Number($<HTMLElement>("manual-type").dataset.value);
-  const raritySub = Number($<HTMLElement>("manual-rarity-sub").dataset.value);
-  const configId = buildConfigId(typeDigit, raritySub);
-  const quality = RARITY_SUB_TO_QUALITY[raritySub] ?? null;
-
-  const stats: StatEntry[] = [];
-  const rows = document.querySelectorAll<HTMLElement>("#manual-stat-rows .ocr-stat-row");
-  const usedIds = new Set<number>();
-
-  for (const row of rows) {
-    const nameDd = row.querySelector<HTMLElement>(".manual-stat-name");
-    const valueDd = row.querySelector<HTMLElement>(".manual-stat-value");
-    if (!nameDd || !valueDd) continue;
-    const partId = Number(nameDd.dataset.value);
-    if (!partId) continue;
-    if (usedIds.has(partId)) {
-      showToast(t.ui.stat_duplicate, "error");
-      return;
-    }
-    usedIds.add(partId);
-    stats.push({ part_id: partId, value: Number(valueDd.dataset.value) });
-  }
-
-  if (stats.length === 0) {
-    showToast(t.ui.stat_required, "error");
-    return;
-  }
-
-  const m: ModuleInput = {
-    uuid: nextUuid(),
-    config_id: configId,
-    quality,
-    stats,
-  };
-
-  modules.push(m);
-  saveModulesToStorage();
-  renderGrid();
-  updateOptRunBtn();
-  showToast(t.ui.module_added, "success");
-  manualStatCount = 1;
-  renderManualModalBody();
 }
 
 // ========== Screenshot Import ==========
@@ -3928,24 +3974,11 @@ document.addEventListener("DOMContentLoaded", () => {
   $("modal-bd").onclick = (e) => { if (e.target === $("modal-bd")) closeModal(); };
 
   $("ocr-register").onclick = registerOcrModules;
-  $("ocr-warn-go").onclick = () => {
-    $("ocr-warn-modal-bd").classList.remove("on");
-    if (!firstOcrWarning) return;
-    ocrCurrentPage = firstOcrWarning.gi;
-    renderOcrModalBody();
-    requestAnimationFrame(() => {
-      const row = document.querySelector<HTMLElement>(`.ocr-row[data-gi="${firstOcrWarning!.gi}"][data-mi="${firstOcrWarning!.mi}"]`);
-      row?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-  };
-  $("ocr-warn-register").onclick = () => {
-    $("ocr-warn-modal-bd").classList.remove("on");
-    const all = allPendingModules();
-    const toRegister = (ocrMode === "register" && ocrTargetEnabled) ? all.filter(isOcrTargetEligible) : all;
-    doRegisterOcrModules(toRegister);
-  };
-  $("ocr-warn-modal-close").onclick = () => $("ocr-warn-modal-bd").classList.remove("on");
-  $("ocr-warn-modal-bd").onclick = (e) => { if (e.target === $("ocr-warn-modal-bd")) $("ocr-warn-modal-bd").classList.remove("on"); };
+  $("issue-modal-go").onclick = () => { closeIssueModal(); issueModalGo?.(); };
+  $("issue-modal-register").onclick = () => { closeIssueModal(); issueModalRegister?.(); };
+  $("issue-modal-cancel").onclick = closeIssueModal;
+  $("issue-modal-close").onclick = closeIssueModal;
+  $("issue-modal-bd").onclick = (e) => { if (e.target === $("issue-modal-bd")) closeIssueModal(); };
   $("ocr-cancel").onclick = cancelOcrModal;
   $("ocr-modal-close").onclick = closeOcrModal;
   ($("ocr-target-only") as HTMLInputElement).onchange = (e) => {
@@ -4057,22 +4090,16 @@ document.addEventListener("DOMContentLoaded", () => {
   $("license-modal-close").onclick = () => $("license-modal-bd").classList.remove("on");
   $("license-modal-bd").onclick = (e) => { if (e.target === $("license-modal-bd")) $("license-modal-bd").classList.remove("on"); };
 
-  $("manual-modal-close").onclick = closeManualModal;
-  $("manual-cancel").onclick = closeManualModal;
-  $("manual-add").onclick = addManualModule;
-  $("manual-modal-bd").onclick = (e) => { if (e.target === $("manual-modal-bd")) closeManualModal(); };
-
-  $("edit-modal-close").onclick = closeEditModal;
-  $("edit-cancel").onclick = closeEditModal;
-  $("edit-save").onclick = saveEditModule;
-  $("edit-delete").onclick = deleteEditModule;
-  $("edit-modal-bd").onclick = (e) => { if (e.target === $("edit-modal-bd")) closeEditModal(); };
+  $("module-modal-close").onclick = closeModuleModal;
+  $("module-cancel").onclick = closeModuleModal;
+  $("module-delete").onclick = deleteEditedModule;
+  $("module-modal-bd").onclick = (e) => { if (e.target === $("module-modal-bd")) closeModuleModal(); };
 
   $("data-import-dd").addEventListener("menu-select", (e) => {
     const value = (e as CustomEvent<{ value: string }>).detail.value;
     if (value === "screenshot") importScreenshot();
     else if (value === "json") importJson();
-    else if (value === "manual") openManualInputModal();
+    else if (value === "manual") openModuleModal(null);
   });
   document.addEventListener("click", (e) => {
     const infoBtn = (e.target as HTMLElement | null)?.closest<HTMLElement>(".dd-item-info-btn");
