@@ -58,7 +58,6 @@ function loadOpenCV(): Promise<void> {
 interface TemplateInfo {
   partId: number;
   grayMat: any; // グレースケール（スケール検出 + 分類用）
-  edgeMat: any; // Cannyエッジ（分類用）
   classifyVariants: TemplateClassifyVariant[]; // 実画面寄りの背景合成版（局所分類用）
   colorVariants: { name: string; colorMat: any }[]; // カラー版（BGR, テンプレート列+カラーマッチング用）
 }
@@ -66,7 +65,6 @@ interface TemplateInfo {
 interface TemplateClassifyVariant {
   name: string;
   grayMat: any;
-  edgeMat: any;
 }
 
 let statTemplates: TemplateInfo[] = [];
@@ -75,7 +73,6 @@ interface ModuleIconTemplateInfo {
   type: string;     // "attack" | "device" | "protect"
   rarity: number;   // 2-5
   grayMat: any;
-  edgeMat: any;
   classifyVariants: TemplateClassifyVariant[];
   colorVariants: { name: string; colorMat: any }[]; // カラー版（BGR）
 }
@@ -123,17 +120,14 @@ function renderTemplateCanvas(
 function buildTemplateMats(
   canvas: HTMLCanvasElement,
   cv: any,
-): { grayMat: any; edgeMat: any } {
+): { grayMat: any } {
   const mat = cv.imread(canvas);
   const gray = new cv.Mat();
   cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
   cv.equalizeHist(gray, gray);
 
-  const edge = new cv.Mat();
-  cv.Canny(gray, edge, 50, 150);
-
   mat.delete();
-  return { grayMat: gray, edgeMat: edge };
+  return { grayMat: gray };
 }
 
 function buildColorMat(canvas: HTMLCanvasElement, cv: any): any {
@@ -146,13 +140,13 @@ async function loadTemplates(): Promise<void> {
 
   // リトライ時の重複防止: 既存データを解放してからリセット
   for (const t of statTemplates) {
-    t.grayMat.delete(); t.edgeMat.delete();
-    for (const v of t.classifyVariants) { v.grayMat.delete(); v.edgeMat.delete(); }
+    t.grayMat.delete();
+    for (const v of t.classifyVariants) { v.grayMat.delete(); }
     for (const v of t.colorVariants) { v.colorMat.delete(); }
   }
   for (const t of moduleIconTemplates) {
-    t.grayMat.delete(); t.edgeMat.delete();
-    for (const v of t.classifyVariants) { v.grayMat.delete(); v.edgeMat.delete(); }
+    t.grayMat.delete();
+    for (const v of t.classifyVariants) { v.grayMat.delete(); }
     for (const v of t.colorVariants) { v.colorMat.delete(); }
   }
   statTemplates = [];
@@ -170,7 +164,6 @@ async function loadTemplates(): Promise<void> {
       return {
         name: background.name,
         grayMat: mats.grayMat,
-        edgeMat: mats.edgeMat,
       };
     });
 
@@ -184,7 +177,6 @@ async function loadTemplates(): Promise<void> {
     statTemplates.push({
       partId,
       grayMat: baseMats.grayMat,
-      edgeMat: baseMats.edgeMat,
       classifyVariants,
       colorVariants,
     });
@@ -209,7 +201,6 @@ async function loadTemplates(): Promise<void> {
       return {
         name: background.name,
         grayMat: mats.grayMat,
-        edgeMat: mats.edgeMat,
       };
     });
 
@@ -228,7 +219,6 @@ async function loadTemplates(): Promise<void> {
       type: modIcon.type,
       rarity: modIcon.rarity,
       grayMat: baseMats.grayMat,
-      edgeMat: baseMats.edgeMat,
       classifyVariants: modClassifyVariants,
       colorVariants: modColorVariants,
     });
@@ -648,8 +638,8 @@ function classifyModuleIcon(
   if (moduleIconTemplates.length === 0) return null;
 
   const refTmpl = moduleIconTemplates[0];
-  const expectedW = Math.round(refTmpl.edgeMat.cols * moduleScale);
-  const expectedH = Math.round(refTmpl.edgeMat.rows * moduleScale);
+  const expectedW = Math.round(refTmpl.grayMat.cols * moduleScale);
+  const expectedH = Math.round(refTmpl.grayMat.rows * moduleScale);
 
   const padX = pad === "expanded" ? Math.round(expectedW * 0.5) : pad.x;
   const padY = pad === "expanded" ? Math.round(expectedH * 0.5) : pad.y;
