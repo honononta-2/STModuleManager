@@ -2033,7 +2033,7 @@ function renderOcrModalBody() {
   const listEl = body.querySelector<HTMLElement>(".ocr-group-list");
   const listScrollTop = listEl ? listEl.scrollTop : 0;
 
-  // body内に移動済みの要素をクリア前に退避（2回目以降 getElementById で見つからなくなるのを防ぐ）
+  // body内の動的要素をクリア前に退避する
   const savedTargetLabel = (body.querySelector("#ocr-target-only") ?? document.getElementById("ocr-target-only"))?.closest("label") ?? null;
   const savedConfigBtn = body.querySelector("#ocr-target-config-btn") ?? document.getElementById("ocr-target-config-btn");
 
@@ -2897,7 +2897,6 @@ async function startOcrFromSetup() {
 
   const ocrWorkers: Worker[] = [];
   try {
-    // 各ファイルを HTMLImageElement（サムネイル用）と ImageBitmap（ワーカー転送用）に読み込む
     const loaded = await Promise.all(files.map(async (file) => {
       const url = URL.createObjectURL(file);
       const img = new Image();
@@ -2914,7 +2913,6 @@ async function startOcrFromSetup() {
     type WorkerResult = { modules: ModuleInput[]; rowPositions: RowPosition[]; mobileCols?: { colXs: number[]; gap: number } };
     const results: (WorkerResult | null)[] = new Array(files.length).fill(null);
     let completed = 0;
-    // モバイル高速化モードでは1枚目で確定した列位置を以降の画像に渡す
     const usePreset = customOptions.platform === "mobile" && !!customOptions.fastMode;
     let presetCols: { colXs: number[]; gap: number } | null = null;
 
@@ -2950,12 +2948,12 @@ async function startOcrFromSetup() {
       });
 
     let nextJob = 0;
-    // 列位置確定のため1枚目を先に単独処理
+    // 1枚目を単独処理して列位置を取得する
     if (usePreset && files.length > 0) {
       nextJob = 1;
       await runJob(ocrWorkers[0], 0);
     }
-    // 残りをワーカープールで並列処理
+    // 残りの画像を並列処理する
     const drain = async (worker: Worker): Promise<void> => {
       while (true) {
         const job = nextJob++;
@@ -2965,7 +2963,7 @@ async function startOcrFromSetup() {
     };
     await Promise.all(ocrWorkers.map((w) => drain(w)));
 
-    // 全完了後に入力順でUUIDを連番付与し、サムネイル付きグループを構築
+    // 入力順にUUIDを付与しグループを構築する
     for (let i = 0; i < files.length; i++) {
       const r = results[i] ?? { modules: [], rowPositions: [] };
       for (const m of r.modules) m.uuid = nextUuid();

@@ -1,6 +1,5 @@
 import { processScreenshot, createOcrWorker, type OcrCustomOptions } from "./ocr";
 
-// ワーカーごとに1つのtesseractワーカーを保持して使い回す
 let tessWorker: any = null;
 
 interface ProcessMessage {
@@ -16,7 +15,6 @@ self.onmessage = async (e: MessageEvent<ProcessMessage>) => {
 
   try {
     if (!tessWorker) tessWorker = await createOcrWorker();
-    // UUIDは全画像の処理完了後にメイン側で振り直すため、ここでは仮値を渡す
     const result = await processScreenshot(image, undefined, tessWorker, customOptions, 1);
     image.close();
     self.postMessage({

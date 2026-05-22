@@ -6,27 +6,20 @@ export interface OcrCustomOptions {
   filterRarities?: number[];   // rarity値 (2=青, 3=紫, 4=金A, 5=金B)
   filterTypes?: string[];      // 型名 ("attack" | "device" | "protect")
   fastMode?: boolean;          // 分類をアップスケールせず等倍で実行する
-  presetMobileCols?: { colXs: number[]; gap: number }; // 確定済みのモバイル列位置（検出を省略）
+  presetMobileCols?: { colXs: number[]; gap: number };
 }
 
 // 極系ステータス (partId 2xxx) — 真ん中・右の列では出現しない
 const EXTREME_STAT_PIDS = new Set([2104, 2105, 2204, 2205, 2304, 2404, 2405, 2406]);
 
-// 高速化モードのモバイル列位置キャッシュ（画像サイズをキーに列X座標を保持）
+// モバイル列位置キャッシュ（画像サイズ → 列X座標）
 const mobileColCache = new Map<string, { colXs: number[]; gap: number }>();
 
-// モバイル列位置キャッシュをクリアする（取込バッチ開始時に呼ぶ）
+// モバイル列位置キャッシュをクリアする
 export function resetMobileColCache(): void {
   mobileColCache.clear();
 }
 
-// ===== 計測用コード（速度計測のための一時的なコード・後で削除する） =====
-// resizeMs/matchMs/scanMs は各ステージ開始時に0リセットして内訳を取る
-const perf = {
-  matchCount: 0, recognizeCount: 0, recognizeMs: 0,
-  resizeMs: 0, matchMs: 0, scanMs: 0, ocrBuildMs: 0,
-};
-// ===== 計測用コードここまで =====
 
 // --- OpenCV.js 動的ロード ---
 
@@ -60,7 +53,7 @@ function loadOpenCV(): Promise<void> {
       poll();
     };
 
-    // cv が Promise の場合は解決を待ち、解決値を globalThis.cv に格納する
+    // cvがPromiseの場合は解決してglobalThis.cvに格納する
     const finalize = () => {
       if (glob.cv && typeof glob.cv.then === "function") {
         glob.cv
@@ -80,7 +73,7 @@ function loadOpenCV(): Promise<void> {
     }
 
     if (typeof document !== "undefined") {
-      // メインスレッド: scriptタグで読み込む
+      // メインスレッド
       const script = document.createElement("script");
       script.src = "/opencv.js";
       script.async = true;
@@ -88,7 +81,7 @@ function loadOpenCV(): Promise<void> {
       script.onload = () => finalize();
       document.head.appendChild(script);
     } else {
-      // ワーカー: fetchで取得しグローバルスコープで実行する
+      // ワーカー
       fetch("/opencv.js")
         .then((res) => res.text())
         .then((code) => {
@@ -143,7 +136,6 @@ async function loadImage(src: string): Promise<ImageBitmap> {
   return await createImageBitmap(blob);
 }
 
-// canvasの2DコンテキストからImageDataを読み出してMatを生成する（RGBA, 4ch）
 function matFromCanvas(canvas: OffscreenCanvas, cv: any): any {
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -530,7 +522,6 @@ async function ocrNumbersForRow(
       for (let cropIndex = 0; cropIndex < cropVariants.length && !confirmed; cropIndex++) {
         const crop = cropVariants[cropIndex];
         for (const attempt of attempts) {
-          const _buildStart = performance.now(); // 計測用（後で削除）
           const ocrInput = buildOcrCanvas(
             crop.cropX,
             crop.cropY,
@@ -541,10 +532,7 @@ async function ocrNumbersForRow(
             attempt.mode,
           );
           const ocrBlob = await ocrInput.convertToBlob();
-          perf.ocrBuildMs += performance.now() - _buildStart; // 計測用（後で削除）
-          const _recStart = performance.now(); // 計測用（後で削除）
           const { data } = await worker.recognize(ocrBlob);
-          perf.recognizeCount++; perf.recognizeMs += performance.now() - _recStart; // 計測用（後で削除）
           const extracted = extractValue(data.text);
           if (extracted.value > 0) {
             if (extracted.hadPlus) {
@@ -605,7 +593,7 @@ export interface RowPosition {
 export interface ProcessScreenshotResult {
   modules: ModuleInput[];
   rowPositions: RowPosition[];
-  mobileCols?: { colXs: number[]; gap: number }; // モバイルで検出/使用した列位置
+  mobileCols?: { colXs: number[]; gap: number };
 }
 
 // --- モジュールアイコン分類 ---
@@ -656,16 +644,10 @@ function classifyStatAtPoint(
     let partBest = -Infinity;
     for (const v of tmpl.colorVariants) {
       const resized = new cv.Mat();
-      let _t = performance.now(); // 計測用（後で削除）
       cv.resize(v.colorMat, resized, new cv.Size(iconSide, iconSide));
-      perf.resizeMs += performance.now() - _t; // 計測用（後で削除）
       if (roi.rows >= resized.rows && roi.cols >= resized.cols) {
-        _t = performance.now(); // 計測用（後で削除）
         cv.matchTemplate(roi, resized, result, cv.TM_CCOEFF_NORMED);
-        perf.matchMs += performance.now() - _t; perf.matchCount++; // 計測用（後で削除）
-        _t = performance.now(); // 計測用（後で削除）
         const s = cv.minMaxLoc(result).maxVal;
-        perf.scanMs += performance.now() - _t; // 計測用（後で削除）
         if (!isNaN(s) && s > partBest) partBest = s;
       }
       resized.delete();
@@ -732,15 +714,9 @@ function classifyModuleIcon(
       const th = Math.round(v.colorMat.rows * moduleScale);
       if (tw < 10 || th < 10 || tw >= roiW || th >= roiH) continue;
 
-      let _t = performance.now(); // 計測用（後で削除）
       cv.resize(v.colorMat, resized, new cv.Size(tw, th));
-      perf.resizeMs += performance.now() - _t; // 計測用（後で削除）
-      _t = performance.now(); // 計測用（後で削除）
       cv.matchTemplate(roi, resized, result, cv.TM_CCOEFF_NORMED);
-      perf.matchMs += performance.now() - _t; perf.matchCount++; // 計測用（後で削除）
-      _t = performance.now(); // 計測用（後で削除）
       const mm = cv.minMaxLoc(result);
-      perf.scanMs += performance.now() - _t; // 計測用（後で削除）
       const score = isNaN(mm.maxVal) ? -Infinity : mm.maxVal;
 
       if (score > partBest) {
@@ -868,15 +844,9 @@ function predictedGridDetectRows(
         const th = Math.round(v.grayMat.rows * scale);
         if (tw >= roi.cols || th >= roi.rows || tw < 5 || th < 5) continue;
         const tmpl = new cv.Mat();
-        let _t = performance.now(); // 計測用（後で削除）
         cv.resize(v.grayMat, tmpl, new cv.Size(tw, th));
-        perf.resizeMs += performance.now() - _t; // 計測用（後で削除）
-        _t = performance.now(); // 計測用（後で削除）
         cv.matchTemplate(roi, tmpl, result, cv.TM_CCOEFF_NORMED);
-        perf.matchMs += performance.now() - _t; perf.matchCount++; // 計測用（後で削除）
-        _t = performance.now(); // 計測用（後で削除）
         if (fastMode) {
-          // data32Fを直接読み取る
           const buf = result.data32F;
           const cols = result.cols;
           for (let y = 0; y < result.rows; y++) {
@@ -889,7 +859,6 @@ function predictedGridDetectRows(
             if (rowMax > yScores[y]) yScores[y] = rowMax;
           }
         } else {
-          // floatAtで1要素ずつ読み取る
           for (let y = 0; y < result.rows; y++) {
             let rowMax = 0;
             for (let x = 0; x < result.cols; x++) {
@@ -899,7 +868,6 @@ function predictedGridDetectRows(
             if (rowMax > yScores[y]) yScores[y] = rowMax;
           }
         }
-        perf.scanMs += performance.now() - _t; // 計測用（後で削除）
         tmpl.delete();
       }
     }
@@ -986,9 +954,7 @@ function detectIconsInLeftRegion(
       const resized = new cv.Mat();
       cv.resize(tmplMat, resized, new cv.Size(tw, th));
       cv.matchTemplate(roiLeft, resized, result, cv.TM_CCOEFF_NORMED);
-      perf.matchCount++; // 計測用（後で削除）
       if (fastMode) {
-        // data32Fを直接読み取る
         const buf = result.data32F;
         const cols = result.cols;
         for (let y = 0; y < result.rows; y++) {
@@ -1001,7 +967,6 @@ function detectIconsInLeftRegion(
           }
         }
       } else {
-        // floatAtで1要素ずつ読み取る
         for (let y = 0; y < result.rows; y++) {
           for (let x = 0; x < result.cols; x++) {
             const s = result.floatAt(y, x);
@@ -1111,26 +1076,9 @@ async function processPredictedGridMode(
 ): Promise<ProcessScreenshotResult> {
   const { scale, iconSize, colXs, yMin, yMax } = predicted;
 
-  // ===== 計測用コード（後で削除する） =====
-  perf.matchCount = 0; perf.recognizeCount = 0; perf.recognizeMs = 0;
-  const _t = { rowDetect: 0, statClassify: 0, moduleClassify: 0, ocr: 0 };
-  let _tMark = performance.now();
-  const _matchBefore = { row: 0, stat: 0, module: 0 };
-  // 各ステージの内訳（リサイズ/matchTemplate/結果走査）
-  const _sub = {
-    row: { resize: 0, match: 0, scan: 0 },
-    stat: { resize: 0, match: 0, scan: 0 },
-    module: { resize: 0, match: 0, scan: 0 },
-  };
-  const _resetSub = () => { perf.resizeMs = 0; perf.matchMs = 0; perf.scanMs = 0; };
-  const _readSub = () => ({ resize: perf.resizeMs, match: perf.matchMs, scan: perf.scanMs });
-  // ===== 計測用コードここまで =====
-
   // Step 1: 行検出（Y範囲制限つき、列位置は計算済み）
   onProgress?.({ stage: "行検出中（予測グリッド）...", percent: 25 });
-  _matchBefore.row = perf.matchCount; _resetSub(); // 計測用（後で削除）
   const rowYs = predictedGridDetectRows(grayEq1x, colXs, iconSize, scale, yMin, yMax, cv, !!customOptions?.fastMode).map(r => r.y);
-  _t.rowDetect = performance.now() - _tMark; _sub.row = _readSub(); // 計測用（後で削除）
   if (rowYs.length === 0) {
     console.warn("[predictedGrid] 行検出失敗");
     gray.delete(); grayEq1x.delete(); colorMat1x.delete();
@@ -1164,7 +1112,6 @@ async function processPredictedGridMode(
   grayEq1x.delete();
   // Step 3: ステータス分類（カラーマッチング）
   onProgress?.({ stage: "ステータスアイコン分類中...", percent: 45 });
-  _tMark = performance.now(); _matchBefore.stat = perf.matchCount; _resetSub(); // 計測用（後で削除）
   const rows: ModuleRow[] = [];
   const STAT_ABSENT_THRESHOLD = 0.55;
 
@@ -1200,11 +1147,9 @@ async function processPredictedGridMode(
     rows.push({ y: ry, stats });
     await new Promise<void>((r) => setTimeout(r, 0));
   }
-  _t.statClassify = performance.now() - _tMark; _sub.stat = _readSub(); // 計測用（後で削除）
 
   // Step 4: モジュールアイコン分類（予測座標で最小探索 → スコア低時のみ広域フォールバック）
   onProgress?.({ stage: "モジュールアイコン検出中...", percent: 55 });
-  _tMark = performance.now(); _matchBefore.module = perf.matchCount; _resetSub(); // 計測用（後で削除）
   const moduleScale = scaledScale * 0.675;
   const predictedModuleX = predicted.moduleIconX * upscale;
   const MODULE_ICON_RETRY_THRESHOLD = 0.70;
@@ -1247,11 +1192,9 @@ async function processPredictedGridMode(
     return { y: row.y, stats: kept };
   });
 
-  _t.moduleClassify = performance.now() - _tMark; _sub.module = _readSub(); // 計測用（後で削除）
 
   // Step 5: 数値OCR
   onProgress?.({ stage: "数値読み取り中...", percent: 60 });
-  _tMark = performance.now(); perf.ocrBuildMs = 0; // 計測用（後で削除）
   const ocrRows: ModuleRow[] = anchoredRows.map((row) => ({
     y: row.y / upscale,
     stats: row.stats.map((s) => ({
@@ -1311,20 +1254,6 @@ async function processPredictedGridMode(
     }
   }
 
-  // ===== 計測用コード（後で削除する） =====
-  _t.ocr = performance.now() - _tMark;
-  const _br = (s: { resize: number; match: number; scan: number }) =>
-    `リサイズ${s.resize.toFixed(0)} / match${s.match.toFixed(0)} / 走査${s.scan.toFixed(0)}`;
-  console.log(
-    `[計測] ${predicted.platform} 行数=${scaledRowYs.length} 倍率=${upscale.toFixed(3)}\n` +
-    `  行検出       : ${_t.rowDetect.toFixed(0)}ms (match ${_matchBefore.stat - _matchBefore.row}回) [${_br(_sub.row)}]\n` +
-    `  ステータス分類: ${_t.statClassify.toFixed(0)}ms (match ${_matchBefore.module - _matchBefore.stat}回) [${_br(_sub.stat)}]\n` +
-    `  モジュール分類: ${_t.moduleClassify.toFixed(0)}ms (match ${perf.matchCount - _matchBefore.module}回) [${_br(_sub.module)}]\n` +
-    `  数値OCR      : ${_t.ocr.toFixed(0)}ms (recognize ${perf.recognizeCount}回 ${perf.recognizeMs.toFixed(0)}ms / クロップ生成 ${perf.ocrBuildMs.toFixed(0)}ms)\n` +
-    `  matchTemplate合計: ${perf.matchCount}回`,
-  );
-  // ===== 計測用コードここまで =====
-
   onProgress?.({ stage: "完了", percent: 100 });
   return { modules, rowPositions };
 }
@@ -1337,16 +1266,12 @@ export async function processScreenshot(
   customOptions?: OcrCustomOptions,
   startUuid?: number,
 ): Promise<ProcessScreenshotResult> {
-  const _tcv = performance.now(); // 計測用（後で削除）
   onProgress?.({ stage: "OpenCV.js 読み込み中...", percent: 0 });
   await loadOpenCV();
   const cv = (globalThis as any).cv;
-  console.log(`[計測] OpenCV.js読込: ${(performance.now() - _tcv).toFixed(0)}ms`); // 計測用（後で削除）
 
-  const _ttmpl = performance.now(); // 計測用（後で削除）
   onProgress?.({ stage: "テンプレート読み込み中...", percent: 10 });
   await loadTemplates();
-  console.log(`[計測] テンプレート読込: ${(performance.now() - _ttmpl).toFixed(0)}ms`); // 計測用（後で削除）
 
   const canvas = new OffscreenCanvas(1, 1);
   const imgWidth = imageSource.width;
@@ -1392,17 +1317,12 @@ export async function processScreenshot(
     const mobileScale = Math.sqrt(imgWidth * imgHeight) / 3470;
     const mobileIconSize = Math.round(80 * mobileScale);
 
-    // 確定済み列位置（presetMobileCols）があれば検出を省略し使い回す
     const cacheKey = `${imgWidth}x${imgHeight}`;
     let colResult: { colXs: number[]; gap: number } | null =
       customOptions?.presetMobileCols ??
       (customOptions?.fastMode ? mobileColCache.get(cacheKey) ?? null : null);
 
     if (!colResult) {
-      const _tDetectPrep = performance.now(); // 計測用（後で削除）
-      const detectW = imgWidth;
-      const detectH = imgHeight;
-
       const detectCanvas = new OffscreenCanvas(imgWidth, imgHeight);
       const detectCtx = detectCanvas.getContext("2d", { willReadFrequently: true })!;
       detectCtx.drawImage(imageSource, 0, 0);
@@ -1418,22 +1338,13 @@ export async function processScreenshot(
 
       const detectScale = mobileScale;
       const detectIconSize = Math.round(80 * detectScale);
-      const _detectPrepMs = performance.now() - _tDetectPrep; // 計測用（後で削除）
-
-      const _tDetectIcons = performance.now(); // 計測用（後で削除）
       const iconHits = detectIconsInLeftRegion(detectGrayEq, detectScale, detectIconSize, cv, !!customOptions?.fastMode);
-      colResult = deriveColumnsFromHits(iconHits, detectIconSize, detectW, detectH);
+      colResult = deriveColumnsFromHits(iconHits, detectIconSize, imgWidth, imgHeight);
       detectGrayEq.delete();
-      console.log( // 計測用（後で削除）
-        `[計測] スマホ検出フェーズ: グレースケール化 ${_detectPrepMs.toFixed(0)}ms / ` +
-        `アイコン検出 ${(performance.now() - _tDetectIcons).toFixed(0)}ms（検出解像度 ${detectW}x${detectH}）`,
-      );
 
       if (customOptions?.fastMode && colResult && colResult.colXs.length >= 1) {
         mobileColCache.set(cacheKey, colResult);
       }
-    } else {
-      console.log(`[計測] スマホ検出フェーズ: 列位置キャッシュ使用（${cacheKey}）`); // 計測用（後で削除）
     }
 
     if (colResult && colResult.colXs.length >= 1) {
