@@ -2823,6 +2823,7 @@ function openOcrSetupModal() {
   // モード選択をリセット
   const normalModeRadio = document.querySelector<HTMLInputElement>('input[name="ocr-mode"][value="normal"]');
   if (normalModeRadio) normalModeRadio.checked = true;
+  $("ocr-setup-fast-warn").style.display = "none";
   // フィルターボタンのラベルをリセット
   updateOcrRarityFilterBtn();
   updateOcrTypeFilterBtn();
@@ -4077,6 +4078,11 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ocr-filter-rarity").onclick = (e) => openOcrRarityFlyout(e.currentTarget as HTMLElement);
   $("ocr-filter-type").onclick = (e) => openOcrTypeFlyout(e.currentTarget as HTMLElement);
   $("ocr-setup-modal-bd").onclick = (e) => { if (e.target === $("ocr-setup-modal-bd")) closeOcrSetupModal(); };
+  for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="ocr-mode"]')) {
+    radio.addEventListener("change", () => {
+      $("ocr-setup-fast-warn").style.display = radio.value === "fast" && radio.checked ? "" : "none";
+    });
+  }
   // Dropzone
   const dropzone = $("ocr-setup-dropzone");
   dropzone.onclick = () => {
