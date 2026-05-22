@@ -6,6 +6,7 @@ export interface OcrCustomOptions {
   filterRarities?: number[];   // rarity値 (2=青, 3=紫, 4=金A, 5=金B)
   filterTypes?: string[];      // 型名 ("attack" | "device" | "protect")
   fastMode?: boolean;          // 分類をアップスケールせず等倍で実行する
+  presetMobileCols?: { colXs: number[]; gap: number }; // 確定済みのモバイル列位置（検出を省略）
 }
 
 // 極系ステータス (partId 2xxx) — 真ん中・右の列では出現しない
@@ -34,15 +35,15 @@ let cvReady: Promise<void> | null = null;
 function loadOpenCV(): Promise<void> {
   if (cvReady) return cvReady;
   const p = new Promise<void>((resolve, reject) => {
-    const win = window as any;
+    const glob = globalThis as any;
 
     // Mat が生成できるまで待機する
     const waitReady = () => {
       const start = Date.now();
       const poll = () => {
         try {
-          if (win.cv && typeof win.cv.Mat === "function") {
-            const test = new win.cv.Mat();
+          if (glob.cv && typeof glob.cv.Mat === "function") {
+            const test = new glob.cv.Mat();
             test.delete();
             resolve();
             return;
@@ -59,12 +60,12 @@ function loadOpenCV(): Promise<void> {
       poll();
     };
 
-    // cv が Promise の場合は解決を待ち、解決値を window.cv に格納する
+    // cv が Promise の場合は解決を待ち、解決値を globalThis.cv に格納する
     const finalize = () => {
-      if (win.cv && typeof win.cv.then === "function") {
-        win.cv
+      if (glob.cv && typeof glob.cv.then === "function") {
+        glob.cv
           .then((cv: any) => {
-            win.cv = cv;
+            glob.cv = cv;
             waitReady();
           })
           .catch(reject);
@@ -73,17 +74,29 @@ function loadOpenCV(): Promise<void> {
       }
     };
 
-    if (win.cv && (typeof win.cv.then === "function" || typeof win.cv.Mat === "function")) {
+    if (glob.cv && (typeof glob.cv.then === "function" || typeof glob.cv.Mat === "function")) {
       finalize();
       return;
     }
 
-    const script = document.createElement("script");
-    script.src = "/opencv.js";
-    script.async = true;
-    script.onerror = () => reject(new Error("OpenCV.jsの読み込みに失敗しました"));
-    script.onload = () => finalize();
-    document.head.appendChild(script);
+    if (typeof document !== "undefined") {
+      // メインスレッド: scriptタグで読み込む
+      const script = document.createElement("script");
+      script.src = "/opencv.js";
+      script.async = true;
+      script.onerror = () => reject(new Error("OpenCV.jsの読み込みに失敗しました"));
+      script.onload = () => finalize();
+      document.head.appendChild(script);
+    } else {
+      // ワーカー: fetchで取得しグローバルスコープで実行する
+      fetch("/opencv.js")
+        .then((res) => res.text())
+        .then((code) => {
+          (0, eval)(code);
+          finalize();
+        })
+        .catch(() => reject(new Error("OpenCV.jsの読み込みに失敗しました")));
+    }
   });
   cvReady = p.catch((err) => { cvReady = null; throw err; });
   return cvReady;
@@ -123,25 +136,27 @@ const CLASSIFY_BACKGROUNDS = [
   { name: "idleLight", fill: "#65777B" },
 ];
 
-async function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`画像の読み込み失敗: ${src}`));
-    img.src = src;
-  });
+async function loadImage(src: string): Promise<ImageBitmap> {
+  const res = await fetch(src);
+  if (!res.ok) throw new Error(`画像の読み込み失敗: ${src}`);
+  const blob = await res.blob();
+  return await createImageBitmap(blob);
+}
+
+// canvasの2DコンテキストからImageDataを読み出してMatを生成する（RGBA, 4ch）
+function matFromCanvas(canvas: OffscreenCanvas, cv: any): any {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return cv.matFromImageData(imageData);
 }
 
 function renderTemplateCanvas(
-  img: HTMLImageElement,
-  backgroundFill: string | HTMLImageElement | null,
-): HTMLCanvasElement {
-  const canvas = document.createElement("canvas");
-  canvas.width = img.width;
-  canvas.height = img.height;
+  img: ImageBitmap,
+  backgroundFill: string | ImageBitmap | null,
+): OffscreenCanvas {
+  const canvas = new OffscreenCanvas(img.width, img.height);
   const ctx = canvas.getContext("2d")!;
-  if (backgroundFill instanceof HTMLImageElement) {
+  if (backgroundFill instanceof ImageBitmap) {
     ctx.drawImage(backgroundFill, 0, 0, img.width, img.height);
   } else if (backgroundFill) {
     ctx.fillStyle = backgroundFill;
@@ -154,10 +169,10 @@ function renderTemplateCanvas(
 }
 
 function buildTemplateMats(
-  canvas: HTMLCanvasElement,
+  canvas: OffscreenCanvas,
   cv: any,
 ): { grayMat: any } {
-  const mat = cv.imread(canvas);
+  const mat = matFromCanvas(canvas, cv);
   const gray = new cv.Mat();
   cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY);
   cv.equalizeHist(gray, gray);
@@ -166,13 +181,13 @@ function buildTemplateMats(
   return { grayMat: gray };
 }
 
-function buildColorMat(canvas: HTMLCanvasElement, cv: any): any {
-  return cv.imread(canvas);
+function buildColorMat(canvas: OffscreenCanvas, cv: any): any {
+  return matFromCanvas(canvas, cv);
 }
 
 async function loadTemplates(): Promise<void> {
   if (templatesLoaded) return;
-  const cv = (window as any).cv;
+  const cv = (globalThis as any).cv;
 
   // リトライ時の重複防止: 既存データを解放してからリセット
   for (const t of statTemplates) {
@@ -218,7 +233,7 @@ async function loadTemplates(): Promise<void> {
     });
   }
 
-  const rarityBgImages: Record<number, HTMLImageElement> = {};
+  const rarityBgImages: Record<number, ImageBitmap> = {};
   for (const r of [2, 3, 4]) {
     rarityBgImages[r] = await loadImage(`/icons/rarity${r}.png`);
   }
@@ -282,7 +297,7 @@ interface ModuleRow {
 // --- 数値OCR ---
 
 async function ocrNumbersForRow(
-  sourceCanvas: HTMLCanvasElement,
+  sourceCanvas: OffscreenCanvas,
   row: ModuleRow,
   worker: Awaited<ReturnType<typeof import("tesseract.js")["createWorker"]>>,
 ): Promise<StatEntry[]> {
@@ -317,7 +332,7 @@ async function ocrNumbersForRow(
   };
 
   // OCR用Canvas（再利用）
-  const ocrCanvas = document.createElement("canvas");
+  const ocrCanvas = new OffscreenCanvas(1, 1);
   const ocrCtx = ocrCanvas.getContext("2d", { willReadFrequently: true })!;
 
   const buildOcrCanvas = (
@@ -328,7 +343,7 @@ async function ocrNumbersForRow(
     threshold: number | null,
     upscale: number,
     mode: "binary-invert" | "binary-normal" | "gray" | "adaptive" | "color-distance",
-  ): HTMLCanvasElement => {
+  ): OffscreenCanvas => {
     ocrCanvas.width = cropW * upscale;
     ocrCanvas.height = cropH * upscale;
     ocrCtx.imageSmoothingEnabled = true;
@@ -525,9 +540,10 @@ async function ocrNumbersForRow(
             attempt.upscale,
             attempt.mode,
           );
+          const ocrBlob = await ocrInput.convertToBlob();
           perf.ocrBuildMs += performance.now() - _buildStart; // 計測用（後で削除）
           const _recStart = performance.now(); // 計測用（後で削除）
-          const { data } = await worker.recognize(ocrInput);
+          const { data } = await worker.recognize(ocrBlob);
           perf.recognizeCount++; perf.recognizeMs += performance.now() - _recStart; // 計測用（後で削除）
           const extracted = extractValue(data.text);
           if (extracted.value > 0) {
@@ -589,6 +605,7 @@ export interface RowPosition {
 export interface ProcessScreenshotResult {
   modules: ModuleInput[];
   rowPositions: RowPosition[];
+  mobileCols?: { colXs: number[]; gap: number }; // モバイルで検出/使用した列位置
 }
 
 // --- モジュールアイコン分類 ---
@@ -1079,7 +1096,7 @@ function deriveColumnsFromHits(
 
 // 予測グリッドモードのメインパイプライン
 async function processPredictedGridMode(
-  canvas: HTMLCanvasElement,
+  canvas: OffscreenCanvas,
   gray: any,
   grayEq1x: any,
   colorMat1x: any,
@@ -1314,7 +1331,7 @@ async function processPredictedGridMode(
 
 
 export async function processScreenshot(
-  imageSource: HTMLImageElement | HTMLCanvasElement,
+  imageSource: ImageBitmap,
   onProgress?: (p: OcrProgress) => void,
   externalWorker?: any,
   customOptions?: OcrCustomOptions,
@@ -1323,7 +1340,7 @@ export async function processScreenshot(
   const _tcv = performance.now(); // 計測用（後で削除）
   onProgress?.({ stage: "OpenCV.js 読み込み中...", percent: 0 });
   await loadOpenCV();
-  const cv = (window as any).cv;
+  const cv = (globalThis as any).cv;
   console.log(`[計測] OpenCV.js読込: ${(performance.now() - _tcv).toFixed(0)}ms`); // 計測用（後で削除）
 
   const _ttmpl = performance.now(); // 計測用（後で削除）
@@ -1331,15 +1348,9 @@ export async function processScreenshot(
   await loadTemplates();
   console.log(`[計測] テンプレート読込: ${(performance.now() - _ttmpl).toFixed(0)}ms`); // 計測用（後で削除）
 
-  const canvas = document.createElement("canvas");
-  const imgWidth =
-    imageSource instanceof HTMLImageElement
-      ? imageSource.naturalWidth
-      : imageSource.width;
-  const imgHeight =
-    imageSource instanceof HTMLImageElement
-      ? imageSource.naturalHeight
-      : imageSource.height;
+  const canvas = new OffscreenCanvas(1, 1);
+  const imgWidth = imageSource.width;
+  const imgHeight = imageSource.height;
 
   // クロップ幅を計算してcanvas作成するヘルパー（予測グリッドパイプライン共通）
   const preparePredictedCanvas = (predicted: PredictedGrid) => {
@@ -1351,7 +1362,7 @@ export async function processScreenshot(
     const pCtx = canvas.getContext("2d")!;
     pCtx.drawImage(imageSource, 0, 0, predictedCropWidth, imgHeight, 0, 0, predictedCropWidth, imgHeight);
 
-    const pSrcMat = cv.imread(canvas);
+    const pSrcMat = matFromCanvas(canvas, cv);
     const pColorMat = pSrcMat.clone();
     const pGray = new cv.Mat();
     cv.cvtColor(pSrcMat, pGray, cv.COLOR_RGBA2GRAY);
@@ -1381,22 +1392,21 @@ export async function processScreenshot(
     const mobileScale = Math.sqrt(imgWidth * imgHeight) / 3470;
     const mobileIconSize = Math.round(80 * mobileScale);
 
-    // 高速化モードでは同サイズの列位置を使い回す
+    // 確定済み列位置（presetMobileCols）があれば検出を省略し使い回す
     const cacheKey = `${imgWidth}x${imgHeight}`;
     let colResult: { colXs: number[]; gap: number } | null =
-      customOptions?.fastMode ? mobileColCache.get(cacheKey) ?? null : null;
+      customOptions?.presetMobileCols ??
+      (customOptions?.fastMode ? mobileColCache.get(cacheKey) ?? null : null);
 
     if (!colResult) {
       const _tDetectPrep = performance.now(); // 計測用（後で削除）
       const detectW = imgWidth;
       const detectH = imgHeight;
 
-      const detectCanvas = document.createElement("canvas");
-      detectCanvas.width = imgWidth;
-      detectCanvas.height = imgHeight;
-      const detectCtx = detectCanvas.getContext("2d")!;
+      const detectCanvas = new OffscreenCanvas(imgWidth, imgHeight);
+      const detectCtx = detectCanvas.getContext("2d", { willReadFrequently: true })!;
       detectCtx.drawImage(imageSource, 0, 0);
-      const detectSrc = cv.imread(detectCanvas);
+      const detectSrc = matFromCanvas(detectCanvas, cv);
       detectCanvas.width = 0;
       detectCanvas.height = 0;
       const detectGray = new cv.Mat();
@@ -1445,13 +1455,15 @@ export async function processScreenshot(
       };
 
       const { pGray, pGrayEq, pColorMat } = preparePredictedCanvas(predicted);
-      return processPredictedGridMode(
+      const result = await processPredictedGridMode(
         canvas, pGray, pGrayEq, pColorMat,
         imgWidth, imgHeight,
         predicted,
         onProgress, externalWorker, customOptions, cv,
         startUuid ?? 1,
       );
+      result.mobileCols = colResult;
+      return result;
     }
 
     // アイコン検出失敗 → 空結果を返す

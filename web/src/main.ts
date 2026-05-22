@@ -5,7 +5,7 @@ import type {
   Combination, ModuleInput, OptimizeRequest,
   OptimizeResponse, StatEntry,
 } from "@shared/types";
-import { processScreenshot, createOcrWorker, resetMobileColCache, type OcrCustomOptions, type RowPosition } from "./ocr";
+import { processScreenshot, createOcrWorker, type OcrCustomOptions, type RowPosition } from "./ocr";
 import {
   saveOcrGroups, loadOcrGroups, deleteOcrGroups, hasOcrGroups,
   type OcrGroup,
@@ -2033,6 +2033,10 @@ function renderOcrModalBody() {
   const listEl = body.querySelector<HTMLElement>(".ocr-group-list");
   const listScrollTop = listEl ? listEl.scrollTop : 0;
 
+  // body内に移動済みの要素をクリア前に退避（2回目以降 getElementById で見つからなくなるのを防ぐ）
+  const savedTargetLabel = (body.querySelector("#ocr-target-only") ?? document.getElementById("ocr-target-only"))?.closest("label") ?? null;
+  const savedConfigBtn = body.querySelector("#ocr-target-config-btn") ?? document.getElementById("ocr-target-config-btn");
+
   body.textContent = "";
 
   const section = document.createElement("div");
@@ -2057,9 +2061,8 @@ function renderOcrModalBody() {
 
   const metaRow = document.createElement("div");
   metaRow.className = "ocr-group-meta";
-  const targetOnlyLabel = ($("ocr-target-only") as HTMLInputElement).closest("label");
-  if (targetOnlyLabel) metaRow.appendChild(targetOnlyLabel);
-  metaRow.appendChild($("ocr-target-config-btn"));
+  if (savedTargetLabel) metaRow.appendChild(savedTargetLabel);
+  if (savedConfigBtn) metaRow.appendChild(savedConfigBtn);
   header.appendChild(metaRow);
 
   section.appendChild(header);
@@ -2892,33 +2895,83 @@ async function startOcrFromSetup() {
   progress.textContent = fmt(t.ui.ocr_progress, { current: 0, total });
   progress.style.display = "";
 
-  let ocrWorker: any = null;
+  const ocrWorkers: Worker[] = [];
   try {
-    ocrWorker = await createOcrWorker();
-    resetMobileColCache();
-
-    for (let fi = 0; fi < files.length; fi++) {
-      const file = files[fi];
-      const imageUrl = URL.createObjectURL(file);
+    // 各ファイルを HTMLImageElement（サムネイル用）と ImageBitmap（ワーカー転送用）に読み込む
+    const loaded = await Promise.all(files.map(async (file) => {
+      const url = URL.createObjectURL(file);
       const img = new Image();
-      img.src = imageUrl;
+      img.src = url;
       await new Promise<void>((resolve, reject) => {
         img.onload = () => resolve();
         img.onerror = () => reject(new Error("Failed to load image"));
       });
-      try {
-        const startId = uuidSeq + 1;
-        const result = await processScreenshot(img, undefined, ocrWorker, customOptions, startId);
-        uuidSeq += result.modules.length;
-        const thumbnailUrl = createThumbnailDataUrl(img, result.rowPositions);
-        groups.push({ imageUrl: thumbnailUrl, modules: result.modules });
-      } catch {
-        throw new Error(t.ui.ocr_failed);
-      } finally {
-        URL.revokeObjectURL(imageUrl);
-        img.src = "";
+      const bitmap = await createImageBitmap(img);
+      URL.revokeObjectURL(url);
+      return { img, bitmap };
+    }));
+
+    type WorkerResult = { modules: ModuleInput[]; rowPositions: RowPosition[]; mobileCols?: { colXs: number[]; gap: number } };
+    const results: (WorkerResult | null)[] = new Array(files.length).fill(null);
+    let completed = 0;
+    // モバイル高速化モードでは1枚目で確定した列位置を以降の画像に渡す
+    const usePreset = customOptions.platform === "mobile" && !!customOptions.fastMode;
+    let presetCols: { colXs: number[]; gap: number } | null = null;
+
+    const poolSize = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, 4, files.length));
+    for (let i = 0; i < poolSize; i++) {
+      ocrWorkers.push(new Worker(new URL("./ocr-worker.ts", import.meta.url), { type: "module" }));
+    }
+
+    const runJob = (worker: Worker, index: number): Promise<void> =>
+      new Promise<void>((resolve) => {
+        const onMsg = (e: MessageEvent) => {
+          if (e.data?.index !== index) return;
+          worker.removeEventListener("message", onMsg);
+          if (e.data.type === "result") {
+            results[index] = {
+              modules: e.data.modules,
+              rowPositions: e.data.rowPositions,
+              mobileCols: e.data.mobileCols ?? undefined,
+            };
+            if (usePreset && !presetCols && e.data.mobileCols) presetCols = e.data.mobileCols;
+          } else {
+            console.warn(`[ocrPool] 画像${index}の処理に失敗: ${e.data.error}`);
+            results[index] = { modules: [], rowPositions: [] };
+          }
+          completed++;
+          progress.textContent = fmt(t.ui.ocr_progress, { current: completed, total });
+          resolve();
+        };
+        worker.addEventListener("message", onMsg);
+        const bm = loaded[index].bitmap;
+        const opts: OcrCustomOptions = presetCols ? { ...customOptions, presetMobileCols: presetCols } : customOptions;
+        worker.postMessage({ type: "process", index, image: bm, customOptions: opts }, [bm]);
+      });
+
+    let nextJob = 0;
+    // 列位置確定のため1枚目を先に単独処理
+    if (usePreset && files.length > 0) {
+      nextJob = 1;
+      await runJob(ocrWorkers[0], 0);
+    }
+    // 残りをワーカープールで並列処理
+    const drain = async (worker: Worker): Promise<void> => {
+      while (true) {
+        const job = nextJob++;
+        if (job >= files.length) break;
+        await runJob(worker, job);
       }
-      progress.textContent = fmt(t.ui.ocr_progress, { current: fi + 1, total });
+    };
+    await Promise.all(ocrWorkers.map((w) => drain(w)));
+
+    // 全完了後に入力順でUUIDを連番付与し、サムネイル付きグループを構築
+    for (let i = 0; i < files.length; i++) {
+      const r = results[i] ?? { modules: [], rowPositions: [] };
+      for (const m of r.modules) m.uuid = nextUuid();
+      const thumbnailUrl = createThumbnailDataUrl(loaded[i].img, r.rowPositions);
+      groups.push({ imageUrl: thumbnailUrl, modules: r.modules });
+      loaded[i].img.src = "";
     }
 
     overlay.remove();
@@ -2929,7 +2982,7 @@ async function startOcrFromSetup() {
     progress.style.display = "none";
     showToast(err instanceof Error ? err.message : t.ui.ocr_failed, "error");
   } finally {
-    if (ocrWorker) await ocrWorker.terminate();
+    ocrWorkers.forEach((w) => w.terminate());
   }
 }
 
@@ -3076,7 +3129,9 @@ async function processCaptureOcrQueue() {
         // auto+PC: 予測グリッドパイプラインで処理（領域指定不要）
         const customOptions: OcrCustomOptions = { platform: "pc" };
         const startId = uuidSeq + 1;
-        const result = await processScreenshot(img, undefined, captureOcrWorker, customOptions, startId);
+        const bitmap = await createImageBitmap(img);
+        const result = await processScreenshot(bitmap, undefined, captureOcrWorker, customOptions, startId);
+        bitmap.close();
         uuidSeq += result.modules.length;
         const thumbnailUrl = createThumbnailDataUrl(img, result.rowPositions);
         captureOcrGroups.push({ imageUrl: thumbnailUrl, modules: result.modules });
