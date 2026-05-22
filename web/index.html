@@ -517,6 +517,23 @@
       </div>
     </div>
 
+    <!-- Exhaustive search warning modal -->
+    <div class="modal-bd" id="exhaustive-warn-bd">
+      <div class="modal modal--confirm">
+        <div class="modal-head">
+          <span class="modal-title" data-i18n="exhaustive_warn_title">総当たり探索の確認</span>
+          <button class="modal-close" id="exhaustive-warn-close"><svg width="1em" height="1em" aria-hidden="true"><use href="#x-icon"/></svg></button>
+        </div>
+        <div class="modal-body">
+          <p id="exhaustive-warn-msg"></p>
+        </div>
+        <div class="modal-footer">
+          <button class="addbtn" id="exhaustive-warn-no" data-i18n="exhaustive_warn_cancel">キャンセル</button>
+          <button class="opt-run-btn" id="exhaustive-warn-yes" data-i18n="exhaustive_warn_ok">実行する</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Pattern delete confirm modal -->
     <div class="modal-bd" id="patdel-modal-bd">
       <div class="modal modal--confirm">

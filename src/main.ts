@@ -1044,12 +1044,7 @@ function confirmExhaustive(count: number): Promise<boolean> {
 
 async function runOptimize() {
   const btn = $<HTMLButtonElement>("opt-run");
-  btn.classList.add("loading");
-  btn.textContent = t.ui.btn_running;
-
   const scrollArea = $("opt-scroll");
-  $("opt-empty").style.display = "none";
-  $("opt-results").style.display = "none";
   const overlay = document.createElement("div");
   overlay.className = "opt-loading-overlay";
   overlay.innerHTML = `<div class="loader"><ul class="hexagon-container">
@@ -1057,8 +1052,6 @@ async function runOptimize() {
     <li class="hexagon hex_3"></li><li class="hexagon hex_4"></li>
     <li class="hexagon hex_5"></li><li class="hexagon hex_6"></li>
     <li class="hexagon hex_7"></li></ul></div>`;
-  scrollArea.appendChild(overlay);
-
   const quality = Number($("opt-quality").dataset.value);
   const speedMode = $("opt-speed").dataset.value ?? "standard";
   const minThresholds: Record<number, number> = {};
@@ -1073,23 +1066,25 @@ async function runOptimize() {
     min_thresholds: Object.keys(minThresholds).length > 0 ? minThresholds : undefined,
   };
 
-  try {
-    // 総当たりモード: 候補数を事前チェックし、600件超なら警告
-    if (speedMode === "exhaustive") {
+  // 総当たりモード: 候補数を事前チェックし、600件超なら警告
+  if (speedMode === "exhaustive") {
+    try {
       const countRes = await invoke<OptimizeResponse>("optimize_modules", {
         req: { ...req, count_only: true },
       });
       if (countRes.filtered_count > 600) {
         const proceed = await confirmExhaustive(countRes.filtered_count);
-        if (!proceed) {
-          overlay.remove();
-          btn.classList.remove("loading");
-          btn.textContent = t.ui.btn_run;
-          return;
-        }
+        if (!proceed) return;
       }
-    }
+    } catch {}
+  }
 
+  btn.classList.add("loading");
+  $("opt-empty").style.display = "none";
+  $("opt-results").style.display = "none";
+  scrollArea.appendChild(overlay);
+
+  try {
     const res = await invoke<OptimizeResponse>("optimize_modules", { req });
     renderOptResults(res);
   } catch (e) {
@@ -1108,7 +1103,6 @@ async function runOptimize() {
   } finally {
     overlay.remove();
     btn.classList.remove("loading");
-    btn.textContent = t.ui.btn_run;
   }
 }
 

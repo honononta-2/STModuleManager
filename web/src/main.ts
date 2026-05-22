@@ -1319,15 +1319,29 @@ function openDetailFly(
 
 let optOverlay: HTMLElement | null = null;
 
+// 総当たり探索の確認モーダルを表示し、実行可否を返す
+function confirmExhaustive(count: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const bd = $("exhaustive-warn-bd");
+    $("exhaustive-warn-msg").textContent = fmt(t.ui.exhaustive_warn_msg, { count });
+    const cleanup = (result: boolean) => {
+      bd.classList.remove("on");
+      $("exhaustive-warn-yes").onclick = null;
+      $("exhaustive-warn-no").onclick = null;
+      $("exhaustive-warn-close").onclick = null;
+      bd.onclick = null;
+      resolve(result);
+    };
+    $("exhaustive-warn-yes").onclick = () => cleanup(true);
+    $("exhaustive-warn-no").onclick = () => cleanup(false);
+    $("exhaustive-warn-close").onclick = () => cleanup(false);
+    bd.onclick = (e) => { if (e.target === bd) cleanup(false); };
+    bd.classList.add("on");
+  });
+}
+
 async function runOptimize() {
   const btn = $<HTMLButtonElement>("opt-run");
-  btn.classList.add("loading");
-  btn.textContent = t.ui.btn_running;
-  $("opt-empty").style.display = "none";
-  $("opt-results").style.display = "none";
-
-  optOverlay = createLoadingOverlay();
-  $("opt-scroll").appendChild(optOverlay);
 
   const quality = Number($("opt-quality").dataset.value);
   const speedMode = $("opt-speed").dataset.value ?? "standard";
@@ -1337,32 +1351,37 @@ async function runOptimize() {
 
   // 総当たりモード: 候補数を事前チェックし、600件超なら警告
   if (speedMode === "exhaustive") {
-    const countRes = await new Promise<OptimizeResponse>((resolve, reject) => {
-      workers[0].onmessage = (e: MessageEvent) => {
-        const { type, data, error } = e.data;
-        if (type === "error") reject(new Error(error));
-        else if (type === "result") resolve(data as OptimizeResponse);
-      };
-      workers[0].postMessage({
-        type: "optimize", modules,
-        request: {
-          required_stats: [...optRequired],
-          desired_stats: [...optDesired],
-          excluded_stats: [...optExcluded],
-          min_quality: quality,
-          speed_mode: speedMode,
-          count_only: true,
-        } satisfies OptimizeRequest,
+    try {
+      const countRes = await new Promise<OptimizeResponse>((resolve, reject) => {
+        workers[0].onmessage = (e: MessageEvent) => {
+          const { type, data, error } = e.data;
+          if (type === "error") reject(new Error(error));
+          else if (type === "result") resolve(data as OptimizeResponse);
+        };
+        workers[0].postMessage({
+          type: "optimize", modules,
+          request: {
+            required_stats: [...optRequired],
+            desired_stats: [...optDesired],
+            excluded_stats: [...optExcluded],
+            min_quality: quality,
+            speed_mode: speedMode,
+            count_only: true,
+          } satisfies OptimizeRequest,
+        });
       });
-    });
-    if (countRes.filtered_count > 600) {
-      const msg = fmt(t.ui.exhaustive_warn_msg, { count: countRes.filtered_count });
-      if (!confirm(msg)) {
-        finishOptimize();
-        return;
+      if (countRes.filtered_count > 600) {
+        const proceed = await confirmExhaustive(countRes.filtered_count);
+        if (!proceed) return;
       }
-    }
+    } catch {}
   }
+
+  btn.classList.add("loading");
+  $("opt-empty").style.display = "none";
+  $("opt-results").style.display = "none";
+  optOverlay = createLoadingOverlay();
+  $("opt-scroll").appendChild(optOverlay);
 
   let completed = 0;
   let errored = false;
@@ -1415,7 +1434,6 @@ function finishOptimize() {
   optOverlay = null;
   const btn = $<HTMLButtonElement>("opt-run");
   btn.classList.remove("loading");
-  btn.textContent = t.ui.btn_run;
 }
 
 // ========== Opt Results ==========
