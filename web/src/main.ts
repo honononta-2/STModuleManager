@@ -5,7 +5,7 @@ import type {
   Combination, ModuleInput, OptimizeRequest,
   OptimizeResponse, StatEntry,
 } from "@shared/types";
-import { processScreenshot, createOcrWorker, type OcrCustomOptions, type RowPosition } from "./ocr";
+import { processScreenshot, createOcrWorker, resetMobileColCache, type OcrCustomOptions, type RowPosition } from "./ocr";
 import {
   saveOcrGroups, loadOcrGroups, deleteOcrGroups, hasOcrGroups,
   type OcrGroup,
@@ -1690,30 +1690,17 @@ function applyOcrTargetFilter() {
   const enabled = ocrTargetEnabled;
   const body = $("ocr-modal-body");
   const rows = body.querySelectorAll<HTMLElement>(".ocr-row");
-  let total = 0;
-  let newCount = 0;
-  let matchCount = 0;
   rows.forEach((row) => {
-    total++;
     const gi = Number(row.dataset.gi);
     const mi = Number(row.dataset.mi);
     const m = pendingOcrGroups[gi]?.modules[mi];
-    const isDup = row.classList.contains("ocr-row--duplicate");
-    if (!isDup) newCount++;
     const eligible = !!m && isOcrTargetEligible(m);
-    if (eligible) matchCount++;
     if (enabled && !eligible) {
       row.classList.add("ocr-row--hidden");
     } else {
       row.classList.remove("ocr-row--hidden");
     }
   });
-  const counter = body.querySelector<HTMLElement>(".ocr-new-count");
-  if (counter) {
-    counter.textContent = enabled
-      ? fmt(t.ui.ocr_new_count_with_match, { total: String(total), newCount: String(newCount), matchCount: String(matchCount) })
-      : fmt(t.ui.ocr_new_count, { total: String(total), newCount: String(newCount) });
-  }
 }
 
 function setMultiSelectBtnLabel(btnId: string, count: number) {
@@ -2068,9 +2055,12 @@ function renderOcrModalBody() {
   hint.textContent = isPointerFine ? t.ui.ocr_hint_pc : t.ui.ocr_hint_mobile;
   header.appendChild(hint);
 
-  const newCountEl = document.createElement("div");
-  newCountEl.className = "ocr-new-count";
-  header.appendChild(newCountEl);
+  const metaRow = document.createElement("div");
+  metaRow.className = "ocr-group-meta";
+  const targetOnlyLabel = ($("ocr-target-only") as HTMLInputElement).closest("label");
+  if (targetOnlyLabel) metaRow.appendChild(targetOnlyLabel);
+  metaRow.appendChild($("ocr-target-config-btn"));
+  header.appendChild(metaRow);
 
   section.appendChild(header);
 
@@ -2905,6 +2895,7 @@ async function startOcrFromSetup() {
   let ocrWorker: any = null;
   try {
     ocrWorker = await createOcrWorker();
+    resetMobileColCache();
 
     for (let fi = 0; fi < files.length; fi++) {
       const file = files[fi];
