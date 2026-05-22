@@ -2053,7 +2053,7 @@ dependencies = [
 
 [[package]]
 name = "module-manager"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "byteorder",
  "chrono",
