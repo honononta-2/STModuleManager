@@ -216,6 +216,7 @@ async function loadTemplates(): Promise<void> {
       const colorMat = buildColorMat(variantCanvas, cv);
       return { name: background.name, colorMat };
     });
+    img.close();
 
     statTemplates.push({
       partId,
@@ -257,6 +258,7 @@ async function loadTemplates(): Promise<void> {
     const bgCanvas = renderTemplateCanvas(img, bgImg);
     const bgColorMat = buildColorMat(bgCanvas, cv);
     modColorVariants.push({ name: "rarityBg", colorMat: bgColorMat });
+    img.close();
 
     moduleIconTemplates.push({
       type: modIcon.type,
@@ -266,6 +268,7 @@ async function loadTemplates(): Promise<void> {
       colorVariants: modColorVariants,
     });
   }
+  Object.values(rarityBgImages).forEach((b) => b.close());
 
   templatesLoaded = true;
 }
@@ -567,7 +570,12 @@ async function ocrNumbersForRow(
 /** 数値OCR用に共通設定済みのtesseract.jsワーカーを生成する */
 export async function createOcrWorker(): Promise<any> {
   const { createWorker } = await import("tesseract.js");
-  const worker = await createWorker("eng");
+  const base = self.location.origin;
+  const worker = await createWorker("eng", undefined, {
+    workerPath: `${base}/tesseract/worker.min.js`,
+    corePath: `${base}/tesseract/core`,
+    langPath: `${base}/tesseract/lang`,
+  });
   await worker.setParameters({
     tessedit_char_whitelist: "+0123456789",
     tessedit_pageseg_mode: "7" as any,
@@ -1095,94 +1103,96 @@ async function processPredictedGridMode(
     upscale = Math.max(2, Math.round(50 / iconSize));
   }
   gray.delete();
+  grayEq1x.delete();
 
   const scaledColXs = colXs.map((x) => x * upscale);
   const scaledRowYs = rowYs.map((y) => y * upscale);
   const scaledIconSize = Math.round(iconSize * upscale);
   const scaledScale = scale * upscale;
 
-  // 分類用カラー画像をリサイズ（縮小時は INTER_AREA）
-  const colorMatUp = new cv.Mat();
-  cv.resize(
-    colorMat1x, colorMatUp, new cv.Size(0, 0), upscale, upscale,
-    upscale < 1 ? cv.INTER_AREA : cv.INTER_CUBIC,
-  );
-
-  // 1x画像は不要なので解放
-  grayEq1x.delete();
-  // Step 3: ステータス分類（カラーマッチング）
-  onProgress?.({ stage: "ステータスアイコン分類中...", percent: 45 });
   const rows: ModuleRow[] = [];
-  const STAT_ABSENT_THRESHOLD = 0.55;
+  const moduleIcons: (ModuleIconMatch | null)[] = [];
+  const colorMatUp = new cv.Mat();
+  try {
+    // 分類用カラー画像をリサイズ（縮小時は INTER_AREA）
+    cv.resize(
+      colorMat1x, colorMatUp, new cv.Size(0, 0), upscale, upscale,
+      upscale < 1 ? cv.INTER_AREA : cv.INTER_CUBIC,
+    );
 
-  for (let ri = 0; ri < scaledRowYs.length; ri++) {
-    const ry = scaledRowYs[ri];
-    const stats: ModuleRow["stats"] = [];
+    // Step 3: ステータス分類（カラーマッチング）
+    onProgress?.({ stage: "ステータスアイコン分類中...", percent: 45 });
+    const STAT_ABSENT_THRESHOLD = 0.55;
 
-    for (let ci = 0; ci < scaledColXs.length; ci++) {
-      const cx = scaledColXs[ci];
-      const excludePids = ci >= 1 ? EXTREME_STAT_PIDS : undefined;
+    for (let ri = 0; ri < scaledRowYs.length; ri++) {
+      const ry = scaledRowYs[ri];
+      const stats: ModuleRow["stats"] = [];
 
-      // カラーマッチング（予測座標・最小探索版）
-      const result = classifyStatAtPoint(colorMatUp, cx, ry, scaledIconSize, cv, excludePids);
+      for (let ci = 0; ci < scaledColXs.length; ci++) {
+        const cx = scaledColXs[ci];
+        const excludePids = ci >= 1 ? EXTREME_STAT_PIDS : undefined;
 
-      // ステータスなし判定: 閾値未満ならスキップ
-      if (result.score < STAT_ABSENT_THRESHOLD) {
+        // カラーマッチング（予測座標・最小探索版）
+        const result = classifyStatAtPoint(colorMatUp, cx, ry, scaledIconSize, cv, excludePids);
+
+        // ステータスなし判定: 閾値未満ならスキップ
+        if (result.score < STAT_ABSENT_THRESHOLD) {
+          await new Promise<void>((r) => setTimeout(r, 0));
+          continue;
+        }
+
+        stats.push({
+          partId: result.pid,
+          x: Math.round(cx - scaledIconSize / 2),
+          y: Math.round(ry - scaledIconSize / 2),
+          w: scaledIconSize,
+          h: scaledIconSize,
+          score: result.score,
+          margin: result.margin,
+        });
         await new Promise<void>((r) => setTimeout(r, 0));
-        continue;
       }
 
-      stats.push({
-        partId: result.pid,
-        x: Math.round(cx - scaledIconSize / 2),
-        y: Math.round(ry - scaledIconSize / 2),
-        w: scaledIconSize,
-        h: scaledIconSize,
-        score: result.score,
-        margin: result.margin,
-      });
+      rows.push({ y: ry, stats });
       await new Promise<void>((r) => setTimeout(r, 0));
     }
 
-    rows.push({ y: ry, stats });
-    await new Promise<void>((r) => setTimeout(r, 0));
-  }
+    // Step 4: モジュールアイコン分類（予測座標で最小探索 → スコア低時のみ広域フォールバック）
+    onProgress?.({ stage: "モジュールアイコン検出中...", percent: 55 });
+    const moduleScale = scaledScale * 0.675;
+    const predictedModuleX = predicted.moduleIconX * upscale;
+    const MODULE_ICON_RETRY_THRESHOLD = 0.70;
 
-  // Step 4: モジュールアイコン分類（予測座標で最小探索 → スコア低時のみ広域フォールバック）
-  onProgress?.({ stage: "モジュールアイコン検出中...", percent: 55 });
-  const moduleScale = scaledScale * 0.675;
-  const predictedModuleX = predicted.moduleIconX * upscale;
-  const MODULE_ICON_RETRY_THRESHOLD = 0.70;
+    const ocrFilterRarities = customOptions?.filterRarities;
+    const ocrFilterTypes = customOptions?.filterTypes;
 
-  const ocrFilterRarities = customOptions?.filterRarities;
-  const ocrFilterTypes = customOptions?.filterTypes;
-
-  const moduleIcons: (ModuleIconMatch | null)[] = [];
-  for (let ri = 0; ri < scaledRowYs.length; ri++) {
-    // Step4-1: 予測位置で最小探索（pad=4px、高速）
-    let result = classifyModuleIcon(
-      colorMatUp, predictedModuleX, scaledRowYs[ri],
-      moduleScale, { x: 4, y: 4 }, cv,
-      ocrFilterRarities, ocrFilterTypes,
-    );
-
-    // Step4-2: スコアが低い場合、広域探索にフォールバック
-    if (!result || result.score < MODULE_ICON_RETRY_THRESHOLD) {
-      const widerResult = classifyModuleIcon(
+    for (let ri = 0; ri < scaledRowYs.length; ri++) {
+      // Step4-1: 予測位置で最小探索（pad=4px、高速）
+      let result = classifyModuleIcon(
         colorMatUp, predictedModuleX, scaledRowYs[ri],
-        moduleScale, "expanded", cv,
+        moduleScale, { x: 4, y: 4 }, cv,
         ocrFilterRarities, ocrFilterTypes,
       );
-      if (widerResult && (!result || widerResult.score > result.score)) {
-        result = widerResult;
-      }
-    }
 
-    moduleIcons.push(result);
-    await new Promise((r) => setTimeout(r, 0));
+      // Step4-2: スコアが低い場合、広域探索にフォールバック
+      if (!result || result.score < MODULE_ICON_RETRY_THRESHOLD) {
+        const widerResult = classifyModuleIcon(
+          colorMatUp, predictedModuleX, scaledRowYs[ri],
+          moduleScale, "expanded", cv,
+          ocrFilterRarities, ocrFilterTypes,
+        );
+        if (widerResult && (!result || widerResult.score > result.score)) {
+          result = widerResult;
+        }
+      }
+
+      moduleIcons.push(result);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  } finally {
+    colorMatUp.delete();
+    colorMat1x.delete();
   }
-  colorMatUp.delete();
-  colorMat1x.delete();
 
   // ステータスが4つ以上検出された行はスコア上位3つに絞る
   const anchoredRows = rows.map((row) => {

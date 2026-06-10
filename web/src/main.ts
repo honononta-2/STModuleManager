@@ -495,7 +495,8 @@ for (let i = 0; i < numWorkers; i++) {
 }
 // WASMモジュールを1回だけコンパイルし、全Workerに転送
 WebAssembly.compileStreaming(fetch(new URL("../pkg/star_optimizer_wasm_bg.wasm", import.meta.url)))
-  .then((mod) => { for (const w of workers) w.postMessage({ type: "init", module: mod }); });
+  .then((mod) => { for (const w of workers) w.postMessage({ type: "init", module: mod }); })
+  .catch(() => { showToast(t.ui.error_wasm_init, "error"); });
 
 // ========== Storage ==========
 function saveModulesToStorage() {
@@ -504,7 +505,15 @@ function saveModulesToStorage() {
 function loadModulesFromStorage() {
   try {
     const saved = localStorage.getItem("modules");
-    if (saved) modules = JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // 配列要素のうち最低限の構造を持つものだけ取り込む
+      if (Array.isArray(parsed)) {
+        modules = parsed.filter(
+          (m: any) => m && typeof m.uuid === "number" && Array.isArray(m.stats),
+        );
+      }
+    }
   } catch { /* ignore */ }
   // 既存モジュールの最大uuidでカウンターを初期化
   for (const m of modules) if (m.uuid > uuidSeq) uuidSeq = m.uuid;
@@ -1342,6 +1351,8 @@ function confirmExhaustive(count: number): Promise<boolean> {
 
 async function runOptimize() {
   const btn = $<HTMLButtonElement>("opt-run");
+  if (btn.classList.contains("loading")) return;
+  btn.classList.add("loading");
 
   const quality = Number($("opt-quality").dataset.value);
   const speedMode = $("opt-speed").dataset.value ?? "standard";
@@ -1353,6 +1364,7 @@ async function runOptimize() {
   if (speedMode === "exhaustive") {
     try {
       const countRes = await new Promise<OptimizeResponse>((resolve, reject) => {
+        workers[0].onerror = () => reject(new Error("worker error"));
         workers[0].onmessage = (e: MessageEvent) => {
           const { type, data, error } = e.data;
           if (type === "error") reject(new Error(error));
@@ -1372,12 +1384,14 @@ async function runOptimize() {
       });
       if (countRes.filtered_count > 600) {
         const proceed = await confirmExhaustive(countRes.filtered_count);
-        if (!proceed) return;
+        if (!proceed) {
+          btn.classList.remove("loading");
+          return;
+        }
       }
     } catch {}
   }
 
-  btn.classList.add("loading");
   $("opt-empty").style.display = "none";
   $("opt-results").style.display = "none";
   optOverlay = createLoadingOverlay();
@@ -1401,6 +1415,12 @@ async function runOptimize() {
       min_thresholds: Object.keys(minThresholds).length > 0 ? minThresholds : undefined,
     };
 
+    workers[i].onerror = () => {
+      if (errored) return;
+      errored = true;
+      showToast(t.ui.error_optimize, "error");
+      finishOptimize();
+    };
     workers[i].onmessage = (e: MessageEvent) => {
       const { type, data, error } = e.data;
       if (errored) return;
@@ -2940,11 +2960,18 @@ async function startOcrFromSetup() {
       ocrWorkers.push(new Worker(new URL("./ocr-worker.ts", import.meta.url), { type: "module" }));
     }
 
+    const deadWorkers = new Set<Worker>();
     const runJob = (worker: Worker, index: number): Promise<void> =>
       new Promise<void>((resolve) => {
+        const finishJob = () => {
+          worker.removeEventListener("message", onMsg);
+          worker.removeEventListener("error", onErr);
+          completed++;
+          progress.textContent = fmt(t.ui.ocr_progress, { current: completed, total });
+          resolve();
+        };
         const onMsg = (e: MessageEvent) => {
           if (e.data?.index !== index) return;
-          worker.removeEventListener("message", onMsg);
           if (e.data.type === "result") {
             results[index] = {
               modules: e.data.modules,
@@ -2956,11 +2983,16 @@ async function startOcrFromSetup() {
             console.warn(`[ocrPool] 画像${index}の処理に失敗: ${e.data.error}`);
             results[index] = { modules: [], rowPositions: [] };
           }
-          completed++;
-          progress.textContent = fmt(t.ui.ocr_progress, { current: completed, total });
-          resolve();
+          finishJob();
+        };
+        const onErr = (e: ErrorEvent) => {
+          deadWorkers.add(worker);
+          console.warn(`[ocrPool] 画像${index}の処理中にワーカーがクラッシュ: ${e.message}`);
+          results[index] = { modules: [], rowPositions: [] };
+          finishJob();
         };
         worker.addEventListener("message", onMsg);
+        worker.addEventListener("error", onErr);
         const bm = loaded[index].bitmap;
         const opts: OcrCustomOptions = presetCols ? { ...customOptions, presetMobileCols: presetCols } : customOptions;
         worker.postMessage({ type: "process", index, image: bm, customOptions: opts }, [bm]);
@@ -2974,7 +3006,7 @@ async function startOcrFromSetup() {
     }
     // 残りの画像を並列処理する
     const drain = async (worker: Worker): Promise<void> => {
-      while (true) {
+      while (!deadWorkers.has(worker)) {
         const job = nextJob++;
         if (job >= files.length) break;
         await runJob(worker, job);
@@ -3638,7 +3670,11 @@ document.addEventListener("touchmove", (e) => {
 
 // ========== Image pinch zoom ==========
 
+let imagePinchZoomCleanup: (() => void) | null = null;
+
 function setupImagePinchZoom(container: HTMLElement, gi: number) {
+  imagePinchZoomCleanup?.();
+  imagePinchZoomCleanup = null;
   const img = container.querySelector("img");
   if (!img) return;
 
@@ -3757,7 +3793,7 @@ function setupImagePinchZoom(container: HTMLElement, gi: number) {
     if (scale > 1) container.style.cursor = "grabbing";
   });
 
-  window.addEventListener("mousemove", (e) => {
+  const onWindowMouseMove = (e: MouseEvent) => {
     if (!mouseDown) return;
     const dx = e.clientX - mDownX;
     const dy = e.clientY - mDownY;
@@ -3769,9 +3805,9 @@ function setupImagePinchZoom(container: HTMLElement, gi: number) {
       clampTranslate();
       applyTransform();
     }
-  });
+  };
 
-  window.addEventListener("mouseup", (e) => {
+  const onWindowMouseUp = (e: MouseEvent) => {
     if (!mouseDown) return;
     mouseDown = false;
     container.style.cursor = "";
@@ -3794,7 +3830,14 @@ function setupImagePinchZoom(container: HTMLElement, gi: number) {
       translateY = 0;
     }
     applyTransform();
-  });
+  };
+
+  window.addEventListener("mousemove", onWindowMouseMove);
+  window.addEventListener("mouseup", onWindowMouseUp);
+  imagePinchZoomCleanup = () => {
+    window.removeEventListener("mousemove", onWindowMouseMove);
+    window.removeEventListener("mouseup", onWindowMouseUp);
+  };
 
   // ---- PC: Ctrl + ホイールで拡大縮小 ----
   container.addEventListener("wheel", (e) => {
