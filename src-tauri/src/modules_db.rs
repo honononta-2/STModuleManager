@@ -158,12 +158,6 @@ impl ModulesDbState {
             changed = true;
         }
 
-        // 変化がなければファイル書き出しをスキップ
-        drop(db);
-        if changed {
-            self.save()?;
-        }
-
         Ok((new_count, changed))
     }
 
@@ -193,8 +187,6 @@ impl ModulesDbState {
             },
         );
 
-        drop(db);
-        self.save()?;
         Ok(is_new)
     }
 
@@ -224,8 +216,6 @@ impl ModulesDbState {
             );
         }
 
-        drop(db);
-        self.save()?;
         Ok(())
     }
 
@@ -234,10 +224,6 @@ impl ModulesDbState {
         let mut db = self.db.lock().map_err(|e| e.to_string())?;
         let key = uuid.to_string();
         let existed = db.modules.remove(&key).is_some();
-        drop(db);
-        if existed {
-            self.save()?;
-        }
         Ok(existed)
     }
 }

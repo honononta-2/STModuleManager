@@ -124,7 +124,7 @@ fn decode_message(data: &[u8], depth: usize) -> Option<Value> {
 
 /// デコード結果がネストされたメッセージとして妥当かを判定する。
 /// packed varint が偶然有効な protobuf に見える場合、フィールド番号が
-/// 異常に大きくなるため、閾値(100)を超えるフィールドがあれば棄却する。
+/// 異常に大きくなるため、閾値(130)を超えるフィールドがあれば棄却する。
 fn is_plausible_message(value: &Value) -> bool {
     const MAX_PLAUSIBLE_FIELD: u32 = 130;
     if let Value::Object(map) = value {

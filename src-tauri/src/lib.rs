@@ -204,6 +204,9 @@ pub fn run() {
                     }
 
                     if changed {
+                        if let Err(e) = db.save() {
+                            eprintln!("[monitor] DB保存エラー: {}", e);
+                        }
                         let _ = app_handle.emit("modules-updated", new_count);
                     }
                 }

@@ -215,7 +215,7 @@ pub fn get_system_locale() -> String {
 
 /// AppDataのデータファイルをすべて削除してアプリを終了する
 #[tauri::command]
-pub fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
+pub fn clear_app_data(app: tauri::AppHandle, bg: State<BackgroundActive>) -> Result<(), String> {
     let app_data_dir = app
         .path()
         .app_data_dir()
@@ -228,6 +228,7 @@ pub fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
         }
     }
 
+    bg.0.store(false, Ordering::Relaxed);
     app.exit(0);
     Ok(())
 }

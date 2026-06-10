@@ -13,6 +13,8 @@ use windivert::prelude::WinDivertFlags;
 const MAX_BACKTRACK_BYTES: u32 = 2 * 1024 * 1024;
 /// zstd展開の最大出力サイズ（展開爆弾対策）
 const MAX_DECOMPRESS_BYTES: usize = 16 * 1024 * 1024; // 16 MB
+/// フレーム再帰展開の最大深さ
+const MAX_FRAME_DEPTH: usize = 10;
 
 /// サイズ制限付きzstd展開。出力が MAX_DECOMPRESS_BYTES を超えた場合はエラーを返す。
 fn zstd_decode_limited(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
@@ -104,7 +106,7 @@ pub fn run_capture(
         if known_server != Some(curr_server) {
             let tcp_payload = tcp.payload();
 
-            if try_detect_game_server(tcp_payload) {
+            if try_detect_game_server(tcp_payload, 0) {
                 eprintln!("[capture] ゲームサーバー検出: {}", curr_server);
                 known_server = Some(curr_server);
                 server_found.store(true, Ordering::Relaxed);
@@ -157,7 +159,7 @@ pub fn run_capture(
         }
 
         while let Some(frame) = reassembler.try_next() {
-            process_frame(BinaryReader::from(frame), &module_tx);
+            process_frame(BinaryReader::from(frame), &module_tx, 0);
         }
 
         if defer_reset {
@@ -170,7 +172,10 @@ pub fn run_capture(
 }
 
 /// 1フレームを解析し、SyncContainerData (0x15) を検出したらチャネルに送信
-fn process_frame(mut reader: BinaryReader, module_tx: &Sender<ModulePayload>) {
+fn process_frame(mut reader: BinaryReader, module_tx: &Sender<ModulePayload>, depth: usize) {
+    if depth > MAX_FRAME_DEPTH {
+        return;
+    }
     while reader.remaining() > 0 {
         let frame_size = match reader.peek_u32() {
             Ok(sz) => sz,
@@ -219,7 +224,7 @@ fn process_frame(mut reader: BinaryReader, module_tx: &Sender<ModulePayload>) {
                     nested
                 };
                 // FrameDown の中身を再帰的に処理
-                process_frame(BinaryReader::from(nested_data), module_tx);
+                process_frame(BinaryReader::from(nested_data), module_tx, depth + 1);
             }
             _ => continue,
         }
@@ -249,7 +254,10 @@ const GAME_SERVICE_UUID: u64 = 0x0000000063335342;
 
 /// TCPペイロードをゲームプロトコルとして試しにパースし、
 /// service_uuid が一致するフレームが見つかればゲームサーバーと判定する。
-fn try_detect_game_server(tcp_payload: &[u8]) -> bool {
+fn try_detect_game_server(tcp_payload: &[u8], depth: usize) -> bool {
+    if depth > MAX_FRAME_DEPTH {
+        return false;
+    }
     // 最低限フレームヘッダ (4 len + 2 type + 8 uuid + 4 stub + 4 method = 22) が必要
     if tcp_payload.len() < 22 {
         return false;
@@ -317,7 +325,7 @@ fn try_detect_game_server(tcp_payload: &[u8]) -> bool {
                     } else {
                         nested.to_vec()
                     };
-                    if try_detect_game_server(&nested_data) {
+                    if try_detect_game_server(&nested_data, depth + 1) {
                         return true;
                     }
                 }
