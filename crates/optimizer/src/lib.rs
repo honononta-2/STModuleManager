@@ -102,6 +102,27 @@ struct ModuleFlat {
     contribution: f64,
 }
 
+// totals に疎なステータスを加算し、スコアの増分を返す
+fn add_delta(totals: &mut [u8], sp: &[(usize, u8)], bp_lookup: &[[f64; 21]]) -> f64 {
+    let mut delta = 0.0f64;
+    for &(idx, val) in sp {
+        let before = totals[idx];
+        let after = before + val;
+        delta += bp_lookup[idx][(after as usize).min(20)]
+            - bp_lookup[idx][(before as usize).min(20)];
+        delta += val as f64 * PLUS_BONUS_MULTIPLIER;
+        totals[idx] = after;
+    }
+    delta
+}
+
+// totals から疎なステータスを減算する
+fn sub_sparse(totals: &mut [u8], sp: &[(usize, u8)]) {
+    for &(idx, val) in sp {
+        totals[idx] -= val;
+    }
+}
+
 // --- 公開API ---
 
 pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeResponse {
@@ -209,17 +230,26 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         .collect();
     let stat_count = all_part_ids.len();
 
-    let stat_arrays: Vec<Vec<u8>> = flats
+    // 各候補が持つ (stat_index, value) のみを保持する疎な表現
+    let sparse: Vec<Vec<(usize, u8)>> = flats
         .iter()
         .map(|f| {
-            let mut arr = vec![0u8; stat_count];
-            for &(pid, val) in &f.stats {
-                if let Some(&idx) = pid_to_idx.get(&pid) {
-                    arr[idx] = val.clamp(0, 20) as u8;
-                }
-            }
-            arr
+            let mut v: Vec<(usize, u8)> = f
+                .stats
+                .iter()
+                .filter_map(|&(pid, val)| {
+                    pid_to_idx.get(&pid).map(|&idx| (idx, val.clamp(0, 20) as u8))
+                })
+                .collect();
+            v.sort_by_key(|&(idx, _)| idx);
+            v
         })
+        .collect();
+
+    // 各候補のステータス値の合計（上界スコアの定数項計算に使用）
+    let module_sum: Vec<f64> = sparse
+        .iter()
+        .map(|sp| sp.iter().map(|&(_, val)| val as f64).sum())
         .collect();
 
     // ステータスインデックスごとのBPスコアルックアップテーブル（値0〜20→スコア）
@@ -248,16 +278,8 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         })
         .collect();
 
-    let score_stats = |totals: &[u8]| -> f64 {
-        let mut score = 0.0f64;
-        let mut total_plus = 0i64;
-        for (si, &total) in totals.iter().enumerate() {
-            total_plus += total as i64;
-            let clamped = (total as usize).min(20);
-            score += bp_lookup[si][clamped];
-        }
-        score + total_plus as f64 * PLUS_BONUS_MULTIPLIER
-    };
+    // 全ステータスが+20到達した場合のBPスコア合計（上界スコアの定数項）
+    let max_bp_sum: f64 = (0..stat_count).map(|si| bp_lookup[si][20]).sum();
 
     // --- 4重ループ探索 ---
     let n = filtered_count;
@@ -287,21 +309,20 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
 
     let search_from_i = |i: usize| {
         let mut local_best = BoundedHeap::new(top_k);
-        let si = &stat_arrays[i];
 
-        let mut partial2 = vec![0u8; stat_count];
-        let mut partial3 = vec![0u8; stat_count];
-        let mut totals_buf = vec![0u8; stat_count];
-        let mut ub_buf = vec![0u8; stat_count];
+        // i,j,k 枠ぶんを累積する密バッファ（探索中に加減算で使い回す）
+        let mut totals = vec![0u8; stat_count];
+
+        let si = &sparse[i];
+        let base_i = add_delta(&mut totals, si, &bp_lookup);
+        let sum_i = module_sum[i];
 
         let mut cached_global_threshold = f64::NEG_INFINITY;
         let mut j_count = 0u32;
 
         for j in (i + 1)..n {
-            let sj = &stat_arrays[j];
-            for s in 0..stat_count {
-                partial2[s] = si[s] + sj[s];
-            }
+            let sj = &sparse[j];
+            let base_j = base_i + add_delta(&mut totals, sj, &bp_lookup);
 
             j_count += 1;
             if j_count % 64 == 0 {
@@ -314,38 +335,41 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
                 cached_global_threshold
             };
 
+            // 残り2枠が全ステータス+20に到達したと仮定した上界スコアでカット
             if local_threshold > f64::NEG_INFINITY {
-                for s in 0..stat_count {
-                    ub_buf[s] = partial2[s] + 20;
-                }
-                if score_stats(&ub_buf) < local_threshold {
+                let ub = max_bp_sum
+                    + (sum_i + module_sum[j] + 20.0 * stat_count as f64)
+                        * PLUS_BONUS_MULTIPLIER;
+                if ub < local_threshold {
+                    sub_sparse(&mut totals, sj);
                     continue;
                 }
             }
 
             for k in (j + 1)..n {
-                let sk = &stat_arrays[k];
-                for s in 0..stat_count {
-                    partial3[s] = partial2[s] + sk[s];
-                }
+                let sk = &sparse[k];
+                let base_k = base_j + add_delta(&mut totals, sk, &bp_lookup);
 
                 for l in (k + 1)..n {
-                    let sl = &stat_arrays[l];
-                    for s in 0..stat_count {
-                        totals_buf[s] = partial3[s] + sl[s];
-                    }
+                    let sl = &sparse[l];
+                    let sc = base_k + add_delta(&mut totals, sl, &bp_lookup);
+
                     // min_thresholds を満たさない組み合わせはスキップ
-                    if !threshold_constraints.is_empty()
-                        && !threshold_constraints
+                    let ok = threshold_constraints.is_empty()
+                        || threshold_constraints
                             .iter()
-                            .all(|&(si, min_val)| totals_buf[si] >= min_val)
-                    {
-                        continue;
+                            .all(|&(ti, min_val)| totals[ti] >= min_val);
+                    if ok {
+                        local_best.push(sc, [i, j, k, l]);
                     }
-                    let sc = score_stats(&totals_buf);
-                    local_best.push(sc, [i, j, k, l]);
+
+                    sub_sparse(&mut totals, sl);
                 }
+
+                sub_sparse(&mut totals, sk);
             }
+
+            sub_sparse(&mut totals, sj);
         }
 
         let mut g = global_best.lock().unwrap();
@@ -390,14 +414,12 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         .iter()
         .enumerate()
         .map(|(rank, (score, indices))| {
-            let totals: Vec<i64> = (0..stat_count)
-                .map(|si| {
-                    indices
-                        .iter()
-                        .map(|&idx| stat_arrays[idx][si] as i64)
-                        .sum::<i64>()
-                })
-                .collect();
+            let mut totals = vec![0i64; stat_count];
+            for &idx in indices.iter() {
+                for &(si, val) in &sparse[idx] {
+                    totals[si] += val as i64;
+                }
+            }
 
             let stat_totals: Vec<StatTotal> = all_part_ids
                 .iter()
@@ -509,6 +531,7 @@ struct HeapEntry {
 struct BoundedHeap {
     entries: Vec<HeapEntry>,
     capacity: usize,
+    min_cached: f64,
 }
 
 impl BoundedHeap {
@@ -516,28 +539,33 @@ impl BoundedHeap {
         Self {
             entries: Vec::with_capacity(capacity + 1),
             capacity,
+            min_cached: f64::NEG_INFINITY,
         }
     }
 
     fn min_score(&self) -> f64 {
-        if self.entries.len() < self.capacity {
-            f64::NEG_INFINITY
-        } else {
-            self.entries
-                .iter()
-                .map(|e| e.score)
-                .fold(f64::INFINITY, f64::min)
-        }
+        self.min_cached
     }
 
     fn is_full(&self) -> bool {
         self.entries.len() >= self.capacity
     }
 
+    fn recompute_min(&mut self) {
+        self.min_cached = self
+            .entries
+            .iter()
+            .map(|e| e.score)
+            .fold(f64::INFINITY, f64::min);
+    }
+
     fn push(&mut self, score: f64, indices: [usize; 4]) {
         if self.entries.len() < self.capacity {
             self.entries.push(HeapEntry { score, indices });
-        } else {
+            if self.entries.len() == self.capacity {
+                self.recompute_min();
+            }
+        } else if score > self.min_cached {
             let min_idx = self
                 .entries
                 .iter()
@@ -545,9 +573,8 @@ impl BoundedHeap {
                 .min_by(|(_, a), (_, b)| a.score.partial_cmp(&b.score).unwrap())
                 .map(|(i, _)| i)
                 .unwrap();
-            if score > self.entries[min_idx].score {
-                self.entries[min_idx] = HeapEntry { score, indices };
-            }
+            self.entries[min_idx] = HeapEntry { score, indices };
+            self.recompute_min();
         }
     }
 }
