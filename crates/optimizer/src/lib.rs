@@ -35,6 +35,8 @@ const CONTRIB_MAIN_WEIGHT: f64 = 3.0;
 const CONTRIB_SUB_WEIGHT: f64 = 1.0;
 const CONTRIB_OTHER_WEIGHT: f64 = 0.5;
 const PLUS_BONUS_MULTIPLIER: f64 = 2.0;
+// 1モジュールの1ステータスに乗りうる最大値
+const MODULE_STAT_MAX_VALUE: usize = 10;
 
 // --- 最適化リクエスト/レスポンス ---
 
@@ -121,6 +123,25 @@ fn sub_sparse(totals: &mut [u8], sp: &[(usize, u8)]) {
     for &(idx, val) in sp {
         totals[idx] -= val;
     }
+}
+
+// 残り1枠で伸ばせる最大スコア（各ステータスの伸びのうち上位3つの合計）
+fn remaining_gain(totals: &[u8], gain_lookup: &[[f64; 21]]) -> f64 {
+    let (mut g1, mut g2, mut g3) = (0.0f64, 0.0f64, 0.0f64);
+    for (si, &v) in totals.iter().enumerate() {
+        let gain = gain_lookup[si][(v as usize).min(20)];
+        if gain > g1 {
+            g3 = g2;
+            g2 = g1;
+            g1 = gain;
+        } else if gain > g2 {
+            g3 = g2;
+            g2 = gain;
+        } else if gain > g3 {
+            g3 = gain;
+        }
+    }
+    g1 + g2 + g3
 }
 
 // --- 公開API ---
@@ -238,7 +259,9 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
                 .stats
                 .iter()
                 .filter_map(|&(pid, val)| {
-                    pid_to_idx.get(&pid).map(|&idx| (idx, val.clamp(0, 20) as u8))
+                    pid_to_idx
+                        .get(&pid)
+                        .map(|&idx| (idx, val.clamp(0, MODULE_STAT_MAX_VALUE as i64) as u8))
                 })
                 .collect();
             v.sort_by_key(|&(idx, _)| idx);
@@ -280,6 +303,19 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
 
     // 全ステータスが+20到達した場合のBPスコア合計（上界スコアの定数項）
     let max_bp_sum: f64 = (0..stat_count).map(|si| bp_lookup[si][20]).sum();
+
+    // 残り1枠で各ステータスを+10伸ばしたときのスコア増分（BP増分 + プラスボーナス分）
+    let gain_lookup: Vec<[f64; 21]> = bp_lookup
+        .iter()
+        .map(|bp| {
+            let mut g = [0.0f64; 21];
+            for v in 0..=20usize {
+                g[v] = bp[(v + MODULE_STAT_MAX_VALUE).min(20)] - bp[v]
+                    + MODULE_STAT_MAX_VALUE as f64 * PLUS_BONUS_MULTIPLIER;
+            }
+            g
+        })
+        .collect();
 
     // --- 4重ループ探索 ---
     let n = filtered_count;
@@ -349,6 +385,19 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
             for k in (j + 1)..n {
                 let sk = &sparse[k];
                 let base_k = base_j + add_delta(&mut totals, sk, &bp_lookup);
+
+                // 残り1枠が伸ばせる最大スコアでカット
+                let k_threshold = if local_best.is_full() {
+                    local_best.min_score().max(cached_global_threshold)
+                } else {
+                    cached_global_threshold
+                };
+                if k_threshold > f64::NEG_INFINITY
+                    && base_k + remaining_gain(&totals, &gain_lookup) < k_threshold
+                {
+                    sub_sparse(&mut totals, sk);
+                    continue;
+                }
 
                 for l in (k + 1)..n {
                     let sl = &sparse[l];
