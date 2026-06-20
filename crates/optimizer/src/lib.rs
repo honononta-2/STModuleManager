@@ -61,6 +61,9 @@ pub struct OptimizeRequest {
     /// カウントのみモード: Stage1&2フィルタ後の候補数だけ返す（探索は行わない）
     #[serde(default)]
     pub count_only: Option<bool>,
+    /// 装着枠数（選択するモジュール数）。未指定時は4
+    #[serde(default)]
+    pub slot_count: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -171,10 +174,118 @@ fn remaining_gain_2(totals: &[u8], gain1_lookup: &[[f64; 21]], gain2_lookup: &[[
     dp[6]
 }
 
+// 探索中に全枠で共有する読み取り専用データ
+struct SearchCtx<'a> {
+    n: usize,
+    slot_count: usize,
+    sparse: &'a [Vec<(usize, u8)>],
+    bp_lookup: &'a [[f64; 21]],
+    gain1_lookup: &'a [[f64; 21]],
+    gain2_lookup: &'a [[f64; 21]],
+    module_sum: &'a [f64],
+    max_bp_sum: f64,
+    stat_count: usize,
+    threshold_constraints: &'a [(usize, u8)],
+    global_best: &'a Mutex<BoundedHeap>,
+}
+
+// 残りの枠を1つずつ確定しながら組み合わせを探索する
+fn search_rec(
+    ctx: &SearchCtx,
+    depth: usize,
+    start: usize,
+    base: f64,
+    sum_acc: f64,
+    totals: &mut [u8],
+    indices: &mut [usize],
+    local_best: &mut BoundedHeap,
+    cached_global_threshold: &mut f64,
+    counter: &mut u32,
+) {
+    let is_last = depth == ctx.slot_count - 1;
+
+    for idx in start..ctx.n {
+        let sp = &ctx.sparse[idx];
+        let base_new = base + add_delta(totals, sp, ctx.bp_lookup);
+        indices[depth] = idx;
+
+        if is_last {
+            // min_thresholds を満たさない組み合わせはスキップ
+            let ok = ctx.threshold_constraints.is_empty()
+                || ctx
+                    .threshold_constraints
+                    .iter()
+                    .all(|&(ti, min_val)| totals[ti] >= min_val);
+            if ok {
+                local_best.push(base_new, indices.to_vec());
+            }
+            sub_sparse(totals, sp);
+            continue;
+        }
+
+        // この枠を確定した後に残る枠数
+        let remaining = ctx.slot_count - depth - 1;
+
+        // 残り1枠・残り2枠でのみ枝刈りする
+        if remaining <= 2 {
+            *counter += 1;
+            if *counter % 64 == 0 {
+                *cached_global_threshold = ctx.global_best.lock().unwrap().min_score();
+            }
+            let local_threshold = if local_best.is_full() {
+                local_best.min_score().max(*cached_global_threshold)
+            } else {
+                *cached_global_threshold
+            };
+
+            if local_threshold > f64::NEG_INFINITY {
+                if remaining == 2 {
+                    // 残り2枠が全ステータス+20に到達したと仮定した上界スコアでカット
+                    let ub = ctx.max_bp_sum
+                        + (sum_acc + ctx.module_sum[idx] + 20.0 * ctx.stat_count as f64)
+                            * PLUS_BONUS_MULTIPLIER;
+                    if ub < local_threshold {
+                        sub_sparse(totals, sp);
+                        continue;
+                    }
+                    // 残り2枠で伸ばせる最大スコアでカット
+                    if base_new + remaining_gain_2(totals, ctx.gain1_lookup, ctx.gain2_lookup)
+                        < local_threshold
+                    {
+                        sub_sparse(totals, sp);
+                        continue;
+                    }
+                } else {
+                    // 残り1枠で伸ばせる最大スコアでカット
+                    if base_new + remaining_gain(totals, ctx.gain1_lookup) < local_threshold {
+                        sub_sparse(totals, sp);
+                        continue;
+                    }
+                }
+            }
+        }
+
+        search_rec(
+            ctx,
+            depth + 1,
+            idx + 1,
+            base_new,
+            sum_acc + ctx.module_sum[idx],
+            totals,
+            indices,
+            local_best,
+            cached_global_threshold,
+            counter,
+        );
+        sub_sparse(totals, sp);
+    }
+}
+
 // --- 公開API ---
 
 pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeResponse {
     let total_modules = modules.len();
+    let slot_count = req.slot_count.unwrap_or(4).max(2);
 
     let required_set: std::collections::HashSet<i64> =
         req.required_stats.iter().copied().collect();
@@ -256,7 +367,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
 
     let filtered_count = flats.len();
 
-    if filtered_count < 4 {
+    if filtered_count < slot_count {
         return OptimizeResponse {
             combinations: vec![],
             filtered_count,
@@ -383,89 +494,48 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
 
     let global_best = Mutex::new(BoundedHeap::new(top_k));
 
+    let ctx = SearchCtx {
+        n,
+        slot_count,
+        sparse: &sparse,
+        bp_lookup: &bp_lookup,
+        gain1_lookup: &gain1_lookup,
+        gain2_lookup: &gain2_lookup,
+        module_sum: &module_sum,
+        max_bp_sum,
+        stat_count,
+        threshold_constraints: &threshold_constraints,
+        global_best: &global_best,
+    };
+
     let search_from_i = |i: usize| {
         let mut local_best = BoundedHeap::new(top_k);
 
-        // i,j,k 枠ぶんを累積する密バッファ（探索中に加減算で使い回す）
+        // 探索中に加減算で使い回す密バッファ
         let mut totals = vec![0u8; stat_count];
+        // 確定した各枠のモジュール番号を保持する
+        let mut indices = vec![0usize; slot_count];
 
         let si = &sparse[i];
         let base_i = add_delta(&mut totals, si, &bp_lookup);
+        indices[0] = i;
         let sum_i = module_sum[i];
 
         let mut cached_global_threshold = f64::NEG_INFINITY;
-        let mut j_count = 0u32;
+        let mut counter = 0u32;
 
-        for j in (i + 1)..n {
-            let sj = &sparse[j];
-            let base_j = base_i + add_delta(&mut totals, sj, &bp_lookup);
-
-            j_count += 1;
-            if j_count % 64 == 0 {
-                cached_global_threshold = global_best.lock().unwrap().min_score();
-            }
-
-            let local_threshold = if local_best.is_full() {
-                local_best.min_score().max(cached_global_threshold)
-            } else {
-                cached_global_threshold
-            };
-
-            // 残り2枠が全ステータス+20に到達したと仮定した上界スコアでカット
-            if local_threshold > f64::NEG_INFINITY {
-                let ub = max_bp_sum
-                    + (sum_i + module_sum[j] + 20.0 * stat_count as f64)
-                        * PLUS_BONUS_MULTIPLIER;
-                if ub < local_threshold {
-                    sub_sparse(&mut totals, sj);
-                    continue;
-                }
-                // 残り2枠で伸ばせる最大スコアでカット
-                if base_j + remaining_gain_2(&totals, &gain1_lookup, &gain2_lookup) < local_threshold
-                {
-                    sub_sparse(&mut totals, sj);
-                    continue;
-                }
-            }
-
-            for k in (j + 1)..n {
-                let sk = &sparse[k];
-                let base_k = base_j + add_delta(&mut totals, sk, &bp_lookup);
-
-                // 残り1枠が伸ばせる最大スコアでカット
-                let k_threshold = if local_best.is_full() {
-                    local_best.min_score().max(cached_global_threshold)
-                } else {
-                    cached_global_threshold
-                };
-                if k_threshold > f64::NEG_INFINITY
-                    && base_k + remaining_gain(&totals, &gain1_lookup) < k_threshold
-                {
-                    sub_sparse(&mut totals, sk);
-                    continue;
-                }
-
-                for l in (k + 1)..n {
-                    let sl = &sparse[l];
-                    let sc = base_k + add_delta(&mut totals, sl, &bp_lookup);
-
-                    // min_thresholds を満たさない組み合わせはスキップ
-                    let ok = threshold_constraints.is_empty()
-                        || threshold_constraints
-                            .iter()
-                            .all(|&(ti, min_val)| totals[ti] >= min_val);
-                    if ok {
-                        local_best.push(sc, [i, j, k, l]);
-                    }
-
-                    sub_sparse(&mut totals, sl);
-                }
-
-                sub_sparse(&mut totals, sk);
-            }
-
-            sub_sparse(&mut totals, sj);
-        }
+        search_rec(
+            &ctx,
+            1,
+            i + 1,
+            base_i,
+            sum_i,
+            &mut totals,
+            &mut indices,
+            &mut local_best,
+            &mut cached_global_threshold,
+            &mut counter,
+        );
 
         let mut g = global_best.lock().unwrap();
         for entry in local_best.entries {
@@ -498,7 +568,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
 
     // --- 結果組み立て ---
     let heap = global_best.into_inner().unwrap();
-    let mut results: Vec<(f64, [usize; 4])> = heap
+    let mut results: Vec<(f64, Vec<usize>)> = heap
         .entries
         .into_iter()
         .map(|e| (e.score, e.indices))
@@ -620,7 +690,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
 
 struct HeapEntry {
     score: f64,
-    indices: [usize; 4],
+    indices: Vec<usize>,
 }
 
 struct BoundedHeap {
@@ -654,7 +724,7 @@ impl BoundedHeap {
             .fold(f64::INFINITY, f64::min);
     }
 
-    fn push(&mut self, score: f64, indices: [usize; 4]) {
+    fn push(&mut self, score: f64, indices: Vec<usize>) {
         if self.entries.len() < self.capacity {
             self.entries.push(HeapEntry { score, indices });
             if self.entries.len() == self.capacity {

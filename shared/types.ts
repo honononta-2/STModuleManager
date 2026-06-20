@@ -26,6 +26,8 @@ export interface OptimizeRequest {
   min_thresholds?: Record<number, number>;
   /** カウントのみモード: フィルタ後の候補数だけ返す */
   count_only?: boolean;
+  /** 装着枠数（選択するモジュール数）。未指定時は4 */
+  slot_count?: number;
 }
 
 export interface OptimizeResponse {

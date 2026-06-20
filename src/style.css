@@ -692,8 +692,10 @@ body {
 }
 
 .opt-info {
+  display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 10px;
   font-size:12px; color:var(--tx3); margin-bottom:4px;
 }
+.opt-slot-hint { opacity:0.85; }
 .speed-info-btn {
   width:22px; height:22px; padding:0; border:none; background:transparent;
   color:var(--tx3); cursor:pointer; display:flex; align-items:center; justify-content:center;

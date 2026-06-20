@@ -753,10 +753,12 @@ interface OptPattern {
   quality: number;
   min_required?: number[];
   min_desired?: number[];
+  slot_count?: number;
 }
 
 function saveOptState() {
   const quality = Number($("opt-quality").dataset.value);
+  const slotCount = Number($("detail-slot-count").dataset.value) || 4;
   localStorage.setItem(OPT_STATE_KEY, JSON.stringify({
     required: optRequired,
     desired: optDesired,
@@ -764,6 +766,7 @@ function saveOptState() {
     quality,
     min_required: optMinRequired,
     min_desired: optMinDesired,
+    slot_count: slotCount,
   }));
 }
 
@@ -776,6 +779,7 @@ function restoreOptState() {
     if (Array.isArray(s.desired)) optDesired = toPartIds(s.desired);
     if (Array.isArray(s.excluded)) optExcluded = toPartIds(s.excluded);
     if (s.quality) setDropdownValue($("opt-quality"), String(s.quality));
+    if (s.slot_count) setDropdownValue($("detail-slot-count"), String(s.slot_count));
     if (Array.isArray(s.min_required)) optMinRequired = toPartIds(s.min_required).filter((id) => optRequired.includes(id));
     if (Array.isArray(s.min_desired)) optMinDesired = toPartIds(s.min_desired).filter((id) => optDesired.includes(id));
   } catch { /* ignore */ }
@@ -830,6 +834,7 @@ function loadPattern(idx: number) {
   optMinRequired = Array.isArray(p.min_required) ? toPartIds(p.min_required).filter((id) => optRequired.includes(id)) : [];
   optMinDesired = Array.isArray(p.min_desired) ? toPartIds(p.min_desired).filter((id) => optDesired.includes(id)) : [];
   if (p.quality) setDropdownValue($("opt-quality"), String(p.quality));
+  if (p.slot_count) setDropdownValue($("detail-slot-count"), String(p.slot_count));
   updateOptBtnLabel("req");
   updateOptBtnLabel("des");
   updateOptBtnLabel("excl");
@@ -1054,6 +1059,7 @@ async function runOptimize() {
     <li class="hexagon hex_7"></li></ul></div>`;
   const quality = Number($("opt-quality").dataset.value);
   const speedMode = $("opt-speed").dataset.value ?? "standard";
+  const slotCount = Number($("detail-slot-count").dataset.value) || 4;
   const minThresholds: Record<number, number> = {};
   optMinRequired.forEach((pid) => { minThresholds[pid] = 20; });
   optMinDesired.forEach((pid) => { minThresholds[pid] = 16; });
@@ -1063,6 +1069,7 @@ async function runOptimize() {
     excluded_stats: optExcluded,
     min_quality: quality,
     speed_mode: speedMode,
+    slot_count: slotCount,
     min_thresholds: Object.keys(minThresholds).length > 0 ? minThresholds : undefined,
   };
 
@@ -1130,11 +1137,22 @@ function renderOptResults(res: OptimizeResponse) {
 
   const info = document.createElement("div");
   info.className = "opt-info";
-  info.textContent = fmt(t.ui.result_info, {
+  const infoText = document.createElement("span");
+  infoText.textContent = fmt(t.ui.result_info, {
     total: res.total_modules,
     filtered: res.filtered_count,
     count: res.combinations.length,
   });
+  info.appendChild(infoText);
+
+  // 4枠選択時のみ、5枠の案内文を件数表示の右（スマホ幅では次行）に表示
+  const slotCount = Number($("detail-slot-count").dataset.value) || 4;
+  if (slotCount === 4) {
+    const hint = document.createElement("span");
+    hint.className = "opt-slot-hint";
+    hint.textContent = t.ui.slot_hint;
+    info.appendChild(hint);
+  }
   results.appendChild(info);
 
 
@@ -1499,6 +1517,7 @@ async function init() {
   };
 
   $("opt-quality").addEventListener("change", () => saveOptState());
+  $("detail-slot-count").addEventListener("change", () => saveOptState());
   $("opt-run").onclick = () => runOptimize();
 
   // 探索速度インフォモーダル
@@ -1572,6 +1591,7 @@ async function init() {
   const confirmPatsave = async () => {
     const mode = patsaveModeDd.dataset.value ?? "";
     const quality = Number($("opt-quality").dataset.value);
+    const slotCount = Number($("detail-slot-count").dataset.value) || 4;
     const patterns = getPatterns();
 
     if (mode.startsWith("overwrite_")) {
@@ -1586,6 +1606,7 @@ async function init() {
         quality,
         min_required: [...optMinRequired],
         min_desired: [...optMinDesired],
+        slot_count: slotCount,
       };
       patterns[idx] = entry;
       await savePatterns(patterns);
@@ -1603,6 +1624,7 @@ async function init() {
         quality,
         min_required: [...optMinRequired],
         min_desired: [...optMinDesired],
+        slot_count: slotCount,
       };
       if (duplicateIdx >= 0) patterns[duplicateIdx] = entry;
       else patterns.push(entry);

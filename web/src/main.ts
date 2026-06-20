@@ -1086,14 +1086,16 @@ interface OptPattern {
   desired: number[];
   excluded: number[];
   quality: number;
+  slots?: number;
   min_required?: number[];
   min_desired?: number[];
 }
 
 function saveOptState() {
   const quality = Number($("opt-quality").dataset.value);
+  const slots = Number($("opt-slots").dataset.value) || 4;
   localStorage.setItem(OPT_STATE_KEY, JSON.stringify({
-    required: optRequired, desired: optDesired, excluded: optExcluded, quality,
+    required: optRequired, desired: optDesired, excluded: optExcluded, quality, slots,
     min_required: optMinRequired, min_desired: optMinDesired,
   }));
 }
@@ -1107,6 +1109,7 @@ function restoreOptState() {
     if (Array.isArray(s.desired)) optDesired = migrateStatNamesToIds(s.desired).filter((id) => ALL_STAT_IDS.includes(id));
     if (Array.isArray(s.excluded)) optExcluded = migrateStatNamesToIds(s.excluded).filter((id) => ALL_STAT_IDS.includes(id));
     if (s.quality) setDropdownValue($("opt-quality"), String(s.quality));
+    if (s.slots) setDropdownValue($("opt-slots"), String(s.slots));
     if (Array.isArray(s.min_required)) optMinRequired = (s.min_required as number[]).filter((id) => ALL_STAT_IDS.includes(id) && optRequired.includes(id));
     if (Array.isArray(s.min_desired)) optMinDesired = (s.min_desired as number[]).filter((id) => ALL_STAT_IDS.includes(id) && optDesired.includes(id));
   } catch { /* ignore */ }
@@ -1158,6 +1161,7 @@ function loadPattern(idx: number) {
   optMinRequired = Array.isArray(p.min_required) ? p.min_required.filter((id) => ALL_STAT_IDS.includes(id) && optRequired.includes(id)) : [];
   optMinDesired = Array.isArray(p.min_desired) ? p.min_desired.filter((id) => ALL_STAT_IDS.includes(id) && optDesired.includes(id)) : [];
   if (p.quality) setDropdownValue($("opt-quality"), String(p.quality));
+  if (p.slots) setDropdownValue($("opt-slots"), String(p.slots));
   updateOptBtnLabel("req");
   updateOptRunBtn();
   saveOptState();
@@ -1200,7 +1204,8 @@ function openOptMultiFly(anchor: HTMLElement, category: "req" | "des" | "excl") 
 }
 
 function updateOptRunBtn() {
-  $<HTMLButtonElement>("opt-run").disabled = optRequired.length === 0 || modules.length < 4;
+  const slotCount = Number($("opt-slots").dataset.value) || 4;
+  $<HTMLButtonElement>("opt-run").disabled = optRequired.length === 0 || modules.length < slotCount;
 }
 
 // --- 詳細設定モーダル ---
@@ -1356,6 +1361,7 @@ async function runOptimize() {
 
   const quality = Number($("opt-quality").dataset.value);
   const speedMode = $("opt-speed").dataset.value ?? "standard";
+  const slotCount = Number($("opt-slots").dataset.value) || 4;
   const minThresholds: Record<number, number> = {};
   optMinRequired.forEach((pid) => { minThresholds[pid] = 20; });
   optMinDesired.forEach((pid) => { minThresholds[pid] = 16; });
@@ -1378,6 +1384,7 @@ async function runOptimize() {
             excluded_stats: [...optExcluded],
             min_quality: quality,
             speed_mode: speedMode,
+            slot_count: slotCount,
             count_only: true,
           } satisfies OptimizeRequest,
         });
@@ -1412,6 +1419,7 @@ async function runOptimize() {
       speed_mode: speedMode as OptimizeRequest["speed_mode"],
       worker_id: i,
       num_workers: numWorkers,
+      slot_count: slotCount,
       min_thresholds: Object.keys(minThresholds).length > 0 ? minThresholds : undefined,
     };
 
@@ -1483,7 +1491,17 @@ function renderOptResults(res: OptimizeResponse) {
 
   const info = document.createElement("div");
   info.className = "opt-info";
-  info.textContent = fmt(t.ui.result_info, { total: res.total_modules, filtered: res.filtered_count, count: res.combinations.length });
+  const infoText = document.createElement("span");
+  infoText.className = "opt-info-text";
+  infoText.textContent = fmt(t.ui.result_info, { total: res.total_modules, filtered: res.filtered_count, count: res.combinations.length });
+  info.appendChild(infoText);
+  const slotCount = Number($("opt-slots").dataset.value) || 4;
+  if (slotCount === 4) {
+    const hint = document.createElement("span");
+    hint.className = "opt-info-hint";
+    hint.textContent = t.ui.slot_hint;
+    info.appendChild(hint);
+  }
   results.appendChild(info);
 
   res.combinations.forEach((comb) => {
@@ -3957,6 +3975,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   $("opt-quality").addEventListener("change", () => { saveOptState(); });
+  $("opt-slots").addEventListener("change", () => { saveOptState(); updateOptRunBtn(); });
   $("opt-run").onclick = () => runOptimize();
 
   $("speed-info-btn").onclick = () => {
@@ -4018,13 +4037,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const confirmPatsave = () => {
     const mode = patsaveModeDd.dataset.value ?? "";
     const quality = Number($("opt-quality").dataset.value);
+    const slots = Number($("opt-slots").dataset.value) || 4;
     const patterns = getPatterns();
 
     if (mode.startsWith("overwrite_")) {
       const idx = Number(mode.slice("overwrite_".length));
       const existing = patterns[idx];
       if (!existing) return;
-      const entry: OptPattern = { name: existing.name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality, min_required: [...optMinRequired], min_desired: [...optMinDesired] };
+      const entry: OptPattern = { name: existing.name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality, slots, min_required: [...optMinRequired], min_desired: [...optMinDesired] };
       patterns[idx] = entry;
       savePatterns(patterns);
       closePatsaveModal();
@@ -4035,7 +4055,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const name = patsaveInput.value.trim();
       if (!name) return;
       const duplicateIdx = patterns.findIndex((p) => p.name === name);
-      const entry: OptPattern = { name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality, min_required: [...optMinRequired], min_desired: [...optMinDesired] };
+      const entry: OptPattern = { name, required: [...optRequired], desired: [...optDesired], excluded: [...optExcluded], quality, slots, min_required: [...optMinRequired], min_desired: [...optMinDesired] };
       if (duplicateIdx >= 0) patterns[duplicateIdx] = entry;
       else patterns.push(entry);
       savePatterns(patterns);
