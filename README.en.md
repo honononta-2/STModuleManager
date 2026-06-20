@@ -117,7 +117,7 @@ In addition, **total + values across all stats × 2** is added to the score.
 
 ### Search Optimization
 
-Exhaustively searching C(2000, 4) ≈ 665 billion combinations is impractical, so the following filtering steps are applied:
+Exhaustively searching the combinations for the equipped slot count (4 or 5 slots) — C(2000, 4) ≈ 665 billion and C(2000, 5) ≈ 265 trillion respectively — is impractical, so the following filtering steps are applied:
 
 1. **Relevance filter** — Exclude modules with no main/sub stats
 2. **Rarity filter** — Exclude modules below the specified quality
@@ -141,7 +141,10 @@ The candidate count N can be adjusted via the search precision setting.
 >
 > Use this only when you absolutely cannot afford to miss the optimal result, or when you want to verify that the candidate narrowing hasn't missed anything.
 
-After filtering, **multi-core parallel search** via Rayon and **branch pruning** (cutting off when the optimistic upper-bound score — adding +20 to remaining stats after choosing 2 — falls below the current best) are combined to complete the search within a practical time on CPU.
+After filtering, **multi-core parallel search** via Rayon combined with **multi-stage branch pruning** completes the search within a practical time on CPU. When 2 or fewer slots remain to be chosen, the search is cut off if the sum of the confirmed score plus the maximum achievable score for the remaining slots falls below the current best.
+
+- **Last 2 slots upper bound**: Cut using both the optimistic theoretical maximum (adding +20 to every stat) and a tighter bound from DP (knapsack) over 6 stat-slot positions (across 2 modules) with 0/+10/+20 allocations per stat
+- **Last 1 slot upper bound**: Cut using the sum of the top 3 entries from the per-stat +10 gain table
 
 ## Copyright Notice
 
