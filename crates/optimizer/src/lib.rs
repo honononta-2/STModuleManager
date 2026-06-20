@@ -144,6 +144,33 @@ fn remaining_gain(totals: &[u8], gain_lookup: &[[f64; 21]]) -> f64 {
     g1 + g2 + g3
 }
 
+// 残り2枠（6スロット）で伸ばせる最大スコア
+// 各ステータスに +0 / +10(1スロット) / +20(2スロット) を割り当て、6スロットでの増分を最大化する
+fn remaining_gain_2(totals: &[u8], gain1_lookup: &[[f64; 21]], gain2_lookup: &[[f64; 21]]) -> f64 {
+    // dp[c] = c スロット使ったときの最大増分
+    let mut dp = [0.0f64; 7];
+    for (si, &v) in totals.iter().enumerate() {
+        let idx = (v as usize).min(20);
+        let g1 = gain1_lookup[si][idx];
+        let g2 = gain2_lookup[si][idx];
+        for c in (1..=6).rev() {
+            let mut best = dp[c];
+            let with1 = dp[c - 1] + g1;
+            if with1 > best {
+                best = with1;
+            }
+            if c >= 2 {
+                let with2 = dp[c - 2] + g2;
+                if with2 > best {
+                    best = with2;
+                }
+            }
+            dp[c] = best;
+        }
+    }
+    dp[6]
+}
+
 // --- 公開API ---
 
 pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeResponse {
@@ -304,14 +331,27 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
     // 全ステータスが+20到達した場合のBPスコア合計（上界スコアの定数項）
     let max_bp_sum: f64 = (0..stat_count).map(|si| bp_lookup[si][20]).sum();
 
-    // 残り1枠で各ステータスを+10伸ばしたときのスコア増分（BP増分 + プラスボーナス分）
-    let gain_lookup: Vec<[f64; 21]> = bp_lookup
+    // 1ステータスを+10伸ばしたときのスコア増分（BP増分 + プラスボーナス分）
+    let gain1_lookup: Vec<[f64; 21]> = bp_lookup
         .iter()
         .map(|bp| {
             let mut g = [0.0f64; 21];
             for v in 0..=20usize {
                 g[v] = bp[(v + MODULE_STAT_MAX_VALUE).min(20)] - bp[v]
                     + MODULE_STAT_MAX_VALUE as f64 * PLUS_BONUS_MULTIPLIER;
+            }
+            g
+        })
+        .collect();
+
+    // 1ステータスを+20伸ばしたときのスコア増分（同一ステータスに2モジュール分）
+    let gain2_lookup: Vec<[f64; 21]> = bp_lookup
+        .iter()
+        .map(|bp| {
+            let mut g = [0.0f64; 21];
+            for v in 0..=20usize {
+                g[v] = bp[(v + 2 * MODULE_STAT_MAX_VALUE).min(20)] - bp[v]
+                    + 2.0 * MODULE_STAT_MAX_VALUE as f64 * PLUS_BONUS_MULTIPLIER;
             }
             g
         })
@@ -380,6 +420,12 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
                     sub_sparse(&mut totals, sj);
                     continue;
                 }
+                // 残り2枠で伸ばせる最大スコアでカット
+                if base_j + remaining_gain_2(&totals, &gain1_lookup, &gain2_lookup) < local_threshold
+                {
+                    sub_sparse(&mut totals, sj);
+                    continue;
+                }
             }
 
             for k in (j + 1)..n {
@@ -393,7 +439,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
                     cached_global_threshold
                 };
                 if k_threshold > f64::NEG_INFINITY
-                    && base_k + remaining_gain(&totals, &gain_lookup) < k_threshold
+                    && base_k + remaining_gain(&totals, &gain1_lookup) < k_threshold
                 {
                     sub_sparse(&mut totals, sk);
                     continue;
