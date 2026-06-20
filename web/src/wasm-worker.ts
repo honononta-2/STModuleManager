@@ -1,13 +1,18 @@
-import { initSync, optimize } from "../pkg/star_optimizer_wasm.js";
+type OptimizeFn = (modulesJson: string, requestJson: string) => string;
 
+let optimize: OptimizeFn | null = null;
 let ready = false;
 
-self.onmessage = (e: MessageEvent) => {
+self.onmessage = async (e: MessageEvent) => {
   const { type } = e.data;
 
   if (type === "init") {
-    // メインスレッドでコンパイル済みのWebAssembly.Moduleを受け取って初期化
-    initSync({ module: e.data.module });
+    const { module, useSimd } = e.data;
+    const pkg = useSimd
+      ? await import("../pkg-simd/star_optimizer_wasm.js")
+      : await import("../pkg/star_optimizer_wasm.js");
+    pkg.initSync({ module });
+    optimize = pkg.optimize;
     ready = true;
     // ウォームアップ: 4重ループのホットパスを通るダミーデータで呼び出し、
     // V8のTurboFan最適化コンパイルを事前にトリガーする
@@ -38,7 +43,7 @@ self.onmessage = (e: MessageEvent) => {
   }
 
   if (type === "optimize") {
-    if (!ready) {
+    if (!ready || !optimize) {
       self.postMessage({ type: "error", error: "WASM not initialized" });
       return;
     }

@@ -1009,7 +1009,6 @@ function detectIconsInLeftRegion(
  */
 function deriveColumnsFromHits(
   hits: IconHit[],
-  iconSize: number,
   imgW: number,
   imgH: number,
 ): { colXs: number[]; gap: number } | null {
@@ -1073,8 +1072,6 @@ async function processPredictedGridMode(
   gray: any,
   grayEq1x: any,
   colorMat1x: any,
-  imgWidth: number,
-  imgHeight: number,
   predicted: PredictedGrid,
   onProgress: ((p: OcrProgress) => void) | undefined,
   externalWorker: any,
@@ -1313,7 +1310,6 @@ export async function processScreenshot(
     const { pGray, pGrayEq, pColorMat } = preparePredictedCanvas(predicted);
     return processPredictedGridMode(
       canvas, pGray, pGrayEq, pColorMat,
-      imgWidth, imgHeight,
       predicted,
       onProgress, externalWorker, customOptions, cv,
       startUuid ?? 1,
@@ -1349,7 +1345,7 @@ export async function processScreenshot(
       const detectScale = mobileScale;
       const detectIconSize = Math.round(80 * detectScale);
       const iconHits = detectIconsInLeftRegion(detectGrayEq, detectScale, detectIconSize, cv, !!customOptions?.fastMode);
-      colResult = deriveColumnsFromHits(iconHits, detectIconSize, imgWidth, imgHeight);
+      colResult = deriveColumnsFromHits(iconHits, imgWidth, imgHeight);
       detectGrayEq.delete();
 
       if (customOptions?.fastMode && colResult && colResult.colXs.length >= 1) {
@@ -1378,7 +1374,6 @@ export async function processScreenshot(
       const { pGray, pGrayEq, pColorMat } = preparePredictedCanvas(predicted);
       const result = await processPredictedGridMode(
         canvas, pGray, pGrayEq, pColorMat,
-        imgWidth, imgHeight,
         predicted,
         onProgress, externalWorker, customOptions, cv,
         startUuid ?? 1,

@@ -493,9 +493,17 @@ const workers: Worker[] = [];
 for (let i = 0; i < numWorkers; i++) {
   workers.push(new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" }));
 }
-// WASMモジュールを1回だけコンパイルし、全Workerに転送
-WebAssembly.compileStreaming(fetch(new URL("../pkg/star_optimizer_wasm_bg.wasm", import.meta.url)))
-  .then((mod) => { for (const w of workers) w.postMessage({ type: "init", module: mod }); })
+// SIMD命令を含む最小のWASMモジュールを検証してSIMD対応を判定する
+const SIMD_TEST_BYTES = new Uint8Array([
+  0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123,
+  3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11,
+]);
+const useSimd = WebAssembly.validate(SIMD_TEST_BYTES);
+const wasmUrl = useSimd
+  ? new URL("../pkg-simd/star_optimizer_wasm_bg.wasm", import.meta.url)
+  : new URL("../pkg/star_optimizer_wasm_bg.wasm", import.meta.url);
+WebAssembly.compileStreaming(fetch(wasmUrl))
+  .then((mod) => { for (const w of workers) w.postMessage({ type: "init", module: mod, useSimd }); })
   .catch(() => { showToast(t.ui.error_wasm_init, "error"); });
 
 // ========== Storage ==========

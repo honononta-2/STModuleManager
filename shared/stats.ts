@@ -105,8 +105,8 @@ export const EXPECTED_STAT_COUNT: Record<number, number> = { 1: 1, 2: 2, 3: 3, 4
 
 /** モジュールアイコン: 型(英名) × レアリティ → ファイル名 */
 export const MODULE_ICONS: { type: string; rarity: number; file: string }[] = [];
-for (const [typeDigit, typeName] of Object.entries(CONFIG_TYPE_MAP)) {
-  for (const [rareSub, rarityNum] of Object.entries(CONFIG_RARITY_MAP)) {
+for (const typeName of Object.values(CONFIG_TYPE_MAP)) {
+  for (const rarityNum of Object.values(CONFIG_RARITY_MAP)) {
     MODULE_ICONS.push({
       type: typeName,
       rarity: rarityNum,
