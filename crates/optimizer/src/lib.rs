@@ -187,6 +187,8 @@ struct SearchCtx<'a> {
     stat_count: usize,
     threshold_constraints: &'a [(usize, u8)],
     global_best: &'a Mutex<BoundedHeap>,
+    // 候補モジュール1つが持つステータス数の最大値
+    max_stats_per_module: usize,
 }
 
 // 残りの枠を1つずつ確定しながら組み合わせを探索する
@@ -206,28 +208,67 @@ fn search_rec(
 
     for idx in start..ctx.n {
         let sp = &ctx.sparse[idx];
-        let base_new = base + add_delta(totals, sp, ctx.bp_lookup);
-        indices[depth] = idx;
 
         if is_last {
-            // min_thresholds を満たさない組み合わせはスキップ
-            let ok = ctx.threshold_constraints.is_empty()
+            // 最後の枠: このモジュールを足しても全必須閾値に届くか、足す前に判定する
+            // 届かない必須ステータスが1つでもあれば加算・減算ごとスキップする
+            let threshold_ok = ctx.threshold_constraints.is_empty()
                 || ctx
                     .threshold_constraints
                     .iter()
-                    .all(|&(ti, min_val)| totals[ti] >= min_val);
-            if ok {
-                local_best.push(base_new, indices.to_vec());
+                    .all(|&(ti, min_val)| {
+                        let cur = totals[ti] as u16;
+                        if cur >= min_val as u16 {
+                            return true;
+                        }
+                        // モジュールがこのステータスを不足分以上持つか
+                        sp.iter()
+                            .find(|(s, _)| *s == ti)
+                            .map_or(false, |(_, v)| cur + *v as u16 >= min_val as u16)
+                    });
+            if !threshold_ok {
+                continue;
             }
+            let base_new = base + add_delta(totals, sp, ctx.bp_lookup);
+            indices[depth] = idx;
+            local_best.push(base_new, indices.to_vec());
             sub_sparse(totals, sp);
             continue;
         }
+
+        let base_new = base + add_delta(totals, sp, ctx.bp_lookup);
+        indices[depth] = idx;
 
         // この枠を確定した後に残る枠数
         let remaining = ctx.slot_count - depth - 1;
 
         // 残り1枠・残り2枠でのみ枝刈りする
         if remaining <= 2 {
+            // 残り1枠: 閾値ベースの早切り
+            // 1モジュールが1ステータスに足せる最大は+10なので、現在合計+10でも届かない
+            // 必須ステータスが1つでもあれば、どのモジュールを選んでも届かない
+            // また、不足必須ステータス数が1モジュールの最大ステータス数を超える場合も
+            // 1モジュールでは全てを同時に伸ばせないため届かない
+            if remaining == 1 && !ctx.threshold_constraints.is_empty() {
+                let mut short_count = 0usize;
+                let mut fail = false;
+                for &(ti, min_val) in ctx.threshold_constraints {
+                    let cur = totals[ti] as u16;
+                    let needed = min_val as u16;
+                    if cur + (MODULE_STAT_MAX_VALUE as u16) < needed {
+                        fail = true;
+                        break;
+                    }
+                    if cur < needed {
+                        short_count += 1;
+                    }
+                }
+                if fail || short_count > ctx.max_stats_per_module {
+                    sub_sparse(totals, sp);
+                    continue;
+                }
+            }
+
             *counter += 1;
             if *counter % 64 == 0 {
                 *cached_global_threshold = ctx.global_best.lock().unwrap().min_score();
@@ -413,6 +454,9 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         .map(|sp| sp.iter().map(|&(_, val)| val as f64).sum())
         .collect();
 
+    // 候補モジュール1つが持つステータス数の最大値
+    let max_stats_per_module: usize = sparse.iter().map(|sp| sp.len()).max().unwrap_or(0);
+
     // ステータスインデックスごとのBPスコアルックアップテーブル（値0〜20→スコア）
     let bp_lookup: Vec<[f64; 21]> = (0..stat_count)
         .map(|si| {
@@ -506,6 +550,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         stat_count,
         threshold_constraints: &threshold_constraints,
         global_best: &global_best,
+        max_stats_per_module,
     };
 
     let search_from_i = |i: usize| {
