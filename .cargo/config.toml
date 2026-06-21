@@ -1,3 +1,0 @@
-# Windows向けネイティブビルド（Tauri版）でx86-64-v3命令を有効化する
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-cpu=x86-64-v3"]
