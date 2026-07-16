@@ -1,6 +1,7 @@
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 // --- 共有型 ---
@@ -128,11 +129,14 @@ fn sub_sparse(totals: &mut [u8], sp: &[(usize, u8)]) {
     }
 }
 
-// 残り1枠で伸ばせる最大スコア（各ステータスの伸びのうち上位3つの合計）
+// 残り1枠で伸ばせる最大スコア（BP増分上位3つ + プラスボーナス定数）
 fn remaining_gain(totals: &[u8], gain_lookup: &[[f64; 21]]) -> f64 {
     let (mut g1, mut g2, mut g3) = (0.0f64, 0.0f64, 0.0f64);
     for (si, &v) in totals.iter().enumerate() {
         let gain = gain_lookup[si][(v as usize).min(20)];
+        if gain <= g3 {
+            continue;
+        }
         if gain > g1 {
             g3 = g2;
             g2 = g1;
@@ -140,22 +144,26 @@ fn remaining_gain(totals: &[u8], gain_lookup: &[[f64; 21]]) -> f64 {
         } else if gain > g2 {
             g3 = g2;
             g2 = gain;
-        } else if gain > g3 {
+        } else {
             g3 = gain;
         }
     }
-    g1 + g2 + g3
+    g1 + g2 + g3 + 3.0 * MODULE_STAT_MAX_VALUE as f64 * PLUS_BONUS_MULTIPLIER
 }
 
 // 残り2枠（6スロット）で伸ばせる最大スコア
-// 各ステータスに +0 / +10(1スロット) / +20(2スロット) を割り当て、6スロットでの増分を最大化する
+// 各ステータスに +0 / +10(1スロット) / +20(2スロット) を割り当て、
+// BP増分の6スロット割り当てを最大化し、プラスボーナス定数を加える
 fn remaining_gain_2(totals: &[u8], gain1_lookup: &[[f64; 21]], gain2_lookup: &[[f64; 21]]) -> f64 {
-    // dp[c] = c スロット使ったときの最大増分
+    // dp[c] = c スロット使ったときの最大BP増分
     let mut dp = [0.0f64; 7];
     for (si, &v) in totals.iter().enumerate() {
         let idx = (v as usize).min(20);
-        let g1 = gain1_lookup[si][idx];
         let g2 = gain2_lookup[si][idx];
+        if g2 <= 0.0 {
+            continue;
+        }
+        let g1 = gain1_lookup[si][idx];
         for c in (1..=6).rev() {
             let mut best = dp[c];
             let with1 = dp[c - 1] + g1;
@@ -171,7 +179,7 @@ fn remaining_gain_2(totals: &[u8], gain1_lookup: &[[f64; 21]], gain2_lookup: &[[
             dp[c] = best;
         }
     }
-    dp[6]
+    dp[6] + 6.0 * MODULE_STAT_MAX_VALUE as f64 * PLUS_BONUS_MULTIPLIER
 }
 
 // 探索中に全枠で共有する読み取り専用データ
@@ -183,10 +191,12 @@ struct SearchCtx<'a> {
     gain1_lookup: &'a [[f64; 21]],
     gain2_lookup: &'a [[f64; 21]],
     module_sum: &'a [f64],
+    // suffix_top2[i] = i番目以降の候補のうち module_sum 上位2つの合計
+    suffix_top2: &'a [f64],
     max_bp_sum: f64,
-    stat_count: usize,
     threshold_constraints: &'a [(usize, u8)],
-    global_best: &'a Mutex<BoundedHeap>,
+    // グローバルtop-10閾値のf64ビット表現（ロックなしで参照する）
+    global_min_bits: &'a AtomicU64,
     // 候補モジュール1つが持つステータス数の最大値
     max_stats_per_module: usize,
 }
@@ -202,9 +212,11 @@ fn search_rec(
     indices: &mut [usize],
     local_best: &mut BoundedHeap,
     cached_global_threshold: &mut f64,
-    counter: &mut u32,
 ) {
     let is_last = depth == ctx.slot_count - 1;
+    if is_last {
+        *cached_global_threshold = f64::from_bits(ctx.global_min_bits.load(Ordering::Relaxed));
+    }
 
     for idx in start..ctx.n {
         let sp = &ctx.sparse[idx];
@@ -231,7 +243,10 @@ fn search_rec(
             }
             let base_new = base + add_delta(totals, sp, ctx.bp_lookup);
             indices[depth] = idx;
-            local_best.push(base_new, indices.to_vec());
+            // グローバル閾値未満は最終マージでも棄却されるため、ここで捨てる
+            if base_new >= *cached_global_threshold {
+                local_best.push_ref(base_new, indices);
+            }
             sub_sparse(totals, sp);
             continue;
         }
@@ -269,10 +284,8 @@ fn search_rec(
                 }
             }
 
-            *counter += 1;
-            if *counter % 64 == 0 {
-                *cached_global_threshold = ctx.global_best.lock().unwrap().min_score();
-            }
+            *cached_global_threshold =
+                f64::from_bits(ctx.global_min_bits.load(Ordering::Relaxed));
             let local_threshold = if local_best.is_full() {
                 local_best.min_score().max(*cached_global_threshold)
             } else {
@@ -281,9 +294,9 @@ fn search_rec(
 
             if local_threshold > f64::NEG_INFINITY {
                 if remaining == 2 {
-                    // 残り2枠が全ステータス+20に到達したと仮定した上界スコアでカット
+                    // 残り2枠に選べる候補の合計値上位2つを足した上界スコアでカット
                     let ub = ctx.max_bp_sum
-                        + (sum_acc + ctx.module_sum[idx] + 20.0 * ctx.stat_count as f64)
+                        + (sum_acc + ctx.module_sum[idx] + ctx.suffix_top2[idx + 1])
                             * PLUS_BONUS_MULTIPLIER;
                     if ub < local_threshold {
                         sub_sparse(totals, sp);
@@ -316,7 +329,6 @@ fn search_rec(
             indices,
             local_best,
             cached_global_threshold,
-            counter,
         );
         sub_sparse(totals, sp);
     }
@@ -468,6 +480,25 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
     // 候補モジュール1つが持つステータス数の最大値
     let max_stats_per_module: usize = sparse.iter().map(|sp| sp.len()).max().unwrap_or(0);
 
+    // suffix_top2[i] = [i..n) の module_sum 上位2つの合計（後ろから前計算）
+    let suffix_top2: Vec<f64> = {
+        let n = sparse.len();
+        let mut arr = vec![0.0f64; n + 1];
+        let mut t1 = 0.0f64;
+        let mut t2 = 0.0f64;
+        for i in (0..n).rev() {
+            let s = module_sum[i];
+            if s > t1 {
+                t2 = t1;
+                t1 = s;
+            } else if s > t2 {
+                t2 = s;
+            }
+            arr[i] = t1 + t2;
+        }
+        arr
+    };
+
     // ステータスインデックスごとのBPスコアルックアップテーブル（値0〜20→スコア）
     let bp_lookup: Vec<[f64; 21]> = (0..stat_count)
         .map(|si| {
@@ -497,27 +528,25 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
     // 全ステータスが+20到達した場合のBPスコア合計（上界スコアの定数項）
     let max_bp_sum: f64 = (0..stat_count).map(|si| bp_lookup[si][20]).sum();
 
-    // 1ステータスを+10伸ばしたときのスコア増分（BP増分 + プラスボーナス分）
+    // 1ステータスを+10伸ばしたときのBP増分（プラスボーナス分は定数として別途加算）
     let gain1_lookup: Vec<[f64; 21]> = bp_lookup
         .iter()
         .map(|bp| {
             let mut g = [0.0f64; 21];
             for v in 0..=20usize {
-                g[v] = bp[(v + MODULE_STAT_MAX_VALUE).min(20)] - bp[v]
-                    + MODULE_STAT_MAX_VALUE as f64 * PLUS_BONUS_MULTIPLIER;
+                g[v] = bp[(v + MODULE_STAT_MAX_VALUE).min(20)] - bp[v];
             }
             g
         })
         .collect();
 
-    // 1ステータスを+20伸ばしたときのスコア増分（同一ステータスに2モジュール分）
+    // 1ステータスを+20伸ばしたときのBP増分（同一ステータスに2モジュール分）
     let gain2_lookup: Vec<[f64; 21]> = bp_lookup
         .iter()
         .map(|bp| {
             let mut g = [0.0f64; 21];
             for v in 0..=20usize {
-                g[v] = bp[(v + 2 * MODULE_STAT_MAX_VALUE).min(20)] - bp[v]
-                    + 2.0 * MODULE_STAT_MAX_VALUE as f64 * PLUS_BONUS_MULTIPLIER;
+                g[v] = bp[(v + 2 * MODULE_STAT_MAX_VALUE).min(20)] - bp[v];
             }
             g
         })
@@ -550,6 +579,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         .unwrap_or_default();
 
     let global_best = Mutex::new(BoundedHeap::new(top_k, max_results));
+    let global_min_bits = AtomicU64::new(f64::NEG_INFINITY.to_bits());
 
     let ctx = SearchCtx {
         n,
@@ -559,10 +589,10 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         gain1_lookup: &gain1_lookup,
         gain2_lookup: &gain2_lookup,
         module_sum: &module_sum,
+        suffix_top2: &suffix_top2,
         max_bp_sum,
-        stat_count,
         threshold_constraints: &threshold_constraints,
-        global_best: &global_best,
+        global_min_bits: &global_min_bits,
         max_stats_per_module,
     };
 
@@ -580,7 +610,6 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         let sum_i = module_sum[i];
 
         let mut cached_global_threshold = f64::NEG_INFINITY;
-        let mut counter = 0u32;
 
         search_rec(
             &ctx,
@@ -592,13 +621,13 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
             &mut indices,
             &mut local_best,
             &mut cached_global_threshold,
-            &mut counter,
         );
 
         let mut g = global_best.lock().unwrap();
         for entry in local_best.entries {
             g.push(entry.score, entry.indices);
         }
+        global_min_bits.store(g.min_score().to_bits(), Ordering::Relaxed);
     };
 
     #[cfg(feature = "parallel")]
@@ -791,6 +820,16 @@ impl BoundedHeap {
             self.trim();
         } else if score == self.min_cached && self.entries.len() < self.max_entries {
             self.entries.push(HeapEntry { score, indices });
+        }
+    }
+
+    // 採用が確定する場合のみ indices を複製して push する
+    fn push_ref(&mut self, score: f64, indices: &[usize]) {
+        if self.entries.len() < self.capacity
+            || score > self.min_cached
+            || (score == self.min_cached && self.entries.len() < self.max_entries)
+        {
+            self.push(score, indices.to_vec());
         }
     }
 }
