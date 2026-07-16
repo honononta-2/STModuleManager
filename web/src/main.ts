@@ -1454,8 +1454,20 @@ async function runOptimize() {
         completed++;
         if (completed === numWorkers) {
           allCombinations.sort((a, b) => b.score - a.score);
-          const top10 = allCombinations.slice(0, 10).map((c, idx) => ({ ...c, rank: idx + 1 }));
-          renderOptResults({ combinations: top10, filtered_count: filteredCount, total_modules: totalModules });
+          // 10番目のスコアと同点の組み合わせも含めて最大20件まで残す
+          const cutIdx = Math.min(10, allCombinations.length) - 1;
+          const cutoff = cutIdx >= 0 ? allCombinations[cutIdx].score : Infinity;
+          const top = allCombinations.filter((c) => c.score >= cutoff).slice(0, 20);
+          // 同スコアには同順位を付け、次の順位は件数分飛ばす
+          let prevScore = NaN;
+          let prevRank = 0;
+          const ranked = top.map((c, idx) => {
+            const rank = c.score === prevScore ? prevRank : idx + 1;
+            prevScore = c.score;
+            prevRank = rank;
+            return { ...c, rank };
+          });
+          renderOptResults({ combinations: ranked, filtered_count: filteredCount, total_modules: totalModules });
           finishOptimize();
         }
       }

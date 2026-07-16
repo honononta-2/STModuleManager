@@ -322,6 +322,17 @@ fn search_rec(
     }
 }
 
+// スコア降順の組み合わせに順位を振る。同スコアには同順位を付け、次の順位は件数分飛ばす
+fn assign_ranks(combinations: &mut [Combination]) {
+    for i in 0..combinations.len() {
+        combinations[i].rank = if i > 0 && combinations[i].score == combinations[i - 1].score {
+            combinations[i - 1].rank
+        } else {
+            i + 1
+        };
+    }
+}
+
 // --- 公開API ---
 
 pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeResponse {
@@ -515,6 +526,8 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
     // --- 4重ループ探索 ---
     let n = filtered_count;
     let top_k = 10usize;
+    // 同点を含めた最大保持件数
+    let max_results = 20usize;
 
     // Worker分割: インターリーブ方式で担当する i を決定
     let (worker_id, num_workers) = match (req.worker_id, req.num_workers) {
@@ -536,7 +549,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         })
         .unwrap_or_default();
 
-    let global_best = Mutex::new(BoundedHeap::new(top_k));
+    let global_best = Mutex::new(BoundedHeap::new(top_k, max_results));
 
     let ctx = SearchCtx {
         n,
@@ -554,7 +567,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
     };
 
     let search_from_i = |i: usize| {
-        let mut local_best = BoundedHeap::new(top_k);
+        let mut local_best = BoundedHeap::new(top_k, max_results);
 
         // 探索中に加減算で使い回す密バッファ
         let mut totals = vec![0u8; stat_count];
@@ -622,8 +635,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
 
     let combinations: Vec<Combination> = results
         .iter()
-        .enumerate()
-        .map(|(rank, (score, indices))| {
+        .map(|(score, indices)| {
             let mut totals = vec![0i64; stat_count];
             for &idx in indices.iter() {
                 for &(si, val) in &sparse[idx] {
@@ -683,7 +695,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
                 .collect();
 
             Combination {
-                rank: rank + 1,
+                rank: 0,
                 modules: comb_modules,
                 stat_totals,
                 score: *score,
@@ -715,14 +727,8 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
     };
 
     // フィルタ後の rank 振り直し
-    let combinations: Vec<Combination> = combinations
-        .into_iter()
-        .enumerate()
-        .map(|(i, mut c)| {
-            c.rank = i + 1;
-            c
-        })
-        .collect();
+    let mut combinations = combinations;
+    assign_ranks(&mut combinations);
 
     OptimizeResponse {
         combinations,
@@ -741,14 +747,16 @@ struct HeapEntry {
 struct BoundedHeap {
     entries: Vec<HeapEntry>,
     capacity: usize,
+    max_entries: usize,
     min_cached: f64,
 }
 
 impl BoundedHeap {
-    fn new(capacity: usize) -> Self {
+    fn new(capacity: usize, max_entries: usize) -> Self {
         Self {
-            entries: Vec::with_capacity(capacity + 1),
+            entries: Vec::with_capacity(max_entries + 1),
             capacity,
+            max_entries,
             min_cached: f64::NEG_INFINITY,
         }
     }
@@ -761,30 +769,28 @@ impl BoundedHeap {
         self.entries.len() >= self.capacity
     }
 
-    fn recompute_min(&mut self) {
-        self.min_cached = self
-            .entries
-            .iter()
-            .map(|e| e.score)
-            .fold(f64::INFINITY, f64::min);
+    // capacity番目に高いスコアを閾値とし、それ未満の項目を捨てる
+    // 閾値と同点の項目は max_entries 件まで保持する
+    fn trim(&mut self) {
+        self.entries
+            .sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        let threshold = self.entries[self.capacity - 1].score;
+        self.entries.retain(|e| e.score >= threshold);
+        self.entries.truncate(self.max_entries);
+        self.min_cached = threshold;
     }
 
     fn push(&mut self, score: f64, indices: Vec<usize>) {
         if self.entries.len() < self.capacity {
             self.entries.push(HeapEntry { score, indices });
             if self.entries.len() == self.capacity {
-                self.recompute_min();
+                self.trim();
             }
         } else if score > self.min_cached {
-            let min_idx = self
-                .entries
-                .iter()
-                .enumerate()
-                .min_by(|(_, a), (_, b)| a.score.partial_cmp(&b.score).unwrap())
-                .map(|(i, _)| i)
-                .unwrap();
-            self.entries[min_idx] = HeapEntry { score, indices };
-            self.recompute_min();
+            self.entries.push(HeapEntry { score, indices });
+            self.trim();
+        } else if score == self.min_cached && self.entries.len() < self.max_entries {
+            self.entries.push(HeapEntry { score, indices });
         }
     }
 }
