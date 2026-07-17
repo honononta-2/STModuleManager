@@ -121,7 +121,8 @@ Exhaustively searching the combinations for the equipped slot count (4 or 5 slot
 
 1. **Relevance filter** — Exclude modules with no main/sub stats
 2. **Rarity filter** — Exclude modules below the specified quality
-3. **Contribution Score Top N** — Narrow down to top N modules by contribution score (`Σ(main value × 3) + Σ(sub value × 1) + Σ(other value × 0.5)`)
+3. **Strict-inferior filter** — Exclude modules that have as many superior modules (equal or higher in every non-excluded stat) as equipped slots or more
+4. **Contribution Score Top N** — Narrow down to top N modules by contribution score (`Σ(main value × 3) + Σ(sub value × 1) + Σ(other value × 0.5)`)
 
 The candidate count N can be adjusted via the search precision setting.
 
@@ -137,7 +138,7 @@ The candidate count N can be adjusted via the search precision setting.
 > [!CAUTION]
 > Brute Force mode **may take up to several hours to complete**. For normal use, Standard to Most Precise provides sufficiently accurate results, so this mode is generally not recommended.
 >
-> This mode skips the relevance filter and contribution score narrowing, applying only the rarity filter while searching all modules. While it theoretically produces the most accurate results, the number of combinations grows explosively with more modules, requiring very long processing times.
+> This mode skips the relevance filter, strict-inferior filter, and contribution score narrowing, applying only the rarity filter while searching all modules. While it theoretically produces the most accurate results, the number of combinations grows explosively with more modules, requiring very long processing times.
 >
 > Use this only when you absolutely cannot afford to miss the optimal result, or when you want to verify that the candidate narrowing hasn't missed anything.
 

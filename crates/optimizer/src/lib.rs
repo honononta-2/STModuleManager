@@ -59,7 +59,7 @@ pub struct OptimizeRequest {
     /// ステータス最低値制約: part_id → 最低合計値
     #[serde(default)]
     pub min_thresholds: Option<std::collections::HashMap<i64, i64>>,
-    /// カウントのみモード: Stage1&2フィルタ後の候補数だけ返す（探索は行わない）
+    /// カウントのみモード: 関連性・レアリティフィルタ後の候補数だけ返す（探索は行わない）
     #[serde(default)]
     pub count_only: Option<bool>,
     /// 装着枠数（選択するモジュール数）。未指定時は4
@@ -362,17 +362,17 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         required_set.contains(&part_id) || desired_set.contains(&part_id)
     };
 
-    // --- Stage 1: 関連性フィルタ ---
+    // --- 関連性フィルタ ---
     let mut candidates: Vec<(usize, &ModuleInput)> = modules
         .iter()
         .enumerate()
         .filter(|(_, m)| m.stats.iter().any(|s| is_relevant(s.part_id)))
         .collect();
 
-    // --- Stage 2: レアリティフィルタ ---
+    // --- レアリティフィルタ ---
     candidates.retain(|(_, m)| m.quality.unwrap_or(0) >= req.min_quality);
 
-    // --- count_only モード: Stage1&2後の候補数だけ返す ---
+    // --- count_only モード: 関連性・レアリティフィルタ後の候補数だけ返す ---
     if req.count_only.unwrap_or(false) {
         return OptimizeResponse {
             combinations: vec![],
@@ -381,7 +381,65 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         };
     }
 
-    // --- Stage 3: 貢献度スコア Top N ---
+    // --- 完全下位互換フィルタ ---
+    // 除外以外の全ステータスを同値以上で持つ上位互換が slot_count 個以上ある
+    // モジュールを候補から除去する
+    let is_exhaustive = req.speed_mode.as_deref() == Some("exhaustive");
+    if !is_exhaustive && candidates.len() > slot_count {
+        // 各候補の除外以外のステータス (part_id, value) をソート済みで保持する
+        let cmp_stats: Vec<Vec<(i64, i64)>> = candidates
+            .iter()
+            .map(|(_, m)| {
+                let mut v: Vec<(i64, i64)> = m
+                    .stats
+                    .iter()
+                    .filter(|s| !excluded_set.contains(&s.part_id))
+                    .map(|s| (s.part_id, s.value))
+                    .collect();
+                v.sort_by_key(|&(pid, _)| pid);
+                v
+            })
+            .collect();
+
+        // d が m の全ステータスを同値以上で持つかを判定する
+        // どこか1つ厳密に大きい、または m にないステータスを余分に持つ場合は上位互換、
+        // 完全同値の場合は順序が先（d_first）の方を上位互換とする
+        let dominates = |d: &[(i64, i64)], m: &[(i64, i64)], d_first: bool| -> bool {
+            let mut strictly_better = false;
+            for &(pid, mv) in m {
+                match d.iter().find(|&&(dpid, _)| dpid == pid) {
+                    Some(&(_, dv)) if dv >= mv => {
+                        if dv > mv {
+                            strictly_better = true;
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+            strictly_better || d.len() > m.len() || d_first
+        };
+
+        let keep: Vec<bool> = (0..candidates.len())
+            .map(|mi| {
+                let m = &cmp_stats[mi];
+                let mut count = 0usize;
+                for (di, d) in cmp_stats.iter().enumerate() {
+                    if di != mi && dominates(d, m, di < mi) {
+                        count += 1;
+                        if count >= slot_count {
+                            return false;
+                        }
+                    }
+                }
+                true
+            })
+            .collect();
+
+        let mut keep_iter = keep.iter();
+        candidates.retain(|_| *keep_iter.next().unwrap());
+    }
+
+    // --- 貢献度スコア Top N ---
     let mut flats: Vec<ModuleFlat> = candidates
         .iter()
         .map(|(idx, m)| {
@@ -417,7 +475,6 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
 
     flats.sort_by(|a, b| b.contribution.partial_cmp(&a.contribution).unwrap());
 
-    let is_exhaustive = req.speed_mode.as_deref() == Some("exhaustive");
     if !is_exhaustive {
         let top_n: usize = match req.speed_mode.as_deref() {
             Some("precise") => 300,
