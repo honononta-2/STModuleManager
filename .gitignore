@@ -4,7 +4,7 @@ node_modules/
 # Build outputs
 dist/
 target/
-src-tauri/target/
+tauri/src-tauri/target/
 
 # Binary data
 *.bin
@@ -36,4 +36,4 @@ skills-lock.json
 .vscode/
 
 # Tauri auto-generated schemas
-src-tauri/gen/
+tauri/src-tauri/gen/

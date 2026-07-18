@@ -29,9 +29,11 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+        working-directory: tauri
 
       - name: Build frontend
         run: npm run build
+        working-directory: tauri
 
       - name: Download WinDivert
         run: |
@@ -42,7 +44,7 @@ jobs:
 
       - name: Build Tauri (release)
         run: cargo build --release
-        working-directory: src-tauri
+        working-directory: tauri/src-tauri
 
       - name: Prepare release files
         run: |
