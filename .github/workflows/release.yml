@@ -53,10 +53,10 @@ jobs:
         shell: cmd
 
       - name: Create zip archive
-        run: Compress-Archive -Path release\* -DestinationPath "StarResonanceModuleTool-${{ github.ref_name }}.zip"
+        run: Compress-Archive -Path release\* -DestinationPath "STModuleManager-${{ github.ref_name }}.zip"
         shell: pwsh
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: "StarResonanceModuleTool-${{ github.ref_name }}.zip"
+          files: "STModuleManager-${{ github.ref_name }}.zip"

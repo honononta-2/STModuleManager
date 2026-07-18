@@ -22,7 +22,7 @@ STModuleManagerは **PCソフト版** と **Web版** の2種類を提供して�
 
 アルゴリズムの詳細については [最適化の計算方法](#最適化の計算方法) を参照してください。
 
-**[Releases](../../releases) ページから最新の `StarResonanceModuleTool-vX.X.X.zip` をダウンロードし、任意のフォルダに展開してください。**
+**[Releases](../../releases) ページから最新の `STModuleManager-vX.X.X.zip` をダウンロードし、任意のフォルダに展開してください。**
 
 **動作要件:** Windows 10 / 11（パケットキャプチャに管理者権限が必要）
 

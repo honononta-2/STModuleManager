@@ -22,7 +22,7 @@
 
 ### ダウンロードと起動
 
-1. [Releases](../../../releases) ページから最新の `StarResonanceModuleTool-vX.X.X.zip` をダウンロードします
+1. [Releases](../../../releases) ページから最新の `STModuleManager-vX.X.X.zip` をダウンロードします
 2. 任意のフォルダに展開します（インストール作業は不要）
 3. `STModuleManager.exe` をダブルクリックして起動します（自動で管理者権限が要求されます）
 

@@ -29,7 +29,7 @@
 Instead of the desktop app's automatic data retrieval via packet capture, the Web version uses OCR to analyze screenshots and read module types and stats, making it easy to register your modules. No packet capture required, usable from any device.
 ## Download
 
-Download the latest `StarResonanceModuleTool-vX.X.X.zip` from the [Releases](../../releases) page and extract it to any folder. No installation required.
+Download the latest `STModuleManager-vX.X.X.zip` from the [Releases](../../releases) page and extract it to any folder. No installation required.
 
 ### System Requirements
 
