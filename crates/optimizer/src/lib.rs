@@ -47,7 +47,7 @@ pub struct OptimizeRequest {
     pub desired_stats: Vec<i64>,
     pub excluded_stats: Vec<i64>,
     pub min_quality: u64,
-    /// 探索スピードモード: "standard"(200件) / "precise"(300件) / "most_precise"(600件)
+    /// 探索スピードモード: "standard"(200件) / "precise"(400件) / "most_precise"(600件)
     #[serde(default)]
     pub speed_mode: Option<String>,
     /// Web Worker分割用: このWorkerのID (0-based)
@@ -519,7 +519,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
 
     if !is_exhaustive {
         let top_n: usize = match req.speed_mode.as_deref() {
-            Some("precise") => 300,
+            Some("precise") => 400,
             Some("most_precise") => 600,
             _ => 200, // "standard" またはデフォルト
         };
