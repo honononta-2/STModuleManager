@@ -195,6 +195,8 @@ struct SearchCtx<'a> {
     suffix_top2: &'a [f64],
     max_bp_sum: f64,
     threshold_constraints: &'a [(usize, u8)],
+    // threshold_buckets[c][v-1] = 制約 c のステータスを値 v 以上で持つ候補番号（昇順）
+    threshold_buckets: &'a [Vec<Vec<usize>>],
     // グローバルtop-10閾値のf64ビット表現（ロックなしで参照する）
     global_min_bits: &'a AtomicU64,
     // 候補モジュール1つが持つステータス数の最大値
@@ -218,7 +220,54 @@ fn search_rec(
         *cached_global_threshold = f64::from_bits(ctx.global_min_bits.load(Ordering::Relaxed));
     }
 
-    for idx in start..ctx.n {
+    // この枠を確定した後に残る枠数
+    let remaining = ctx.slot_count - depth - 1;
+
+    // 残り1枠・最後の枠では走査する候補列をバケットで絞り込む
+    let filtered: Option<&[usize]> = if !ctx.threshold_constraints.is_empty() && remaining <= 1 {
+        let extra = if is_last { 0u16 } else { MODULE_STAT_MAX_VALUE as u16 };
+        // 候補に最低限必要な値が最大の制約
+        let mut best: Option<(usize, u16)> = None;
+        // 候補自身が持つ必要のあるステータスの数
+        let mut short = 0usize;
+        let mut impossible = false;
+        for (ci, &(ti, min_val)) in ctx.threshold_constraints.iter().enumerate() {
+            let reachable = totals[ti] as u16 + extra;
+            let needed = min_val as u16;
+            if reachable >= needed {
+                continue;
+            }
+            let req = needed - reachable;
+            if req > MODULE_STAT_MAX_VALUE as u16 {
+                impossible = true;
+                break;
+            }
+            short += 1;
+            if best.map_or(true, |(_, r)| req > r) {
+                best = Some((ci, req));
+            }
+        }
+        if impossible || short > ctx.max_stats_per_module {
+            return;
+        }
+        best.map(|(ci, req)| {
+            let list = &ctx.threshold_buckets[ci][(req - 1) as usize];
+            &list[list.partition_point(|&idx| idx < start)..]
+        })
+    } else {
+        None
+    };
+
+    let iter_count = match filtered {
+        Some(list) => list.len(),
+        None => ctx.n.saturating_sub(start),
+    };
+
+    for k in 0..iter_count {
+        let idx = match filtered {
+            Some(list) => list[k],
+            None => start + k,
+        };
         let sp = &ctx.sparse[idx];
 
         if is_last {
@@ -251,39 +300,32 @@ fn search_rec(
             continue;
         }
 
+        // 残り1枠: 閾値に届かない候補を加算前にスキップする
+        if remaining == 1 && !ctx.threshold_constraints.is_empty() {
+            let mut short_count = 0usize;
+            let mut fail = false;
+            for &(ti, min_val) in ctx.threshold_constraints {
+                let cur = totals[ti] as u16
+                    + sp.iter().find(|&&(s, _)| s == ti).map_or(0, |&(_, v)| v as u16);
+                let needed = min_val as u16;
+                if cur + (MODULE_STAT_MAX_VALUE as u16) < needed {
+                    fail = true;
+                    break;
+                }
+                if cur < needed {
+                    short_count += 1;
+                }
+            }
+            if fail || short_count > ctx.max_stats_per_module {
+                continue;
+            }
+        }
+
         let base_new = base + add_delta(totals, sp, ctx.bp_lookup);
         indices[depth] = idx;
 
-        // この枠を確定した後に残る枠数
-        let remaining = ctx.slot_count - depth - 1;
-
         // 残り1枠・残り2枠でのみ枝刈りする
         if remaining <= 2 {
-            // 残り1枠: 閾値ベースの早切り
-            // 1モジュールが1ステータスに足せる最大は+10なので、現在合計+10でも届かない
-            // 必須ステータスが1つでもあれば、どのモジュールを選んでも届かない
-            // また、不足必須ステータス数が1モジュールの最大ステータス数を超える場合も
-            // 1モジュールでは全てを同時に伸ばせないため届かない
-            if remaining == 1 && !ctx.threshold_constraints.is_empty() {
-                let mut short_count = 0usize;
-                let mut fail = false;
-                for &(ti, min_val) in ctx.threshold_constraints {
-                    let cur = totals[ti] as u16;
-                    let needed = min_val as u16;
-                    if cur + (MODULE_STAT_MAX_VALUE as u16) < needed {
-                        fail = true;
-                        break;
-                    }
-                    if cur < needed {
-                        short_count += 1;
-                    }
-                }
-                if fail || short_count > ctx.max_stats_per_module {
-                    sub_sparse(totals, sp);
-                    continue;
-                }
-            }
-
             *cached_global_threshold =
                 f64::from_bits(ctx.global_min_bits.load(Ordering::Relaxed));
             let local_threshold = if local_best.is_full() {
@@ -385,7 +427,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
     // 除外以外の全ステータスを同値以上で持つ上位互換が slot_count 個以上ある
     // モジュールを候補から除去する
     let is_exhaustive = req.speed_mode.as_deref() == Some("exhaustive");
-    if !is_exhaustive && candidates.len() > slot_count {
+    if candidates.len() > slot_count {
         // 各候補の除外以外のステータス (part_id, value) をソート済みで保持する
         let cmp_stats: Vec<Vec<(i64, i64)>> = candidates
             .iter()
@@ -635,6 +677,22 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         })
         .unwrap_or_default();
 
+    // 制約ステータスごとに、値が v 以上の候補番号を昇順で保持するバケット
+    let threshold_buckets: Vec<Vec<Vec<usize>>> = threshold_constraints
+        .iter()
+        .map(|&(ti, _)| {
+            let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); MODULE_STAT_MAX_VALUE];
+            for (idx, sp) in sparse.iter().enumerate() {
+                if let Some(&(_, v)) = sp.iter().find(|&&(s, _)| s == ti) {
+                    for req in 1..=(v as usize).min(MODULE_STAT_MAX_VALUE) {
+                        buckets[req - 1].push(idx);
+                    }
+                }
+            }
+            buckets
+        })
+        .collect();
+
     let global_best = Mutex::new(BoundedHeap::new(top_k, max_results));
     let global_min_bits = AtomicU64::new(f64::NEG_INFINITY.to_bits());
 
@@ -649,6 +707,7 @@ pub fn optimize(modules: &[ModuleInput], req: &OptimizeRequest) -> OptimizeRespo
         suffix_top2: &suffix_top2,
         max_bp_sum,
         threshold_constraints: &threshold_constraints,
+        threshold_buckets: &threshold_buckets,
         global_min_bits: &global_min_bits,
         max_stats_per_module,
     };
