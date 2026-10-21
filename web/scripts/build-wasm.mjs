@@ -11,9 +11,11 @@ function runWasmPack(outDir, extraEnv) {
   const result = spawnSync("wasm-pack", args, {
     cwd: webDir,
     stdio: "inherit",
-    shell: true,
     env: { ...process.env, ...extraEnv },
   });
+  if (result.error) {
+    console.error(`wasm-pack の起動に失敗しました: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
