@@ -155,7 +155,8 @@ pub fn run() {
                                             uuid,
                                             config_id,
                                             quality,
-                                        } => match db.add_module(*uuid, *config_id, *quality) {
+                                            stats,
+                                        } => match db.add_module(*uuid, *config_id, *quality, stats) {
                                             Ok(is_new) => {
                                                 let label = if is_new { "新規" } else { "更新" };
                                                 eprintln!(
@@ -179,21 +180,6 @@ pub fn run() {
                                                 Err(e) => {
                                                     eprintln!("[monitor] DB保存エラー: {}", e)
                                                 }
-                                            }
-                                        }
-                                        DirtyModuleChange::StatsUpdated {
-                                            uuid,
-                                            stats,
-                                            success_rate,
-                                        } => {
-                                            if let Err(e) =
-                                                db.update_stats(*uuid, stats, *success_rate)
-                                            {
-                                                eprintln!(
-                                                    "[monitor] ステータス更新エラー: {}", e
-                                                );
-                                            } else {
-                                                changed = true;
                                             }
                                         }
                                     }

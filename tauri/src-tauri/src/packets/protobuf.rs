@@ -204,69 +204,48 @@ fn decode_packed_varints(hex_str: &str) -> Vec<i64> {
     vals
 }
 
-/// field 57 (Mod) の mod_infos から uuid → {part_ids, stat_values} のマップを構築する
-fn build_mod_info_map(decoded: &Value) -> std::collections::HashMap<i64, Value> {
-    let mut map = std::collections::HashMap::new();
+/// ステータスを part_id の並び順に揃える。並びにない part_id は末尾に元の順で残す。
+fn order_stats(stats: &mut [(i64, i64)], order: &[i64]) {
+    stats.sort_by_key(|(pid, _)| order.iter().position(|p| p == pid).unwrap_or(usize::MAX));
+}
 
-    let container = match decoded.get("1") {
-        Some(v) => v,
-        None => return map,
-    };
-    let mod_data = match container.get("57") {
-        Some(v) => v,
-        None => return map,
-    };
-
-    // field 2 = mod_infos (repeated map entries: key=uuid, value=ModInfo)
-    let infos = match mod_data.get("2") {
-        Some(Value::Array(arr)) => arr.clone(),
-        Some(v) => vec![v.clone()],
-        None => return map,
-    };
-
-    for entry in &infos {
-        let uuid = match entry.get("1").and_then(|v| v.as_i64()) {
-            Some(u) => u,
-            None => continue,
-        };
-        let detail = match entry.get("2") {
-            Some(v) => v,
-            None => continue,
-        };
-
-        // field 1 = part_ids (packed varint, hex文字列)
-        let part_ids: Vec<i64> = match detail.get("1") {
+/// アイテムの field 13 から part_id の並びを取得する
+fn item_part_id_order(field13: Option<&Value>) -> Vec<i64> {
+    match field13 {
+        // {"1": packed varint の hex文字列}
+        Some(Value::Object(map)) => match map.get("1") {
             Some(Value::String(s)) => decode_packed_varints(s),
             _ => Vec::new(),
-        };
-
-        // field 4 = init_link_nums (packed varint, hex文字列) → ステータス値
-        let stat_values: Vec<i64> = match detail.get("4") {
-            Some(Value::String(s)) => decode_packed_varints(s),
-            _ => Vec::new(),
-        };
-
-        // part_ids と stat_values を対にする
-        let mut stats = Vec::new();
-        for i in 0..part_ids.len().max(stat_values.len()) {
-            let pid = part_ids.get(i).copied().unwrap_or(0);
-            let val = stat_values.get(i).copied().unwrap_or(0);
-            stats.push(json!({"part_id": pid, "value": val}));
-        }
-
-        let success_rate = detail.get("3").cloned().unwrap_or(Value::Null);
-
-        map.insert(uuid, json!({
-            "stats": stats,
-            "success_rate": success_rate,
-        }));
+        },
+        // 4バイト以下でネスト展開されなかったメッセージ全体の hex文字列
+        Some(Value::String(s)) => hex_decode(s)
+            .map(|bytes| decode_protobuf_raw(&bytes))
+            .and_then(|v| v.get("1").and_then(|x| x.as_str()).map(decode_packed_varints))
+            .unwrap_or_default(),
+        _ => Vec::new(),
     }
+}
 
-    map
+/// アイテムの field 21 から (part_id, value) の一覧を取得する
+fn item_stats(field21: Option<&Value>) -> Option<Vec<(i64, i64)>> {
+    let entries = match field21?.get("1")? {
+        Value::Array(arr) => arr.clone(),
+        v => vec![v.clone()],
+    };
+    Some(
+        entries
+            .iter()
+            .filter_map(|e| {
+                let pid = e.get("1").and_then(|v| v.as_i64())?;
+                let val = e.get("2").and_then(|v| v.as_i64()).unwrap_or(0);
+                Some((pid, val))
+            })
+            .collect(),
+    )
 }
 
 /// SyncContainerData のデコード済みJSONから Package type=5（モジュール）のアイテム一覧を抽出する。
-/// field 57 (Mod) のステータス値も紐付ける。
+/// field 57 (Mod) の装着スロットも紐付ける。
 pub fn extract_modules(decoded: &Value) -> Vec<Value> {
     let mut modules = Vec::new();
 
@@ -274,9 +253,6 @@ pub fn extract_modules(decoded: &Value) -> Vec<Value> {
         Some(v) => v,
         None => return modules,
     };
-
-    // field 57 からモジュールのステータス情報を取得
-    let mod_info_map = build_mod_info_map(decoded);
 
     // field 57 -> "1" = mod_slots (slot -> uuid)
     let mut slot_map: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
@@ -335,14 +311,21 @@ pub fn extract_modules(decoded: &Value) -> Vec<Value> {
             module.insert("config_id".into(), item.get("2").cloned().unwrap_or(Value::Null));
             module.insert("quality".into(), item.get("9").cloned().unwrap_or(Value::Null));
 
-            // field 57 からステータス情報を紐付け
-            if let Some(info) = mod_info_map.get(&uuid) {
-                module.insert("stats".into(), info.get("stats").cloned().unwrap_or(Value::Null));
-                module.insert("success_rate".into(), info.get("success_rate").cloned().unwrap_or(Value::Null));
-            } else {
-                module.insert("stats".into(), Value::Null);
-                module.insert("success_rate".into(), Value::Null);
+            // field 21 = ステータス、field 13 = part_id の並び
+            match item_stats(item.get("21")) {
+                Some(mut stats) => {
+                    order_stats(&mut stats, &item_part_id_order(item.get("13")));
+                    let stats: Vec<Value> = stats
+                        .iter()
+                        .map(|(pid, val)| json!({"part_id": pid, "value": val}))
+                        .collect();
+                    module.insert("stats".into(), json!(stats));
+                }
+                None => {
+                    module.insert("stats".into(), Value::Null);
+                }
             }
+            module.insert("success_rate".into(), Value::Null);
 
             // 装着スロット
             if let Some(slot) = slot_map.get(&uuid) {
@@ -367,106 +350,40 @@ pub enum DirtyModuleChange {
         uuid: i64,
         config_id: u64,
         quality: u64,
+        stats: Vec<(i64, i64)>,
     },
     /// モジュール削除（コンテナタイプ7, sub-type 5, uuidのみ）
     Removed { uuid: i64 },
-    /// ステータス更新（コンテナタイプ57）
-    StatsUpdated {
-        uuid: i64,
-        stats: Vec<(i64, i64)>,
-        success_rate: u64,
-    },
 }
 
-/// DEADBEEF区切りバイナリの値
-#[derive(Debug, Clone)]
-enum DVal {
-    I32(i32),
-    I64(i64),
-    Byte(u8),
-    Other(()),
+/// ブロック開始マーカー
+const BLOCK_OPEN: i32 = -2;
+/// ブロック終了マーカー
+const BLOCK_CLOSE: i32 = -3;
+
+fn read_i32(bytes: &[u8], pos: usize) -> Option<i32> {
+    let chunk = bytes.get(pos..pos.checked_add(4)?)?;
+    Some(i32::from_le_bytes(chunk.try_into().ok()?))
 }
 
-impl DVal {
-    fn as_i32(&self) -> Option<i32> {
-        match self {
-            DVal::I32(v) => Some(*v),
-            _ => None,
-        }
-    }
-    fn as_u64(&self) -> u64 {
-        match self {
-            DVal::I32(n) => *n as u32 as u64,
-            DVal::I64(n) => *n as u64,
-            DVal::Byte(b) => *b as u64,
-            DVal::Other(_) => 0,
-        }
-    }
+fn read_i64(bytes: &[u8], pos: usize) -> Option<i64> {
+    let chunk = bytes.get(pos..pos.checked_add(8)?)?;
+    Some(i64::from_le_bytes(chunk.try_into().ok()?))
 }
 
-const SENTINEL: [u8; 4] = [0xEF, 0xBE, 0xAD, 0xDE];
-
-/// hex文字列をDEADBEEF区切りで値リストにパースする
-fn parse_dirty_values(hex_str: &str) -> Vec<DVal> {
-    let bytes = match hex_decode(hex_str) {
-        Some(b) => b,
-        None => return Vec::new(),
-    };
-    let mut values = Vec::new();
-    let mut start = 0;
-    loop {
-        let pos = bytes[start..]
-            .windows(4)
-            .position(|w| w == SENTINEL)
-            .map(|p| start + p);
-        match pos {
-            Some(p) => {
-                let chunk = &bytes[start..p];
-                if !chunk.is_empty() {
-                    values.push(match chunk.len() {
-                        1 => DVal::Byte(chunk[0]),
-                        4 => DVal::I32(i32::from_le_bytes(chunk.try_into().unwrap())),
-                        8 => DVal::I64(i64::from_le_bytes(chunk.try_into().unwrap())),
-                        _ => DVal::Other(()),
-                    });
-                }
-                start = p + 4;
-            }
-            None => {
-                let chunk = &bytes[start..];
-                if !chunk.is_empty() {
-                    values.push(match chunk.len() {
-                        1 => DVal::Byte(chunk[0]),
-                        4 => DVal::I32(i32::from_le_bytes(chunk.try_into().unwrap())),
-                        8 => DVal::I64(i64::from_le_bytes(chunk.try_into().unwrap())),
-                        _ => DVal::Other(()),
-                    });
-                }
-                break;
-            }
-        }
+/// pos から始まるブロック（-2, 長さ, 中身, -3）の中身の範囲 (開始, 終了) を返す。
+/// 終了位置には -3 がある。
+fn block_range(bytes: &[u8], pos: usize) -> Option<(usize, usize)> {
+    if read_i32(bytes, pos)? != BLOCK_OPEN {
+        return None;
     }
-    values
-}
-
-/// ネストされた -2...-3 ブロックをスキップし、-3 の次のインデックスを返す
-fn skip_nested(values: &[DVal], start: usize) -> usize {
-    let mut depth = 0;
-    let mut i = start;
-    while i < values.len() {
-        match values[i].as_i32() {
-            Some(-2) => depth += 1,
-            Some(-3) => {
-                depth -= 1;
-                if depth == 0 {
-                    return i + 1;
-                }
-            }
-            _ => {}
-        }
-        i += 1;
+    let len = usize::try_from(read_i32(bytes, pos + 4)?).ok()?;
+    let start = pos + 8;
+    let end = start.checked_add(len)?;
+    if read_i32(bytes, end)? != BLOCK_CLOSE {
+        return None;
     }
-    values.len()
+    Some((start, end))
 }
 
 /// SyncContainerDirtyData (0x16) のデコード済みJSONからモジュール変更を抽出する
@@ -480,213 +397,165 @@ pub fn extract_dirty_changes(decoded: &Value) -> Vec<DirtyModuleChange> {
         None => return Vec::new(),
     };
 
-    let values = parse_dirty_values(hex_str);
-    if values.len() < 3 {
-        return Vec::new();
-    }
-
-    // values[0] = -2, values[1] = size, values[2] = container_type
-    let container_type = match values.get(2).and_then(|v| v.as_i32()) {
-        Some(ct) => ct,
+    let bytes = match hex_decode(hex_str) {
+        Some(b) => b,
         None => return Vec::new(),
     };
 
-    match container_type {
-        7 => extract_from_container7(&values),
-        57 => extract_from_container57(&values),
+    // 全体ブロックの中身: container_type, パッケージブロック, ...
+    let (start, _) = match block_range(&bytes, 0) {
+        Some(r) => r,
+        None => return Vec::new(),
+    };
+
+    match read_i32(&bytes, start) {
+        Some(7) => extract_from_container7(&bytes, start + 4),
         _ => Vec::new(),
     }
 }
 
 /// コンテナタイプ7（アイテムインベントリ）からモジュールの追加/削除を抽出
-fn extract_from_container7(values: &[DVal]) -> Vec<DirtyModuleChange> {
-    // values[9] = sub-type (5 = modules)
-    if values.get(9).and_then(|v| v.as_i32()) != Some(5) {
-        return Vec::new();
+fn extract_from_container7(bytes: &[u8], pos: usize) -> Vec<DirtyModuleChange> {
+    let mut results = Vec::new();
+
+    // パッケージブロックの中身の16バイト目 = sub-type (5 = modules)
+    let (pkg_start, _) = match block_range(bytes, pos) {
+        Some(r) => r,
+        None => return results,
+    };
+    if read_i32(bytes, pkg_start + 16) != Some(5) {
+        return results;
     }
 
-    // values[10..16] = items block header: -2, size, 4, count, 0, 0
-    // values[16] 以降: uuid(i64), detail_block(-2...-3), uuid, detail_block, ... の繰り返し
-    let mut results = Vec::new();
-    let mut i = 16;
+    // items ブロックの中身: 4, 追加件数, 削除件数, 0 の後に
+    // uuid(i64), detail_block(-2...-3) または uuid(i64) のみ、の繰り返し
+    let (items_start, items_end) = match block_range(bytes, pkg_start + 20) {
+        Some(r) => r,
+        None => return results,
+    };
+    let mut p = items_start + 16;
 
-    while i < values.len() {
-        match &values[i] {
-            DVal::I64(uuid_val) => {
-                let uuid = *uuid_val;
-                match values.get(i + 1).and_then(|v| v.as_i32()) {
-                    Some(-2) => {
-                        // 追加: detail block を解析
-                        results.extend(extract_module_addition(values, i, uuid));
-                        i = skip_nested(values, i + 1);
-                    }
-                    _ => {
-                        // 削除
-                        results.push(DirtyModuleChange::Removed { uuid });
-                        i += 1;
-                    }
-                }
+    while p + 8 <= items_end {
+        let uuid = match read_i64(bytes, p) {
+            Some(u) => u,
+            None => break,
+        };
+        p += 8;
+
+        if p < items_end && read_i32(bytes, p) == Some(BLOCK_OPEN) {
+            // 追加: detail block を解析
+            let (detail_start, detail_end) = match block_range(bytes, p) {
+                Some(r) => r,
+                None => break,
+            };
+            match extract_module_addition(bytes, detail_start, detail_end, uuid) {
+                Some(change) => results.push(change),
+                None => eprintln!("[monitor] モジュール追加の解析失敗: uuid={}", uuid),
             }
-            DVal::I32(-2) => {
-                i = skip_nested(values, i);
-            }
-            DVal::I32(-3) => break,
-            _ => {
-                i += 1;
-            }
+            p = detail_end + 4;
+        } else {
+            // 削除
+            results.push(DirtyModuleChange::Removed { uuid });
         }
     }
 
     results
 }
 
-/// コンテナタイプ7の詳細ブロックから config_id, quality を抽出
-fn extract_module_addition(values: &[DVal], uuid_idx: usize, uuid: i64) -> Vec<DirtyModuleChange> {
-    // uuid_idx+1 = -2 (detail block open), uuid_idx+2 = size
-    // uuid_idx+3 以降: field_num, value, field_num, value, ...
-    let detail_start = uuid_idx + 3;
-    if detail_start >= values.len() {
-        return Vec::new();
+/// 詳細ブロック内のフィールドのうち、ブロック以外の値のバイト幅
+fn scalar_width(field_num: i32) -> Option<usize> {
+    match field_num {
+        1 | 3 | 6 | 7 | 12 | 15 | 17 | 20 => Some(8),
+        2 | 4 | 5 | 8 | 9 | 16 | 18 => Some(4),
+        19 | 22 => Some(1),
+        _ => None,
     }
+}
 
+/// コンテナタイプ7の詳細ブロックから config_id, quality, ステータスを抽出
+fn extract_module_addition(
+    bytes: &[u8],
+    start: usize,
+    end: usize,
+    uuid: i64,
+) -> Option<DirtyModuleChange> {
+    // 中身: field_num(4バイト), 値, field_num, 値, ...
     let mut config_id: u64 = 0;
     let mut quality: u64 = 0;
-    let mut i = detail_start;
+    let mut part_ids: Vec<i64> = Vec::new();
+    let mut stats: Vec<(i64, i64)> = Vec::new();
+    let mut p = start;
 
-    while i < values.len() {
-        match values[i].as_i32() {
-            Some(-3) => break,
-            Some(-2) => {
-                i = skip_nested(values, i);
-                continue;
+    while p < end {
+        let field_num = read_i32(bytes, p)?;
+        p += 4;
+
+        // 値がブロックの場合
+        if read_i32(bytes, p) == Some(BLOCK_OPEN) {
+            let (block_start, block_end) = block_range(bytes, p)?;
+            match field_num {
+                13 => part_ids = read_part_ids(bytes, block_start, block_end),
+                21 => stats = read_stats(bytes, block_start, block_end),
+                _ => {}
             }
-            Some(field_num) if field_num >= 1 => {
-                i += 1;
-                if i >= values.len() {
-                    break;
-                }
-                // 値がネストブロックならスキップ
-                if values[i].as_i32() == Some(-2) {
-                    i = skip_nested(values, i);
-                    continue;
-                }
-                match field_num {
-                    2 => config_id = values[i].as_u64(),
-                    9 => quality = values[i].as_u64(),
-                    _ => {}
-                }
-                i += 1;
-            }
-            _ => {
-                i += 1;
-            }
+            p = block_end + 4;
+            continue;
         }
+
+        let width = scalar_width(field_num)?;
+        if p + width > end {
+            return None;
+        }
+        match field_num {
+            2 => config_id = read_i32(bytes, p)? as u32 as u64,
+            9 => quality = read_i32(bytes, p)? as u32 as u64,
+            _ => {}
+        }
+        p += width;
     }
 
-    if config_id > 0 {
-        vec![DirtyModuleChange::Added {
-            uuid,
-            config_id,
-            quality,
-        }]
-    } else {
-        Vec::new()
+    if config_id == 0 {
+        return None;
     }
+    order_stats(&mut stats, &part_ids);
+
+    Some(DirtyModuleChange::Added {
+        uuid,
+        config_id,
+        quality,
+        stats,
+    })
 }
 
-/// コンテナタイプ57（モジュールステータス）からステータス情報を抽出
-fn extract_from_container57(values: &[DVal]) -> Vec<DirtyModuleChange> {
-    // values[9] 以降: uuid(i64), stats_block(-2...-3), uuid, stats_block, ... の繰り返し
-    let mut results = Vec::new();
-    let mut i = 9;
-
-    while i < values.len() {
-        let uuid = match &values[i] {
-            DVal::I64(v) => *v,
-            _ => break,
-        };
-        i += 1;
-
-        // uuid の次が -3 なら削除通知（container 7 側で処理済み）→ スキップ
-        if values.get(i).and_then(|v| v.as_i32()) == Some(-3) {
-            i += 1;
-            continue;
-        }
-
-        // -2 = stats ブロック開始
-        if values.get(i).and_then(|v| v.as_i32()) != Some(-2) {
-            break;
-        }
-        let block_end = skip_nested(values, i);
-        // ブロック内: i+1=size, i+2 以降がデータ
-        let base = i + 2;
-
-        // field 1 = part_ids セクション
-        if values.get(base).and_then(|v| v.as_i32()) != Some(1) {
-            i = block_end;
-            continue;
-        }
-        let part_count = match values.get(base + 1).and_then(|v| v.as_i32()) {
-            Some(c) if c > 0 && c <= 10 => c as usize,
-            _ => {
-                i = block_end;
-                continue;
-            }
-        };
-
-        let mut part_ids = Vec::new();
-        for j in (base + 2)..(base + 2 + part_count) {
-            if let Some(v) = values.get(j) {
-                part_ids.push(v.as_u64() as i64);
-            }
-        }
-
-        // ロールエントリをカウントしてステータス値を算出
-        let rolls_start = base + 2 + part_count + 2; // field 2 + total_rolls をスキップ
-        let mut roll_counts: std::collections::HashMap<i64, i64> =
-            std::collections::HashMap::new();
-        let mut success_rate: u64 = 0;
-        let mut j = rolls_start;
-
-        while j < block_end {
-            match values[j].as_i32() {
-                Some(-2) => {
-                    if let Some(stat_type) = values.get(j + 3).map(|v| v.as_u64() as i64) {
-                        if part_ids.contains(&stat_type) {
-                            *roll_counts.entry(stat_type).or_insert(0) += 1;
-                        }
-                    }
-                    j = skip_nested(values, j);
-                }
-                Some(3) => {
-                    j += 1;
-                    if let Some(v) = values.get(j) {
-                        success_rate = v.as_u64();
-                    }
-                    break;
-                }
-                Some(-3) => break,
-                _ => {
-                    j += 1;
-                }
-            }
-        }
-
-        let stats: Vec<(i64, i64)> = part_ids
-            .iter()
-            .map(|pid| (*pid, *roll_counts.get(pid).unwrap_or(&0)))
-            .collect();
-
-        if !stats.is_empty() {
-            results.push(DirtyModuleChange::StatsUpdated {
-                uuid,
-                stats,
-                success_rate,
-            });
-        }
-
-        i = block_end;
+/// field 13 ブロック（1, 件数, part_id...）から part_id の並びを読む
+fn read_part_ids(bytes: &[u8], start: usize, end: usize) -> Vec<i64> {
+    if read_i32(bytes, start) != Some(1) {
+        return Vec::new();
     }
+    let count = match read_i32(bytes, start + 4) {
+        Some(c) if c > 0 => c as usize,
+        _ => return Vec::new(),
+    };
+    let max = end.saturating_sub(start + 8) / 4;
+    (0..count.min(max))
+        .filter_map(|i| read_i32(bytes, start + 8 + i * 4).map(|v| v as i64))
+        .collect()
+}
 
-    results
+/// field 21 ブロック（1, -1, 件数, (part_id, value)...）からステータスを読む
+fn read_stats(bytes: &[u8], start: usize, end: usize) -> Vec<(i64, i64)> {
+    if read_i32(bytes, start) != Some(1) || read_i32(bytes, start + 4) != Some(-1) {
+        return Vec::new();
+    }
+    let count = match read_i32(bytes, start + 8) {
+        Some(c) if c > 0 => c as usize,
+        _ => return Vec::new(),
+    };
+    let max = end.saturating_sub(start + 12) / 8;
+    (0..count.min(max))
+        .filter_map(|i| {
+            let q = start + 12 + i * 8;
+            Some((read_i32(bytes, q)? as i64, read_i32(bytes, q + 4)? as i64))
+        })
+        .collect()
 }
