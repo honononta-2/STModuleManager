@@ -20,6 +20,9 @@ pub struct AppSettings {
     /// 最小化時にバックグラウンドモードに移行するか
     #[serde(default)]
     pub background_mode: bool,
+    /// 診断ログを保存するか。次回起動時に反映する
+    #[serde(default)]
+    pub diagnostic_log: bool,
 }
 
 fn default_theme() -> String {
@@ -39,28 +42,48 @@ impl Default for AppSettings {
             language: default_language(),
             language_configured: false,
             background_mode: false,
+            diagnostic_log: false,
         }
+    }
+}
+
+impl AppSettings {
+    pub fn summary(&self) -> String {
+        format!(
+            "auto_monitor={} background_mode={} show_monitor_confirm={} diagnostic_log={} language={} language_configured={} theme={}",
+            self.auto_monitor,
+            self.background_mode,
+            self.show_monitor_confirm,
+            self.diagnostic_log,
+            self.language,
+            self.language_configured,
+            self.theme
+        )
     }
 }
 
 pub struct AppSettingsState {
     pub settings: Mutex<AppSettings>,
     pub path: PathBuf,
+    pub load_status: String,
 }
 
 impl AppSettingsState {
     pub fn new(path: PathBuf) -> Self {
-        let settings = if path.exists() {
-            std::fs::read_to_string(&path)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or_default()
-        } else {
-            AppSettings::default()
+        let (settings, load_status) = match std::fs::read_to_string(&path) {
+            Ok(s) => match serde_json::from_str(&s) {
+                Ok(settings) => (settings, "読み込み成功".to_string()),
+                Err(e) => (AppSettings::default(), format!("解析失敗: {}（初期値）", e)),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                (AppSettings::default(), "ファイルなし（初期値）".to_string())
+            }
+            Err(e) => (AppSettings::default(), format!("読み込み失敗: {}（初期値）", e)),
         };
         Self {
             settings: Mutex::new(settings),
             path,
+            load_status,
         }
     }
 

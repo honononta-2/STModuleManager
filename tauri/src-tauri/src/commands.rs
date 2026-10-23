@@ -65,6 +65,7 @@ pub fn start_capture_cmd(monitor: State<MonitorState>) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .clone();
     let f = flag.clone();
+    crate::diag!("[monitor] 監視開始: 手動");
     std::thread::spawn(move || {
         run_capture(f, sf, tx);
     });
@@ -79,6 +80,7 @@ pub fn stop_capture_cmd(monitor: State<MonitorState>) -> Result<(), String> {
     if let Some(flag) = stop_guard.take() {
         flag.store(true, Ordering::Relaxed);
         monitor.server_found.store(false, Ordering::Relaxed);
+        crate::diag!("[monitor] 監視停止");
     }
     Ok(())
 }
@@ -233,6 +235,19 @@ pub fn clear_app_data(app: tauri::AppHandle, bg: State<BackgroundActive>) -> Res
     Ok(())
 }
 
+/// ログフォルダをエクスプローラーで開く
+#[tauri::command]
+pub fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = crate::logger::log_dir(&app_data_dir);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::process::Command::new("explorer")
+        .arg(&dir)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// バックグラウンドモードに移行（ウィンドウを破棄してトレイ常駐）
 #[tauri::command]
 pub fn enter_background_mode(app: tauri::AppHandle, bg: State<BackgroundActive>) -> Result<(), String> {
@@ -249,9 +264,12 @@ pub fn update_settings(
     state: State<AppSettingsState>,
     settings: AppSettings,
 ) -> Result<(), String> {
-    {
+    let summary = {
         let mut current = state.settings.lock().map_err(|e| e.to_string())?;
         *current = settings;
-    }
-    state.save()
+        current.summary()
+    };
+    state.save()?;
+    crate::diag!("[settings] 設定変更: {}", summary);
+    Ok(())
 }

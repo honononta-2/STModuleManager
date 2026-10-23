@@ -1700,6 +1700,7 @@ async function init() {
     language: string;
     language_configured: boolean;
     background_mode: boolean;
+    diagnostic_log: boolean;
   };
   let appSettings: AppSettings = await invoke("get_settings");
 
@@ -1746,6 +1747,19 @@ async function init() {
     const next = !appSettings.background_mode;
     bgModeToggle.classList.toggle("active", next);
     saveSettings({ background_mode: next });
+  };
+
+  // --- 診断ログトグル ---
+  const diagLogToggle = $("menu-toggle-diagnostic-log");
+  diagLogToggle.classList.toggle("active", appSettings.diagnostic_log);
+  diagLogToggle.onclick = () => {
+    const next = !appSettings.diagnostic_log;
+    diagLogToggle.classList.toggle("active", next);
+    saveSettings({ diagnostic_log: next });
+  };
+
+  $("menu-open-log-folder").onclick = () => {
+    invoke("open_log_folder");
   };
 
   // --- テーマ select ---

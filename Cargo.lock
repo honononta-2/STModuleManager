@@ -2067,6 +2067,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-single-instance",
  "windivert",
+ "windows-sys 0.61.2",
  "zstd",
 ]
 

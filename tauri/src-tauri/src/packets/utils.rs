@@ -89,7 +89,7 @@ impl TCPReassembler {
         }
 
         if self.buffered_bytes > MAX_TCP_CACHE_SIZE {
-            eprintln!(
+            crate::diag!(
                 "[tcp] バッファ超過 ({} bytes)。ドロップしてリセット。",
                 self.buffered_bytes
             );

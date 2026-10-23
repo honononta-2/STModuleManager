@@ -4,14 +4,6 @@ node_modules/
 # Build outputs
 dist/
 target/
-tauri/src-tauri/target/
-
-# Binary data
-*.bin
-
-# Third-party binaries (vendored by windivert crate)
-WinDivert.dll
-WinDivert64.sys
 
 # Internal dev assets, working notes, scripts
 dev/
@@ -19,21 +11,8 @@ dev/
 # Temporary files
 tmp/
 
-# Claude Code
-CLAUDE.md
-.claude/
-
-# Release output
-release-v*/
-# CocoIndex Code (ccc)
-/.cocoindex_code/
-
-# Skills
-.agents/
-skills-lock.json
-
-# Editor settings
-.vscode/
-
 # Tauri auto-generated schemas
 tauri/src-tauri/gen/
+
+# メモ
+RULE.md

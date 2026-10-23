@@ -1,4 +1,6 @@
 mod commands;
+mod env_info;
+mod logger;
 mod modules_db;
 mod packets;
 mod settings;
@@ -43,7 +45,30 @@ pub fn run() {
                 .lock()
                 .map(|s| s.auto_monitor)
                 .unwrap_or(false);
+            let diagnostic_log = settings_state
+                .settings
+                .lock()
+                .map(|s| s.diagnostic_log)
+                .unwrap_or(false);
+            let settings_load_status = settings_state.load_status.clone();
+            let settings_summary = settings_state
+                .settings
+                .lock()
+                .map(|s| s.summary())
+                .unwrap_or_default();
             app.manage(settings_state);
+
+            if diagnostic_log {
+                match logger::init(&app_data_dir) {
+                    Ok(()) => {
+                        crate::diag!("===== 起動 v{} =====", env!("CARGO_PKG_VERSION"));
+                        env_info::log_environment();
+                        crate::diag!("[env] 設定ファイル: {}", settings_load_status);
+                        crate::diag!("[env] 設定: {}", settings_summary);
+                    }
+                    Err(e) => eprintln!("[log] 診断ログを開けません: {}", e),
+                }
+            }
 
             // バックグラウンドモード管理
             app.manage(BackgroundActive(AtomicBool::new(false)));
@@ -95,6 +120,7 @@ pub fn run() {
                 let sf = monitor.server_found.clone();
                 let tx = monitor.module_tx.lock().unwrap().clone();
                 let f = flag.clone();
+                crate::diag!("[monitor] 監視開始: 起動時の自動開始");
                 std::thread::spawn(move || {
                     packets::capture::run_capture(f, sf, tx);
                 });
@@ -134,7 +160,7 @@ pub fn run() {
                                 }
                                 match db.merge_modules(&modules) {
                                     Ok((nc, c)) => {
-                                        eprintln!(
+                                        crate::diag!(
                                             "[monitor] モジュール全量同期: {}件 (新規: {}件, 変化: {})",
                                             modules.len(), nc, c
                                         );
@@ -143,7 +169,7 @@ pub fn run() {
                                             changed = true;
                                         }
                                     }
-                                    Err(e) => eprintln!("[monitor] DB保存エラー: {}", e),
+                                    Err(e) => crate::diag!("[monitor] DB保存エラー: {}", e),
                                 }
                             }
                             0x16 => {
@@ -159,18 +185,18 @@ pub fn run() {
                                         } => match db.add_module(*uuid, *config_id, *quality, stats) {
                                             Ok(is_new) => {
                                                 let label = if is_new { "新規" } else { "更新" };
-                                                eprintln!(
+                                                crate::diag!(
                                                     "[monitor] モジュール{}: uuid={}, config_id={}",
                                                     label, uuid, config_id
                                                 );
                                                 changed = true;
                                             }
-                                            Err(e) => eprintln!("[monitor] DB保存エラー: {}", e),
+                                            Err(e) => crate::diag!("[monitor] DB保存エラー: {}", e),
                                         },
                                         DirtyModuleChange::Removed { uuid } => {
                                             match db.remove_module(*uuid) {
                                                 Ok(true) => {
-                                                    eprintln!(
+                                                    crate::diag!(
                                                         "[monitor] モジュール削除: uuid={}",
                                                         uuid
                                                     );
@@ -178,7 +204,7 @@ pub fn run() {
                                                 }
                                                 Ok(false) => {}
                                                 Err(e) => {
-                                                    eprintln!("[monitor] DB保存エラー: {}", e)
+                                                    crate::diag!("[monitor] DB保存エラー: {}", e)
                                                 }
                                             }
                                         }
@@ -191,7 +217,7 @@ pub fn run() {
 
                     if changed {
                         if let Err(e) = db.save() {
-                            eprintln!("[monitor] DB保存エラー: {}", e);
+                            crate::diag!("[monitor] DB保存エラー: {}", e);
                         }
                         let _ = app_handle.emit("modules-updated", new_count);
                     }
@@ -231,6 +257,7 @@ pub fn run() {
             commands::get_system_locale,
             commands::clear_app_data,
             commands::enter_background_mode,
+            commands::open_log_folder,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

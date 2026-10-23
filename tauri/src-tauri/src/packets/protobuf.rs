@@ -450,7 +450,7 @@ fn extract_from_container7(bytes: &[u8], pos: usize) -> Vec<DirtyModuleChange> {
             };
             match extract_module_addition(bytes, detail_start, detail_end, uuid) {
                 Some(change) => results.push(change),
-                None => eprintln!("[monitor] モジュール追加の解析失敗: uuid={}", uuid),
+                None => crate::diag!("[monitor] モジュール追加の解析失敗: uuid={}", uuid),
             }
             p = detail_end + 4;
         } else {

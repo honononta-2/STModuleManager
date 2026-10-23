@@ -80,14 +80,4 @@ impl Reassembler {
         }
         self.buffer.extend_from_slice(&bytes);
     }
-
-    pub fn take_remaining(&mut self) -> Vec<u8> {
-        if self.cursor == 0 {
-            return std::mem::take(&mut self.buffer);
-        }
-        let rem = self.buffer.split_off(self.cursor);
-        self.buffer = Vec::new();
-        self.cursor = 0;
-        rem
-    }
 }
