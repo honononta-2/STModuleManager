@@ -67,6 +67,11 @@ pub fn run_capture(
     server_found: Arc<AtomicBool>,
     module_tx: Sender<ModulePayload>,
 ) {
+    if !super::driver::is_ready() {
+        crate::diag!("[capture] WinDivert.dll が読み込まれていないため監視を開始しません");
+        return;
+    }
+
     let diagnostic = crate::logger::is_enabled();
     if diagnostic {
         crate::diag!(
@@ -74,6 +79,7 @@ pub fn run_capture(
             crate::env_info::windivert_service()
         );
     }
+    super::driver::remove_stale_service();
 
     let handle = match WinDivert::network(
         "!loopback && ip && tcp",

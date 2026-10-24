@@ -1,4 +1,5 @@
 pub mod capture;
+pub mod driver;
 pub mod netstat;
 pub mod opcodes;
 pub mod protobuf;

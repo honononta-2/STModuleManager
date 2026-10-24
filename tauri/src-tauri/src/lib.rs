@@ -70,6 +70,9 @@ pub fn run() {
                 }
             }
 
+            // WinDivert の配置と読み込み
+            packets::driver::prepare(&app_data_dir);
+
             // バックグラウンドモード管理
             app.manage(BackgroundActive(AtomicBool::new(false)));
 
